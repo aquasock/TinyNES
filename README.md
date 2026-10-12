@@ -11,13 +11,13 @@ of this repository yet.
 The first image proves only that an AE350 program starts, reaches the fabric
 AHB bus, and sets a status word. The fabric then sends `TinyNES AE350 OK` over
 the board's FPGA UART (U15) at 115200 8N1 about once per second. The program is
-four RV32I words in `fpga/ae350_uart/ae350_uart.sv`. It has no DDR3, NES
-emulator, video, audio, or BL616 dependency.
+six RV32I words in `fpga/ae350_uart/ae350_uart.sv`; after the status write it
+keeps storing its `mcycle` count so the core clock can be measured. The A25
+core runs at 750 MHz from `PLL_R[0]` `CLKOUT1` and the AHB bus at 75 MHz from
+`CLKOUT0`. It has no DDR3, NES emulator, video, audio, or BL616 dependency.
 
-The present open device database leaves four AE350 output bits unmapped. This
-diagnostic uses a mapped write-data bit and the AHB select signal, so its
-status check avoids those gaps. This is a toolchain mapping limitation, not an
-AE350 hardware limit.
+The status check uses write-data bit 4 and the AHB select signal rather than a
+full address and data decode.
 
 The build uses Yosys, a GW5AST-138C-capable nextpnr-himbaechel, and Apicula's
 open-source bitstream packer. It does not invoke Gowin EDA or use generated
@@ -71,8 +71,19 @@ If the isolated UART works but the normal image is silent, build the AE350
 trace image with `TINY_NES_UART_DIAG=2 bash tools/build_ae350_uart.sh`. It
 reports `ADDR=1` once the reset-vector address appears on the ROM bus,
 `ROM=1` once an active ROM transfer appears, and `AHB=1` once the expected
-status write is captured. Each field stays set once seen. The image is
-`build/ae350_uart_trace/ae350_uart.fs`.
+status write is captured. Each field stays set once seen. The line then gives
+the last `mcycle` value the CPU stored (`CYC`) and the count of the 50 MHz
+board oscillator taken in the same bus cycle (`REF`), both in hex. The image is
+`build/ae350_uart_trace/ae350_uart.fs`. To measure the core clock from four
+consecutive pairs:
+
+```sh
+python3 tools/check_ae350_uart.py --expect 'ADDR=1 ROM=1 AHB=1' --clock 4 --timeout 10
+```
+
+The AE350 bus clocks currently reach the hard core through general fabric
+routing, so a placement can fail nextpnr's hold check or run silent on
+hardware. `TINY_NES_SEED=N` passes a placement seed to nextpnr.
 
 The load is volatile. The host check needs Python `pyserial`. It does not
 alter BL616 firmware or the FPGA's configuration flash.

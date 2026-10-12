@@ -55,6 +55,7 @@ echo "nextpnr placement and routing"
     --vopt cst="$src/ae350_uart.cst" \
     --sdc "$src/ae350_uart.sdc" \
     --report "$out/timing.json" \
+    ${TINY_NES_SEED:+--seed "$TINY_NES_SEED"} \
     >"$out/nextpnr.log" 2>&1 || {
         tail -80 "$out/nextpnr.log" >&2
         exit 1

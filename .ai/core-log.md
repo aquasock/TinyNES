@@ -65,3 +65,37 @@ Route the AE350 bus clocks over the global clock network into the row-0 `AE350_S
 - User Test: FAIL
 
 ---
+
+## 3 COMMIT Unreleased 2026-10-12T08:38:26-07:00
+
+#### Coming From:
+
+Unreleased ce92755
+
+#### Purpose:
+
+Raise the AE350 A25 core clock to 750 MHz and measure the rate it actually runs at on hardware before fixing the bus-clock routing.
+
+#### Outcome:
+
+`fpga/ae350_uart/ae350_uart.sv` now divides the 750 MHz VCO by 1 on `PLL_R[0]` `CLKOUT1` for `CORE_CLK` and keeps the 75 MHz bus on `CLKOUT0`. After the status write, the ROM program loops storing `mcycle` to `0xe8000004`, and fabric pairs each stored value with a Gray-coded count of the 50 MHz board oscillator taken in the same bus cycle, so the measured rate does not depend on the PLL configuration. The trace line now ends with `CYC` and `REF` hex fields, `tools/check_ae350_uart.py --clock N` derives the core clock from consecutive pairs and matches only complete lines that begin with the expected text, the testbench checks the pairing and both fields, `tools/build_ae350_uart.sh` accepts `TINY_NES_SEED` for the nextpnr placement seed, and the README describes the measurement. The normal, diagnostic and trace simulations passed. The normal and diagnostic images built; the default-seed trace build failed nextpnr's hold check on seven `bus_clk` paths with up to 2.14 ns of clock skew, a consequence of the fabric-routed bus clock recorded in entry 2, and a seed sweep gave hold-clean results for seeds 2, 3, 5, 6 and 7 but not 4. The seed-2 trace image, SHA-256 `0fc643d5ff77307993a3e8d40693e9f9be9bb2fb4025950cadbb19ddb4f15ee7` at 138.12 MHz reported bus Fmax with the dedicated core-clock hop present, was first silent, as was a rebuilt diagnostic from `ce92755`, until the user power-cycled the board, which re-enumerated the FT2232 bridge. After that, three separate loads of the trace image each reported `ADDR=1 ROM=1 AHB=1` with an advancing cycle pair, and every 0.899 s interval measured 750.0000 MHz, so the A25 runs at full rate under the open flow. The normal image, SHA-256 `c854bec0964fb19c5acc58d3fc1013f9d2526ebd1be2cccd7a9187ed7d94922f`, loaded with `DONE` and stayed silent with the probe already listening, consistent with its different fabric bus-clock route. Reference record DEV-008 records the clock source, the measured rate and Gowin's 200 MHz bus limit. The user accepted the measurement as a pass. The core-syntax audit passed.
+
+#### Next Steps:
+
+Route the AE350 bus clocks over the global clock network into the row-0 `AE350_SOC` clock taps the way the vendor does, by fixing nextpnr's global router or the Apicula row-0 branch and row-10 tap description so a `GBO0` branch used by row 0 is always fed from a spine, then rebuild the normal image without a seed and have the user confirm `TinyNES AE350 OK` on hardware before replacing the bit-4 and select status check with a full `EXTS_HADDR` and `EXTS_HWDATA` decode.
+
+#### Files Modified:
+
+- README.md
+- fpga/ae350_uart/ae350_uart.sv
+- tests/ae350_uart_tb.sv
+- tools/build_ae350_uart.sh
+- tools/check_ae350_uart.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

@@ -131,6 +131,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Does the FPGA keep its core across a power cycle? | DEV | DEV-006 |
 | What is stored in the FPGA's own configuration flash, and who put it there? | DEV | DEV-007 |
 | Does this project run AE350 RISC-V code, and how does it get there? | DEV | DEV-004 |
+| Which clock drives the AE350 A25 core, how fast can it run, and how fast may its buses run? | DEV | DEV-008 |
 | Is there a core with no emulator for TinyDesk to sit on? | DEV | DEV-005 |
 | Which FPGA pins are the JTAG programmer's? | BRD | BRD-001 |
 | Why does the SD card fail to mount? | BRD | BRD-002 |
@@ -276,6 +277,7 @@ DEV-004: "A core bitstream can carry AE350 RISC-V software: the program is compi
 DEV-005: "The menu core is the console138k design with nestang's NES machine not instantiated: MENU_CORE in src/boards/console138k_menu.v, selected by build.tcl's third `menu` argument; it answers CORE_ID 1, the same value the patched NES core answers, and is about four fifths smaller in logic while its bitstream is only ~2.5 percent smaller"
 DEV-006: "The FPGA is not empty at power-up: with no tangload it is already running a core that answers core ID 0 on the UART and shows a TangCore splash on HDMI, so it configures itself from storage of its own; boot.tdsh replaces it within seconds, and every boot reloads this project's core (tangload, fpga, nesload for a cartridge)"
 DEV-007: "The FPGA's 16 MB XTX configuration flash (JEDEC 0b 40 18) holds one image at offset 0, 1,084,246 B, a compressed GW5AST-138 bitstream matching no TangCore 0.9 core; TangCore's installer and firmware never write that flash, so it is most likely the factory splash core"
+DEV-008: "The A25 core runs at PLL_R[0] CLKOUT1's frequency whatever net drives CORE_CLK; it measured 750.0000 MHz against the 50 MHz oscillator in an open-flow build with a 75 MHz bus; Gowin's manual keeps AHB and APB synchronous and below 200 MHz"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
 BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
@@ -499,6 +501,20 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "TangCore 0.9 release (tangcore-0.9 (1).zip on the user's Desktop): cores/console138k/*.bin, firmware-bl616/flash_console138k.ini, installation.pdf"
     - "Tang-Control (a fork of TangCore's firmware-bl616): no FPGA-flash write path in fpga/, core/ or main.cpp"
   verification: "Dump and comparisons made on 2026-10-06 (core-log entry 39)."
+
+- record_id: DEV-008
+  kind: DEVICE
+  topic_id: DEV
+  title: "AE350 A25 core clock source and rate, and the bus clock ceiling"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "Gowin's RiscV_AE350_SOC Hardware Design Manual 1.3.1E requires the A25 core clock from the dedicated PLL path and keeps the AHB and APB clocks synchronous and below 200 MHz. On the GW5AST-138 the A25 runs at the frequency of PLL_R[0] CLKOUT1 whichever PLL output the netlist connects to AE350_SOC CORE_CLK, which Tang-PSX and Tang-Phosphor established with counted-cycle measurements (74.85 MHz and 49.85 MHz when CLKOUT1 was 75 and 50 MHz while 750 MHz was wired to CORE_CLK; 750.0000 MHz once CLKOUT1 was 750 MHz). The dedicated hop is the open-flow wire AE350_CORE_CLK_PLLR0. A TinyNES open-flow build with a 50 MHz input, a 750 MHz VCO (MDIV_SEL 15), CLKOUT1 divided by 1 into CORE_CLK and CLKOUT0 divided by 10 into the 75 MHz bus measured the A25 at 750.0000 MHz on every interval: the program stores mcycle to the fabric in a loop and the fabric pairs each value with a Gray-coded count of the 50 MHz board oscillator, so the result is independent of the PLL configuration."
+  consequence: "750 MHz is the A25 rate this project has measured, not a proven ceiling; no source consulted states one. Put the CPU clock on CLKOUT1 and the bus clocks on CLKOUT0, keep the buses below 200 MHz, and confirm any CPU rate on hardware with a counted-cycle measurement rather than from the PLL settings or timing report. fpga/ae350_uart/ae350_uart.sv and tools/check_ae350_uart.py --clock implement the measurement."
+  sources:
+    - "Gowin RiscV_AE350_SOC Hardware Design Manual 1.3.1E, https://www.gowinsemi.com/upload/database_doc/2725/document/6981101d547a4.pdf, as cited by Tang-Phosphor's .ai/core-reference.md"
+    - "Tang-Phosphor .ai/core-reference.md record 'AE350 core clock is PLL_R[0] CLKOUT1', src/ae350/ae350_subsystem.sv and tools/ae350_clock_probe.py; Tang-PSX .ai/core-reference.md AE350-007 (https://github.com/aquasock/Tang-PSX)"
+    - "This project's fpga/ae350_uart/ae350_uart.sv (cpu_pll ODIV1_SEL 1, ROM words csrr mcycle and sw to 0xe8000004, ref_count_bus) and tools/check_ae350_uart.py --clock"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 3) over three SRAM loads of the open-flow trace image, each 0.899 s interval reading 750.0000 MHz. The CLKOUT1 behaviour and the 200 MHz bus rule are carried from Tang-Phosphor's records and were not re-measured here."
 
 - record_id: BRD-001
   kind: BOARD

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // First TinyNES hardware gate: the AE350 writes a status word over AHB;
 // fabric reports that event periodically on the FPGA UART at 115200 8N1.
+// The program then keeps storing its mcycle count, which fabric pairs with
+// a count of the 50 MHz board oscillator to measure the core clock.
 module ae350_uart #(
     parameter integer FORCE_UART = 0
 ) (
@@ -12,15 +14,15 @@ module ae350_uart #(
     wire core_clk;
 
     // The AE350's dedicated clock input is PLL_R[0] CLKOUT1 on this part.
-    // 50 MHz * 15 = 750 MHz VCO; CLKOUT0 / 10 = 75 MHz AHB bus.
-    // CLKOUT1 / 10 = 75 MHz core while open-flow bring-up is unproven.
+    // 50 MHz * 15 = 750 MHz VCO; CLKOUT0 / 10 = 75 MHz AHB bus;
+    // CLKOUT1 / 1 = 750 MHz core.
     PLL #(
         .FCLKIN("50"),
         .IDIV_SEL(1),
         .FBDIV_SEL(1),
         .MDIV_SEL(15),
         .ODIV0_SEL(10),
-        .ODIV1_SEL(10),
+        .ODIV1_SEL(1),
         .CLKOUT0_EN("TRUE"),
         .CLKOUT1_EN("TRUE")
     ) cpu_pll (
@@ -87,19 +89,41 @@ module ae350_uart #(
         end
     end
 
+    // The board oscillator is independent of the AE350 PLL. Its count
+    // crosses into the bus domain in Gray code, so every synchronized value
+    // is one the counter actually held.
+    reg [31:0] ref_count_sys = 32'd0;
+    reg [31:0] ref_gray_sys = 32'd0;
+    reg [31:0] ref_gray_meta = 32'd0;
+    reg [31:0] ref_gray_sync = 32'd0;
+    reg [31:0] ref_count_bus = 32'd0;
+    integer ref_bit;
+    always @(posedge sys_clk) begin
+        ref_count_sys <= ref_count_sys + 1'b1;
+        ref_gray_sys <= ref_count_sys ^ (ref_count_sys >> 1);
+    end
+    always @(posedge bus_clk) begin
+        ref_gray_meta <= ref_gray_sys;
+        ref_gray_sync <= ref_gray_meta;
+        for (ref_bit = 0; ref_bit < 32; ref_bit = ref_bit + 1)
+            ref_count_bus[ref_bit] <= ^(ref_gray_sync >> ref_bit);
+    end
+
     // Reset vector 0x80000000. The program writes bit 4 to 0xe8000000,
-    // then loops. These words are RV32I LUI, ADDI, SW, JAL.
+    // then loops storing mcycle to 0xe8000004. These are RV32I/Zicsr words.
     wire [31:0] rom_addr;
     wire [1:0] rom_trans;
     reg rom_addr_seen = 1'b0;
     reg rom_seen = 1'b0;
     reg [31:0] rom_data;
     always @* begin
-        case (rom_addr[3:2])
-            2'd0: rom_data = 32'he80002b7; // lui t0, 0xe8000
-            2'd1: rom_data = 32'h01000313; // addi t1, zero, 16
-            2'd2: rom_data = 32'h0062a023; // sw t1, 0(t0)
-            default: rom_data = 32'h0000006f; // jal zero, 0
+        case (rom_addr[4:2])
+            3'd0: rom_data = 32'he80002b7; // lui t0, 0xe8000
+            3'd1: rom_data = 32'h01000313; // addi t1, zero, 16
+            3'd2: rom_data = 32'h0062a023; // sw t1, 0(t0)
+            3'd3: rom_data = 32'hb0002373; // csrr t1, mcycle
+            3'd4: rom_data = 32'h0062a223; // sw t1, 4(t0)
+            default: rom_data = 32'hff9ff06f; // jal zero, -8
         endcase
     end
 
@@ -109,7 +133,10 @@ module ae350_uart #(
     wire [1:0] exts_trans;
     wire exts_write;
     reg write_pending = 1'b0;
+    reg cycle_pending = 1'b0;
     reg cpu_started = 1'b0;
+    reg [31:0] cpu_cycles = 32'd0;
+    reg [31:0] ref_cycles = 32'd0;
 
     always @(posedge bus_clk or negedge resetn) begin
         if (!resetn)
@@ -129,14 +156,23 @@ module ae350_uart #(
     always @(posedge bus_clk or negedge resetn) begin
         if (!resetn) begin
             write_pending <= 1'b0;
+            cycle_pending <= 1'b0;
             cpu_started <= 1'b0;
+            cpu_cycles <= 32'd0;
+            ref_cycles <= 32'd0;
         end else begin
-            // The current open chipdb omits EXTS_HWDATA[0,3] and
-            // EXTS_HADDR[31]. This diagnostic uses mapped bit 4 and HSEL.
             if (write_pending && exts_wdata[4])
                 cpu_started <= 1'b1;
+            // Pair each mcycle value with the oscillator count taken in its
+            // data phase.
+            if (cycle_pending) begin
+                cpu_cycles <= exts_wdata;
+                ref_cycles <= ref_count_bus;
+            end
             write_pending <= exts_sel && exts_trans[1] && exts_write &&
                              (exts_addr[7:2] == 6'd0);
+            cycle_pending <= exts_sel && exts_trans[1] && exts_write &&
+                             (exts_addr[7:2] == 6'd1);
         end
     end
 
@@ -231,81 +267,104 @@ module ae350_uart #(
     // The FT2232 one-wire bridge is slow to deliver sustained data. Send a
     // short line every 2^26 bus clocks, about 0.895 s at 75 MHz.
     localparam integer UART_DIV = 651; // 75 MHz / 115200 ~= 651
-    localparam [4:0] REPORT_LAST_INDEX = (FORCE_UART == 2) ? 5'd19 : 5'd17;
+    localparam [5:0] REPORT_LAST_INDEX = (FORCE_UART == 2) ? 6'd45 : 6'd17;
     reg [25:0] report_wait = 26'd0;
-    reg [4:0] char_index = 5'd0;
+    reg [5:0] char_index = 6'd0;
+    // The trace line freezes one cycle pair before printing either field.
+    reg [31:0] report_cycles = 32'd0;
+    reg [31:0] report_ref = 32'd0;
     reg [9:0] tx_shift = 10'h3ff;
     reg [3:0] bits_left = 4'd0;
     reg [9:0] baud_wait = 10'd0;
 
+    function [7:0] hex_char(input [3:0] value);
+        hex_char = (value < 4'd10) ? ("0" + value) : ("a" + value - 4'd10);
+    endfunction
+
     function [7:0] report_char(
-        input [4:0] index,
+        input [5:0] index,
         input rom_addr_seen_in,
         input rom_seen_in,
-        input cpu_started_in
+        input cpu_started_in,
+        input [31:0] cycles_in,
+        input [31:0] ref_in
     );
         if (FORCE_UART == 2) begin
-            case (index)
-                5'd0: report_char = "A";
-                5'd1: report_char = "D";
-                5'd2: report_char = "D";
-                5'd3: report_char = "R";
-                5'd4: report_char = "=";
-                5'd5: report_char = rom_addr_seen_in ? "1" : "0";
-                5'd6: report_char = " ";
-                5'd7: report_char = "R";
-                5'd8: report_char = "O";
-                5'd9: report_char = "M";
-                5'd10: report_char = "=";
-                5'd11: report_char = rom_seen_in ? "1" : "0";
-                5'd12: report_char = " ";
-                5'd13: report_char = "A";
-                5'd14: report_char = "H";
-                5'd15: report_char = "B";
-                5'd16: report_char = "=";
-                5'd17: report_char = cpu_started_in ? "1" : "0";
-                5'd18: report_char = 8'h0d;
+            if (index >= 6'd23 && index <= 6'd30)
+                report_char = hex_char(cycles_in >> (4 * (6'd30 - index)));
+            else if (index >= 6'd36 && index <= 6'd43)
+                report_char = hex_char(ref_in >> (4 * (6'd43 - index)));
+            else case (index)
+                6'd0: report_char = "A";
+                6'd1: report_char = "D";
+                6'd2: report_char = "D";
+                6'd3: report_char = "R";
+                6'd4: report_char = "=";
+                6'd5: report_char = rom_addr_seen_in ? "1" : "0";
+                6'd6: report_char = " ";
+                6'd7: report_char = "R";
+                6'd8: report_char = "O";
+                6'd9: report_char = "M";
+                6'd10: report_char = "=";
+                6'd11: report_char = rom_seen_in ? "1" : "0";
+                6'd12: report_char = " ";
+                6'd13: report_char = "A";
+                6'd14: report_char = "H";
+                6'd15: report_char = "B";
+                6'd16: report_char = "=";
+                6'd17: report_char = cpu_started_in ? "1" : "0";
+                6'd18: report_char = " ";
+                6'd19: report_char = "C";
+                6'd20: report_char = "Y";
+                6'd21: report_char = "C";
+                6'd22: report_char = "=";
+                6'd31: report_char = " ";
+                6'd32: report_char = "R";
+                6'd33: report_char = "E";
+                6'd34: report_char = "F";
+                6'd35: report_char = "=";
+                6'd44: report_char = 8'h0d;
                 default: report_char = 8'h0a;
             endcase
         end else if (FORCE_UART == 1) begin
             case (index)
-                5'd0:  report_char = "U";
-                5'd1:  report_char = "A";
-                5'd2:  report_char = "R";
-                5'd3:  report_char = "T";
-                5'd4:  report_char = " ";
-                5'd5:  report_char = "D";
-                5'd6:  report_char = "I";
-                5'd7:  report_char = "A";
-                5'd8:  report_char = "G";
-                5'd9:  report_char = "N";
-                5'd10: report_char = "O";
-                5'd11: report_char = "S";
-                5'd12: report_char = "T";
-                5'd13: report_char = "I";
-                5'd14: report_char = "C";
-                5'd15: report_char = "!";
-                5'd16: report_char = 8'h0d;
+                6'd0:  report_char = "U";
+                6'd1:  report_char = "A";
+                6'd2:  report_char = "R";
+                6'd3:  report_char = "T";
+                6'd4:  report_char = " ";
+                6'd5:  report_char = "D";
+                6'd6:  report_char = "I";
+                6'd7:  report_char = "A";
+                6'd8:  report_char = "G";
+                6'd9:  report_char = "N";
+                6'd10: report_char = "O";
+                6'd11: report_char = "S";
+                6'd12: report_char = "T";
+                6'd13: report_char = "I";
+                6'd14: report_char = "C";
+                6'd15: report_char = "!";
+                6'd16: report_char = 8'h0d;
                 default: report_char = 8'h0a;
             endcase
         end else case (index)
-            5'd0:  report_char = "T";
-            5'd1:  report_char = "i";
-            5'd2:  report_char = "n";
-            5'd3:  report_char = "y";
-            5'd4:  report_char = "N";
-            5'd5:  report_char = "E";
-            5'd6:  report_char = "S";
-            5'd7:  report_char = " ";
-            5'd8:  report_char = "A";
-            5'd9:  report_char = "E";
-            5'd10: report_char = "3";
-            5'd11: report_char = "5";
-            5'd12: report_char = "0";
-            5'd13: report_char = " ";
-            5'd14: report_char = "O";
-            5'd15: report_char = "K";
-            5'd16: report_char = 8'h0d;
+            6'd0:  report_char = "T";
+            6'd1:  report_char = "i";
+            6'd2:  report_char = "n";
+            6'd3:  report_char = "y";
+            6'd4:  report_char = "N";
+            6'd5:  report_char = "E";
+            6'd6:  report_char = "S";
+            6'd7:  report_char = " ";
+            6'd8:  report_char = "A";
+            6'd9:  report_char = "E";
+            6'd10: report_char = "3";
+            6'd11: report_char = "5";
+            6'd12: report_char = "0";
+            6'd13: report_char = " ";
+            6'd14: report_char = "O";
+            6'd15: report_char = "K";
+            6'd16: report_char = 8'h0d;
             default: report_char = 8'h0a;
         endcase
     endfunction
@@ -314,7 +373,9 @@ module ae350_uart #(
     always @(posedge bus_clk or negedge resetn) begin
         if (!resetn) begin
             report_wait <= 26'd0;
-            char_index <= 5'd0;
+            char_index <= 6'd0;
+            report_cycles <= 32'd0;
+            report_ref <= 32'd0;
             tx_shift <= 10'h3ff;
             bits_left <= 4'd0;
             baud_wait <= 10'd0;
@@ -331,11 +392,17 @@ module ae350_uart #(
                 end
             end else if ((cpu_started || FORCE_UART != 0) && report_wait == 0) begin
                 tx_shift <= {1'b1, report_char(char_index, rom_addr_seen,
-                                               rom_seen, cpu_started), 1'b0};
+                                               rom_seen, cpu_started,
+                                               report_cycles, report_ref),
+                             1'b0};
+                if (char_index == 6'd18) begin
+                    report_cycles <= cpu_cycles;
+                    report_ref <= ref_cycles;
+                end
                 bits_left <= 4'd10;
                 baud_wait <= UART_DIV - 1;
                 if (char_index == REPORT_LAST_INDEX) begin
-                    char_index <= 5'd0;
+                    char_index <= 6'd0;
                     report_wait <= 26'h3ffffff;
                 end else begin
                     char_index <= char_index + 1'b1;

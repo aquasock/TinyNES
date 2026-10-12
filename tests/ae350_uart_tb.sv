@@ -28,6 +28,18 @@ module ae350_uart_tb #(
         end
     endtask
 
+    function [7:0] hex_char(input [3:0] value);
+        hex_char = (value < 4'd10) ? ("0" + value) : ("a" + value - 4'd10);
+    endfunction
+
+    task automatic receive_hex(input [31:0] value);
+        integer nibble;
+        begin
+            for (nibble = 7; nibble >= 0; nibble = nibble - 1)
+                receive_byte(hex_char(value >> (4 * nibble)));
+        end
+    endtask
+
     initial begin
         // A black-box FPGA primitive has no simulation model here. Drive
         // only its clock-lock and AHB outputs to exercise our own logic.
@@ -48,6 +60,17 @@ module ae350_uart_tb #(
         wait (dut.resetn);
         repeat (3) @(negedge clk);
         if (FORCE_UART == 2) begin
+            // One mcycle store to 0xe8000004; its data phase follows.
+            force dut.exts_addr = 32'he8000004;
+            force dut.exts_sel = 1'b1;
+            @(negedge clk);
+            force dut.exts_sel = 1'b0;
+            force dut.exts_wdata = 32'h1234abcd;
+            repeat (2) @(negedge clk);
+            force dut.exts_addr = 32'he8000000;
+            force dut.exts_wdata = 32'h00000010;
+            if (dut.cpu_cycles !== 32'h1234abcd || dut.ref_cycles == 32'd0)
+                $fatal(1, "mcycle store was not paired with the oscillator count");
             receive_byte("A"); receive_byte("D"); receive_byte("D");
             receive_byte("R"); receive_byte("="); receive_byte("1");
             receive_byte(" ");
@@ -55,11 +78,19 @@ module ae350_uart_tb #(
             receive_byte("="); receive_byte("1"); receive_byte(" ");
             receive_byte("A"); receive_byte("H"); receive_byte("B");
             receive_byte("="); receive_byte("0");
+            receive_byte(" "); receive_byte("C"); receive_byte("Y");
+            receive_byte("C"); receive_byte("=");
+            receive_hex(32'h1234abcd);
+            receive_byte(" "); receive_byte("R"); receive_byte("E");
+            receive_byte("F"); receive_byte("=");
+            if (dut.report_ref !== dut.ref_cycles)
+                $fatal(1, "report did not freeze the captured oscillator count");
+            receive_hex(dut.report_ref);
             receive_byte(8'h0d); receive_byte(8'h0a);
             if (dut.rom_addr_seen !== 1'b1 || dut.rom_seen !== 1'b1 ||
                 dut.cpu_started !== 1'b0)
                 $fatal(1, "trace state did not match the simulated bus activity");
-            $display("PASS: trace UART reports ROM address and fetch without AHB write");
+            $display("PASS: trace UART reports ROM fetch, no status write, and the cycle pair");
         end else if (FORCE_UART == 1) begin
             receive_byte("U"); receive_byte("A"); receive_byte("R");
             receive_byte("T"); receive_byte(" "); receive_byte("D");
@@ -91,7 +122,7 @@ module ae350_uart_tb #(
     end
 
     initial begin
-        #2000000;
+        #4000000;
         $fatal(1, "UART report timed out");
     end
 endmodule
