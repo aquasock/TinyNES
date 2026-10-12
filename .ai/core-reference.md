@@ -118,6 +118,10 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 - topic_id: TOOL
   name: "Toolchain behaviour"
   description: "Bouffalo SDK, CherryUSB, Gowin programmer, and RISC-V toolchain behaviour that affects correctness, plus the provenance and licence of code vendored into this project."
+
+- topic_id: EMU
+  name: "NES emulator cores on the AE350"
+  description: "Emulator cores tried on the A25: which revision, how they are built and checked against a PC build, and how fast they run."
 ```
 
 ---
@@ -136,6 +140,8 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | What does the A25 fetch on its RAM port outside the RAM, and why must those fetches not get ERROR? | DEV | DEV-010 |
 | Which addresses does the AE350's RAM port carry, and are they cached? | DEV | DEV-011 |
 | Which extensions does the A25 implement, and does it have an FPU? | DEV | DEV-012 |
+| How big are the A25's caches, and how is that read? | DEV | DEV-013 |
+| Which mcache_ctl bits exist beyond the cache enables? | DEV | DEV-014 |
 | Is there a core with no emulator for TinyDesk to sit on? | DEV | DEV-005 |
 | Which FPGA pins are the JTAG programmer's? | BRD | BRD-001 |
 | Why does the SD card fail to mount? | BRD | BRD-002 |
@@ -252,6 +258,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Which SDK components does this firmware link, and under what licences? | TOOL | TOOL-016 |
 | Why was the open-flow core's HDMI dark, how is it fixed, and which flow builds the desktop core? | TOOL | TOOL-017 |
 | Which compiler builds the AE350 firmware, and which runtime library does it link? | TOOL | TOOL-018 |
+| Why does <dirent.h> fail to compile for the AE350, and how is third-party code built? | TOOL | TOOL-019 |
 | Is it safe to send a file to the board, or is the desktop holding the console? | TOOL | TOOL-011 |
 | How is the board debugged one-wire, and what of TinyTang and TinyDesk is reachable then? | TOOL | TOOL-012 |
 | How is a core deployed, debugged and exercised entirely over one-wire? | TOOL | TOOL-013 |
@@ -263,6 +270,8 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Does this project carry the licences and notices it owes? | PROV | PROV-005 |
 | What licence is this project under, and what is the exception? | PROV | PROV-005 |
 | Where is colibri, and what are its terms? | PROV | PROV-003 |
+| Where does Nestopia come from, and what are its terms? | PROV | PROV-006 |
+| How fast does an NES emulator run on the A25, and is it correct? | EMU | EMU-001 |
 | Which silicon revision is this board, and which revision is the core image? | PSX | PSX-001 |
 | How much logic and block RAM does the device have? | PSX | PSX-002 |
 | Which FPGA pins carry the core UART, and where is the board's clock? | PSX | PSX-003 |
@@ -288,6 +297,8 @@ DEV-009: "PLL_R[0] CLKOUT0 reaches the global clock network through TRPLL0CLK0 a
 DEV-010: "The A25 fetches down mispredicted paths to address 0 on the RAM port (HPROT[0] 0, 32-byte WRAP4 line fills with the I-cache on); with both caches on, one ERROR on such a fill stops the core, so ahb_ram answers fetches outside its block RAM and SDRAM windows with zero and OKAY"
 DEV-011: "The AE350 RAM port (DDR_H*) carries 0x40000000 to at least 0x7fffffff, cacheable: TinyNES runs block RAM at 0x60000000 and SDRAM at 0x40000000 there with both caches on, and Tang-PSX ran DDR3 up to 0x7fffffff"
 DEV-012: "The A25's misa reads 0x4094312d: RV32 IMAFDC plus N, S, U and X, so it has a single- and double-precision FPU, which TinyNES's soft-float rv32imac/ilp32 firmware does not use"
+DEV-013: "The A25's micm_cfg and mdcm_cfg read 0x00439ada: the L1 I-cache and D-cache are each 32 KiB, 4-way, with 32-byte lines"
+DEV-014: "U-Boot names Andes mcache_ctl bits 9 and 10 as I- and D-cache prefetch enables; TinyNES sets only bits 0 and 1, and whether the A25 implements them is untested"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
 BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
@@ -382,6 +393,7 @@ PHOS-013: "Lessons from the discarded resident gapless player experiment: detect
 PROV-001: "Lineage as the user states it: nand2mario's TangCore is the origin for Tang-Phosphor and Tang-PSX; Tang-Control is a fork of the same repo for peek/poke and the 1-wire and 2-wire debug arrangements; the family also uses a DDR3 IP block, TinyDesk, and CERN's colibri as a reference; the remembered memory module turned out to be nand2mario's JTAG bit-bang programmer, and Tang-PSX is being archived rather than deleted"
 PROV-003: "colibri is CERN's vendor-independent, fully verified, open-source VHDL common library at gitlab.cern.ch/colibri/colibri, with an unofficial SystemVerilog port at github.com/kavierim/colibri-sv pinned to upstream 3fa78412; read the port when working in SystemVerilog since it ships an AGENTS.md and targets Verilator and free tooling, but treat the original as the authority; licensed CERN-OHL-W-2.0 (weakly reciprocal), not MIT, with no code copied here"
 PROV-005: "TinyTang is MIT with thirteen Apache-2.0 files: nand2mario's JTAG programmer, and ten Phosphor transport files and two host tests written by this project's author in Tang-Control; it descends from nand2mario's TangCore firmware-bl616 through Tang-Control, a fork of it, and copies no other TangCore source; THIRD_PARTY.md must keep saying the UART protocol was read from GPL-3.0 nestang as a specification, not copied"
+PROV-006: "libretro Nestopia is GPL-2.0-or-later (Freij, Nestopia UE, Carmichael and others); tools/fetch_nestopia.sh fetches commit 135dfa6 into git-ignored third_party/nestopia, and programs linked with it stay in build/"
 PSX-001: "This board is GW5AST-138 revision C (package mark 2518CA0N), while the console138k core image it loads is built for revision B and works anyway"
 PSX-002: "GW5AST-138: 138,240 LUTs, 139,095 registers, 340 BSRAM blocks of 18 Kbit, about 765 KB"
 PSX-003: "50 MHz oscillator on FPGA pin V22; the BL616 control UART reaches the FPGA on V14 (FPGA RX) and U15 (FPGA TX), LVCMOS33 - the other end of the link PROT-003 describes from the BL616 side; all three confirmed on this board by the AE350 system at 2 Mbaud"
@@ -421,6 +433,8 @@ TOOL-015: "With FF_FS_REENTRANT 1 the SDK's FatFS R0.15 takes a FreeRTOS mutex (
 TOOL-016: "Linked out of the SDK under their own licences: FreeRTOS V10.4.6 (MIT, (C) 2021 Amazon.com), CherryUSB (Apache-2.0), FatFs R0.15 w/patch3 (ChaN), and the Bluetooth stack: the Zephyr-derived host (Apache-2.0; Intel, Nordic, Wind River, Oticon, Chettimada), TinyCrypt (BSD-3-Clause, Intel 2017), micro-ecc (BSD-2-Clause, Kenneth MacKay 2014) and ctr_prng (BSD-2-Clause, Chris Morrison 2016), whose binary-form notices are reproduced in LICENSES/, plus the binary-only RivieraWaves-based controller and PHY libraries under the SDK's Apache-2.0 alone; LVGL, TJpgDec, mbedTLS, littlefs and the codecs are not linked"
 TOOL-017: "Open-flow HDMI works: the apicula fork at 1c2b6cb+ writes the OSER10 aux half, HWL, lane-0 FCLKSEL0/3 and ODDR LSROMUX_0 like Gowin, and at 93761f4+ its io2hclk map splits each long side at the block midpoint as the vendor does, so the build adds no fuses; the clock network was never the fault"
 TOOL-018: "The AE350 firmware is built with xPack GNU RISC-V Embedded GCC 15.2.0-1 (riscv-none-elf-gcc 15.2.0), configured --with-arch=rv32imac --with-abi=ilp32, so -march=rv32imac_zicsr_zifencei -mabi=ilp32 selects its default multilib: the boot ROM (firmware/boot/Makefile) links libgcc alone, and loaded programs (firmware/rt/rt.mk) link newlib 4.5.0's libc and libm, libstdc++ and libsupc++ with the runtime's own crt0 and syscalls; the compiler is found in ~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin"
+TOOL-019: "newlib 4.5.0's <sys/dirent.h> is an #error, so firmware/rt/include/sys/dirent.h stands in and syscalls.c's opendir, readdir and closedir always fail; rt.mk builds third-party LIB_SOURCES with their own flags"
+EMU-001: "libretro Nestopia 135dfa6 runs Castlevania on the A25 with checksums matching a PC build, at 23.16 ms a frame against 16.64 ms: 71.8 percent of full speed, with a 0.78 s start"
 ```
 
 ---
@@ -578,6 +592,33 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "This project's firmware/apps/rt_test/main.cpp (csrr misa, printed as MISA=)"
     - "The RISC-V Instruction Set Manual, Volume II: Privileged Architecture, the misa register's MXL field and extension bit assignments"
   verification: "Measured on this board on 2026-10-12 (core-log entry 9): rt_test, loaded by the agent in one-wire mode, printed TinyNES RT OK MISA=4094312d on two runs. No floating-point instruction has been executed to confirm the FPU works."
+
+- record_id: DEV-013
+  kind: DEVICE
+  topic_id: DEV
+  title: "The A25's L1 I-cache and D-cache are each 32 KiB, 4-way, with 32-byte lines"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "On this board's A25, micm_cfg (CSR 0xfc0) and mdcm_cfg (CSR 0xfc1) both read 0x00439ada. In the Andes layout, ISET/DSET (bits 2:0) is 2, which with SETH (bit 24) clear means 256 sets; IWAY/DWAY (bits 5:3) is 3, which means 4 ways; ISZ/DSZ (bits 8:6) is 3, which means 32-byte lines. Each cache is therefore 256 x 4 x 32 = 32,768 bytes."
+  consequence: "A program whose working set exceeds 32 KiB of code or data goes to the SDRAM line by line, at about 370 core cycles a line (README, rt_test MISS=). The 32-byte line matches the WRAP4 doubleword fills seen on the RAM port (DEV-011). firmware/apps/nes_bench prints and decodes both registers as its CACHE line; the libretro Nestopia core's 2.5 MB of code and its per-frame data do not fit (EMU-001)."
+  sources:
+    - "This project's firmware/apps/nes_bench/main.cpp (csrr 0xfc0 and 0xfc1, print_cache)"
+    - "hpmicro/hpm_sdk main, soc/HPM5300/HPM5361/hpm_csr_regs.h: CSR_MICM_CFG_ISET, IWAY, ISZ and SETH fields and their encodings, and the matching CSR_MDCM_CFG fields (an Andes D45 SoC's header for the same Andes CSRs)"
+    - "riscv-software-src/opensbi platform/generic/include/andes/andes.h: CSR_MICM_CFG 0xfc0 and MICM_CFG_ISZ at bits 8:6"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 10): nes_bench, loaded by the agent in one-wire mode, printed TinyNES NES CACHE MICM=00439ada MDCM=00439ada I=32768/4/32 D=32768/4/32. The field layout was taken from the HPMicro and OpenSBI headers, not from an Andes A25 manual, which was not read."
+
+- record_id: DEV-014
+  kind: DEVICE
+  topic_id: DEV
+  title: "Andes mcache_ctl has I- and D-cache prefetch enables in bits 9 and 10, which TinyNES does not set"
+  status: SOURCED
+  verified_date: 2026-10-12
+  statement: "U-Boot's Andes CSR header names these mcache_ctl (CSR 0x7ca) bits: IC_EN 0, DC_EN 1, IC_ECCEN 3, DC_ECCEN 5, CCTL_SUEN 8, IC_PREFETCH_EN 9, DC_PREFETCH_EN 10, DC_WAROUND_EN 13, L2C_WAROUND_EN 15, TLB_ECCEN 18, DC_COHEN 19 and DC_COHSTA 20."
+  consequence: "firmware/boot/main.c and firmware/rt/crt0.S set only bits 0 and 1, so if the A25 implements the prefetch bits they are off. Turning them on is an untested lever on the SDRAM miss cost behind EMU-001's frame times."
+  sources:
+    - "u-boot/u-boot master, arch/riscv/include/asm/arch-andes/csr.h: MCACHE_CTL_* bit definitions"
+    - "This project's firmware/boot/main.c (CSR_SET(CSR_MCACHE_CTL, 3u)) and firmware/rt/crt0.S (csrs 0x7ca)"
+  verification: "Read from U-Boot's header on 2026-10-12 (core-log entry 10). Whether the A25 on this board implements bits 9 and 10, and what they change, has not been tested."
 
 - record_id: BRD-001
   kind: BOARD
@@ -1829,6 +1870,19 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "Project statement recorded with the user, 2026-10-03: a preference for MIT unless Apache-2.0 turned out to be required"
   verification: "On 2026-10-06 every file under ports, tools, scripts and cmake was searched for Apache-2.0 and for nand2mario, TangCore and Tang-Control, and the authorship of each carried-over file was read from Tang-Control's history (core-log entry 38). Each THIRD_PARTY.md entry was written from a licence read directly. Revised 2026-10-11 (core-log entry 10): folded in THIRD_PARTY.md's coverage from the retired PROV-002 and the MIT trade-offs from the retired PROV-004."
 
+- record_id: PROV-006
+  kind: EXTERNAL
+  topic_id: PROV
+  title: "libretro Nestopia is GPL-2.0-or-later and is fetched at a pinned commit, never vendored"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "libretro/nestopia's COPYING is the GNU GPL version 2, and its source headers (for example source/core/NstCpu.cpp) allow 'any later version'. Its README credits Martin Freij (2003-2008), the Nestopia UE contributors (2008-2018), Rupert Carmichael (2020-2026) and Shay Green (2006-2007) among others. Commit 135dfa6dfda5e7603d61e751b9ddd0cc42546bc3 of 2026-10-11 is the head of master that TinyNES uses."
+  consequence: "tools/fetch_nestopia.sh clones that commit into third_party/nestopia/, which .gitignore excludes, and fails if HEAD differs or the tree has local changes, so TinyNES (MIT) carries no Nestopia source. Any program linked with it, such as nes_bench.elf and its PC build, is GPL-2.0-or-later and stays in build/; with a cartridge image built in it is for local use only, and the image itself is the user's and never committed. README.md's licensing section names the copyright holders and these terms."
+  sources:
+    - "https://github.com/libretro/nestopia commit 135dfa6dfda5e7603d61e751b9ddd0cc42546bc3: COPYING, README, source/core/NstCpu.cpp header"
+    - "This project's tools/fetch_nestopia.sh, .gitignore (/third_party/) and README.md (Nestopia benchmark; References and licensing)"
+  verification: "Read from the fetched tree on 2026-10-12 (core-log entry 10); fetch_nestopia.sh reported the pinned commit and a clean tree."
+
 - record_id: PSX-001
   kind: DEVICE
   topic_id: PSX
@@ -2368,6 +2422,33 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "riscv-none-elf-gcc -v, --print-multi-lib, -print-multi-directory, -print-libgcc-file-name and -print-file-name from that installation; riscv-none-elf-readelf -A on lib/gcc/riscv-none-elf/15.2.0/libgcc.a; riscv-none-elf/include/_newlib_version.h"
     - "This project's firmware/boot/Makefile and build/firmware/boot/boot.map (LOAD of that libgcc.a); firmware/rt/rt.mk, firmware/rt/link.ld and build/firmware/apps/rt_test/rt_test.map (LOAD of libc.a and libstdc++.a)"
   verification: "Installed and checked on 2026-10-12 (core-log entry 7): the archive hash matched, the compiler built firmware/boot into a 32 KiB boot.hex, and the open-flow ae350_soc netlist's boot ROM matched all 8192 words of it in gate-level simulation against the Gowin primitive models. The firmware it built ran on the AE350 on 2026-10-12 (core-log entry 7), testing the RAM with the caches off and on and printing TinyNES AE350 C OK. Revised 2026-10-12 (core-log entry 9): the runtime's libraries are recorded; rt_test, built with rt.mk, ran on the board using static constructors, standard containers, exceptions, RTTI, printf and libm, and printed TinyNES RT OK."
+
+- record_id: TOOL-019
+  kind: TOOLCHAIN
+  topic_id: TOOL
+  title: "newlib 4.5.0's <sys/dirent.h> refuses to compile, so the runtime supplies its own and failing directory calls"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "In xPack GNU RISC-V Embedded GCC 15.2.0-1, riscv-none-elf/include/dirent.h includes <sys/dirent.h>, whose generic version is '#error \"<dirent.h> not supported\"'; newlib's dirent.h then declares opendir, readdir, closedir and others on a DIR type it does not define, and uses ssize_t. libretro-common's vfs/vfs_implementation.c includes <dirent.h> on every non-Windows, non-Vita target."
+  consequence: "firmware/rt/include/sys/dirent.h, ahead of newlib's on rt.mk's include path, defines DIR as an incomplete struct and struct dirent with d_name, after <sys/types.h>; firmware/rt/syscalls.c gives opendir (ENOENT), readdir and closedir (EBADF), which always fail, as _open does. rt.mk also builds LIB_SOURCES, third-party code, with ARCHFLAGS, -O2, -g, section splitting, CPPFLAGS, LIB_CPPFLAGS and LIB_CFLAGS or LIB_CXXFLAGS, without the TinyNES -Wall -Wextra -Werror and language flags, and links EXTRA_OBJECTS. With these, the libretro Nestopia core (PROV-006) and libretro-common compile with upstream's GCC flags and link with no undefined symbols; the stat, rename and fstat members of libc that the file layer pulls in are discarded by --gc-sections."
+  sources:
+    - "~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/riscv-none-elf/include/dirent.h and include/sys/dirent.h"
+    - "libretro/nestopia 135dfa6, libretro/libretro-common/vfs/vfs_implementation.c includes"
+    - "This project's firmware/rt/include/sys/dirent.h, firmware/rt/syscalls.c, firmware/rt/rt.mk, firmware/apps/nes_bench/Makefile and build/firmware/apps/nes_bench/nes_bench.map"
+  verification: "Built on 2026-10-12 (core-log entry 10): without the stand-in, vfs_implementation.c failed on the #error, then on ssize_t; with it, nes_bench linked and ran on the board. Nestopia's C++ built with both -std=gnu++11 and upstream's -std=c++98; only the gnu++11 build was run."
+
+- record_id: EMU-001
+  kind: EXTERNAL
+  topic_id: EMU
+  title: "libretro Nestopia 135dfa6 runs Castlevania correctly on the A25 at 71.8 percent of full speed"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "firmware/apps/nes_bench, built with rt.mk (soft-float rv32imac, -O2, Nestopia with -std=gnu++11 -fno-rtti), ran Castlevania (USA) (Rev A), 131,088 bytes with CRC-32 856114c8, for 1,800 frames with its default controller script and RAM power-on state 0x00. On the A25 at 750 MHz, with code and data in the SDRAM, both caches on and the stack in block RAM, the program was 3,586,108 bytes and loaded in 19.44 s; retro_init and retro_load_game took 780,965 us; retro_run averaged 23,164 us (minimum 14,360, maximum 25,279) against the core's 60.0988 Hz frame period of 16,639 us, so 1,717 frames ran over and the speed was 71.8 percent. All 15 interval lines and the final line of VIDEO and AUDIO CRC-32s matched the PC build of the same harness, which averaged about 361 us a frame and gave identical checksums on two runs."
+  consequence: "The A25 emulates the same frames and samples as a PC, so the libretro core, the runtime and the soft-float build are correct for this game; it needs about 1.4 times the speed for 60 frames a second. Untested levers are the cache prefetch bits (DEV-014), -O3 and other compiler options, the FPU (DEV-012), and placing hot code or data in the 64 KiB block RAM; the 32 KiB caches (DEV-013) cannot hold the core's code. The 0.78 s start includes parsing nst_db_xml, the 997,437-byte XML cartridge database that libretro.cpp compiles in from nstdatabase.hpp; it was not timed on its own. Another core, such as FCEUX, would be measured the same way."
+  sources:
+    - "This project's firmware/apps/nes_bench/main.cpp and Makefile, tools/fetch_nestopia.sh, tools/load_ae350.py"
+    - "libretro/nestopia 135dfa6 (PROV-006), libretro/libretro.cpp retro_load_game and retro_run, libretro/nstdatabase.hpp nst_db_xml"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 10): one run, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, printed the figures above and TinyNES EXIT 0; the user accepted the result. Frame times on other games or with other scripts were not measured."
 ```
 
 ---

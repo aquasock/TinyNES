@@ -3,7 +3,10 @@
 # Build rules for TinyNES AE350 runtime programs: C and C++ (exceptions and
 # RTTI on) with newlib and libstdc++, linked to run from the SDRAM after the
 # boot ROM loads them (tools/load_ae350.py). An app Makefile sets APP and
-# SOURCES (.c, .cpp, .S, relative to its directory) and includes this file:
+# SOURCES (.c, .cpp, .S, relative to its directory) and includes this file.
+# LIB_SOURCES are third-party .c and .cpp files, built with ARCHFLAGS, -O2,
+# CPPFLAGS and LIB_CPPFLAGS plus LIB_CFLAGS or LIB_CXXFLAGS in place of the
+# TinyNES warning and language flags. EXTRA_OBJECTS are linked in as well.
 #
 #   make                  build $(BUILD)/$(APP).elf
 #   make BUILD=<dir>      choose the output directory
@@ -19,7 +22,7 @@ CXX       := $(CROSS)g++
 SIZE      := $(CROSS)size
 
 ARCHFLAGS := -march=rv32imac_zicsr_zifencei -mabi=ilp32
-CPPFLAGS  += -I$(ROOT)/firmware/include -I$(ROOT)/firmware/common -MMD -MP
+CPPFLAGS  += -I$(RT_DIR)/include -I$(ROOT)/firmware/include -I$(ROOT)/firmware/common -MMD -MP
 COMMON    := $(ARCHFLAGS) -O2 -g -ffunction-sections -fdata-sections \
              -Wall -Wextra -Werror
 CFLAGS    += $(COMMON) -std=gnu11
@@ -39,12 +42,17 @@ RT_SOURCES := $(RT_DIR)/crt0.S $(RT_DIR)/syscalls.c $(ROOT)/firmware/common/uart
 objects     = $(patsubst %,$(BUILD)/obj/%.o,$(subst /,_,$(1)))
 RT_OBJECTS := $(call objects,$(notdir $(RT_SOURCES)))
 APP_OBJECTS := $(call objects,$(SOURCES))
+lib_object  = $(patsubst $(ROOT)/%,$(BUILD)/lib/%.o,$(abspath $(1)))
+LIB_OBJECTS := $(foreach s,$(LIB_SOURCES),$(call lib_object,$(s)))
+LIB_COMMON  := $(ARCHFLAGS) -O2 -g -ffunction-sections -fdata-sections
 
 all: $(BUILD)/$(APP).elf
 
-$(BUILD)/$(APP).elf: $(RT_OBJECTS) $(APP_OBJECTS) $(RT_DIR)/link.ld
+$(BUILD)/$(APP).elf: $(RT_OBJECTS) $(APP_OBJECTS) $(LIB_OBJECTS) \
+		$(EXTRA_OBJECTS) $(RT_DIR)/link.ld
 	$(CXX) $(LDFLAGS) -o $@ $(call crtfile,crti.o) $(RT_OBJECTS) \
-	    $(call crtfile,crtbegin.o) $(APP_OBJECTS) $(LDLIBS) \
+	    $(call crtfile,crtbegin.o) $(APP_OBJECTS) $(LIB_OBJECTS) \
+	    $(EXTRA_OBJECTS) $(LDLIBS) \
 	    $(call crtfile,crtend.o) $(call crtfile,crtn.o)
 	$(SIZE) $@
 
@@ -56,9 +64,16 @@ endef
 $(foreach s,$(RT_SOURCES),$(eval $(call compile,$(notdir $(s)),$(s))))
 $(foreach s,$(SOURCES),$(eval $(call compile,$(s),$(s))))
 
+define compile_lib
+$(call lib_object,$(1)): $(1) $(MAKEFILE_LIST)
+	@mkdir -p $$(dir $$@)
+	$$(if $$(filter %.cpp,$(1)),$$(CXX) $$(CPPFLAGS) $$(LIB_CPPFLAGS) $$(LIB_COMMON) $$(LIB_CXXFLAGS),$$(CC) $$(CPPFLAGS) $$(LIB_CPPFLAGS) $$(LIB_COMMON) $$(LIB_CFLAGS)) -c -o $$@ $(1)
+endef
+$(foreach s,$(LIB_SOURCES),$(eval $(call compile_lib,$(s))))
+
 clean:
 	rm -rf $(BUILD)
 
--include $(wildcard $(BUILD)/obj/*.d)
+-include $(wildcard $(BUILD)/obj/*.d) $(LIB_OBJECTS:.o=.d)
 
 .PHONY: all clean

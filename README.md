@@ -2,9 +2,10 @@
 
 TinyNES is an open-source NES project for the Tang Console 138K. Its planned
 emulator runs on the FPGA's hard AE350 RISC-V CPU. FPGA logic will handle board
-I/O and the memory and display paths. The emulator candidate is the
-[Nestopia libretro core](https://github.com/libretro/nestopia); it is not part
-of this repository yet.
+I/O and the memory and display paths. The first emulator tried is the
+[Nestopia libretro core](https://github.com/libretro/nestopia), fetched at a
+pinned commit for a headless benchmark; its source is not part of this
+repository.
 
 ## First hardware gate: AE350 UART
 
@@ -302,6 +303,13 @@ caches on. `MISS` is the core cycles per cache line read from the SDRAM,
 The programs are compiled for `rv32imac` with soft float, matching the
 compiler's default libraries; the FPU is not used yet.
 
+There are no files or directories: `open` and `opendir` fail with `ENOENT`.
+`firmware/rt/include/sys/dirent.h` stands in for newlib's, which refuses to
+build, so that `<dirent.h>` compiles. A program can also build third-party
+code with its own flags: `LIB_SOURCES` are compiled with `ARCHFLAGS`, `-O2`,
+`LIB_CPPFLAGS` and `LIB_CFLAGS` or `LIB_CXXFLAGS` instead of the TinyNES
+warning and language flags, and `EXTRA_OBJECTS` are linked in.
+
 `tests/test_loader_host.py` runs the ROM's real `load.c` on the PC against
 `tools/load_ae350.py`, through a pseudo-terminal, with a 32 MiB buffer mapped
 at `0x40000000`. It checks a clean load byte for byte, and that dropped,
@@ -313,6 +321,61 @@ needs `gcc` and `pyserial`, and `rt_test` built first:
 make -C firmware/apps/rt_test
 python3 -m unittest tests/test_loader_host.py
 ```
+
+### Nestopia benchmark
+
+`firmware/apps/nes_bench/` runs the libretro Nestopia core with no video,
+sound or controller, on a cartridge image built into the program, and times
+each `retro_run` against the NES frame period. Nestopia is GPL-2.0-or-later
+and is not in this repository: `tools/fetch_nestopia.sh` clones
+libretro/nestopia at commit `135dfa6dfda5e7603d61e751b9ddd0cc42546bc3` into
+`third_party/nestopia/`, which git ignores, and checks that it is unmodified.
+The benchmark's Makefile includes upstream's `libretro/Makefile.common` and
+builds its sources with upstream's GCC flags, except `-std=gnu++11` in place
+of `-std=c++98`; both compile with GCC 15, and the measurements below are of
+the `gnu++11` build. The cartridge image is the user's own and is never committed:
+
+```sh
+tools/fetch_nestopia.sh
+make -C firmware/apps/nes_bench ROM=<file.nes>        # AE350 program
+make -C firmware/apps/nes_bench ROM=<file.nes> host   # the same for the PC
+python3 tools/load_ae350.py build/firmware/apps/nes_bench/nes_bench.elf --run-timeout 600
+build/firmware/apps/nes_bench/host/nes_bench
+```
+
+Both programs contain Nestopia and the cartridge image, so they are
+GPL-2.0-or-later builds for local use only and stay in `build/`.
+
+The harness answers the libretro environment with no system or save files,
+XRGB8888 pixels and RAM filled with `0x00` at power-on, so every run is the
+same. It plays a controller script, by default 1,800 frames of Castlevania:
+Start at frame 120, then walking right through the first stage from frame
+720 with whips and jumps. `FRAMES=<n>` and `INPUT="<first>+<frames>=<button>
+..."` replace them at build time. On the PC, `NES_DUMP=<dir>` saves the
+checked frames as PPM images. It prints:
+
+```text
+TinyNES NES ROM=<bytes> CRC=<crc32> START=<us>
+TinyNES NES CACHE MICM=<micm_cfg> MDCM=<mdcm_cfg> I=<bytes>/<ways>/<line> D=<bytes>/<ways>/<line>
+TinyNES NES F=<frame> AVG=<us> MAX=<us> VIDEO=<crc> AUDIO=<crc>
+TinyNES NES FRAMES=<n> AVG=<us> MIN=<us> MAX=<us> OVER=<n> SPEED=<x.y>%
+TinyNES NES VIDEO=<crc> AUDIO=<crc>
+```
+
+`START` is `retro_init` and `retro_load_game`, which parses the 1 MB
+cartridge database built into the core. `CACHE` (AE350 only) decodes the
+A25's cache configuration registers. An `F=` line covers the 120 frames
+before it. `VIDEO` is a CRC-32 of every 60th frame and `AUDIO` of every
+frame's samples, both taken outside the timed calls. `OVER` counts frames
+slower than the NES frame period and `SPEED` is that period over the average
+frame time. Matching `VIDEO` and `AUDIO` on the board and the PC show the
+A25 emulates the same frames.
+
+On the board with Castlevania (USA) (Rev A) the program is 3.43 MB and loads
+in 19.4 s. The caches are 32 KiB, 4-way, with 32-byte lines each. `START`
+is 0.78 s. Frames average 23.16 ms (14.36 to 25.28 ms) against 16.64 ms, so
+1,717 of 1,800 run slow and `SPEED` is 71.8%. All 16 checksum lines match
+the PC build, which averages 0.36 ms a frame.
 
 ## Build sweeps
 
@@ -341,5 +404,11 @@ nextpnr options. Results go to `build/sweep/<design>-<time>/` as
 The board pin and AE350 clock facts come from the project reference library
 and the Tang-PSX/Tang-Phosphor hardware reports cited there. The RTL here is
 original MIT-licensed code. CERN's colibri and its SystemVerilog port are
-design practice references; their modules are not included. Nestopia carries
-GPL-2.0-or-later terms and will receive its own attribution when incorporated.
+design practice references; their modules are not included.
+
+Nestopia is copyright Martin Freij, the Nestopia UE contributors, Rupert
+Carmichael and others, under GPL-2.0-or-later; the libretro port and
+libretro-common are maintained by the libretro team. TinyNES fetches it with
+`tools/fetch_nestopia.sh` and does not distribute it. The `nes_bench` harness
+is MIT-licensed, but programs built with Nestopia are GPL-2.0-or-later and
+cartridge images belong to their owners; neither is committed.

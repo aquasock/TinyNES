@@ -337,3 +337,42 @@ The next cycle should propose a headless Nestopia benchmark for user approval: N
 - User Test: PASS
 
 ---
+
+## 10 COMMIT Unreleased 2026-10-12T14:02:31-07:00
+
+#### Coming From:
+
+Unreleased 179559c
+
+#### Purpose:
+
+Measure how fast the libretro Nestopia core runs a real game headless on the A25, and whether its output matches a PC build, to show how far the AE350 is from full-speed NES emulation.
+
+#### Outcome:
+
+`tools/fetch_nestopia.sh` clones libretro/nestopia at commit `135dfa6dfda5e7603d61e751b9ddd0cc42546bc3`, the head of master on 2026-10-11, into `third_party/nestopia/`, which `.gitignore` now excludes, and fails if the checkout is at another commit or has local changes, so the GPL-2.0-or-later core is never part of this repository. `firmware/rt/rt.mk` gained `LIB_SOURCES`, third-party sources built with the runtime's architecture, optimisation and include flags plus their own `LIB_CPPFLAGS`, `LIB_CFLAGS` and `LIB_CXXFLAGS` but without this project's warnings and `-Werror`, and `EXTRA_OBJECTS`, and its include path now starts with `firmware/rt/include/`. The board build first failed because newlib's `<sys/dirent.h>` is an `#error` and libretro-common's file layer includes `<dirent.h>`; `firmware/rt/include/sys/dirent.h` now defines the directory types, and `firmware/rt/syscalls.c` gained `opendir`, `readdir` and `closedir`, which always fail, as files already did. `firmware/apps/nes_bench/` is a libretro front end with no video, audio or input device: it links the core's own source list from upstream's `Makefile.common` with upstream's GCC flags, except `-std=gnu++11` where upstream has `-std=c++98`, builds in the cartridge image named by `ROM=`, plays 1,800 frames with a scripted controller, times each `retro_run`, and prints CRC-32s of the picture every 60th frame and of all the sound, with a `host` target that builds the same harness for the PC. The user supplied Castlevania (USA) (Rev A), 131,088 bytes; the PC build ran at about 361 microseconds a frame with identical checksums on two runs, and frame dumps showed the script starting the game and walking Simon through the first stage into the castle hall. The board build linked with no undefined symbols, 2,553,553 bytes of code and 1,032,548 of data, and the agent loaded it in one-wire mode with oss-cad-suite's openFPGALoader and the ae350_soc image of entry 9, after `check_ae350_uart.py` passed. `load_ae350.py` sent 3,586,108 bytes in 19.44 s, 184.5 KB/s; the program printed `START=780965` microseconds for `retro_init` and `retro_load_game`, `CACHE MICM=00439ada MDCM=00439ada I=32768/4/32 D=32768/4/32`, and `FRAMES=1800 AVG=23164 MIN=14360 MAX=25279 OVER=1717 SPEED=71.8%` against the core's 16,639-microsecond frame, and exited with 0; all 15 interval lines and the final line of checksums matched the PC build exactly. A build with upstream's `-std=c++98` also compiled and was not run. The README documents the fetch script, the runtime's directory stand-in and third-party sources, and the benchmark with its results and licensing, and replaces the references section's licensing note with Nestopia's attribution. DEV-013 records the cache geometry, DEV-014 the cache prefetch bits found in U-Boot's Andes header and not yet tried, PROV-006 Nestopia's terms and pinned commit, TOOL-019 the dirent fix and third-party build, and EMU-001, in a new EMU topic, the measured result. The user accepted the result. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should discuss with the user whether FCEUX, which the user suggested might be a better choice, should be measured with the same harness against Nestopia, and which speed-ups to try: the cache prefetch bits, compiler options, the FPU and placing hot code or data in the block RAM.
+
+#### Files Modified:
+
+- .ai/core-reference.md
+- .gitignore
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+- firmware/apps/nes_bench/rom.S
+- firmware/rt/include/sys/dirent.h
+- firmware/rt/rt.mk
+- firmware/rt/syscalls.c
+- tools/fetch_nestopia.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
