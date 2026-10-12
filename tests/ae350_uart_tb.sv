@@ -2,7 +2,10 @@
 `timescale 1ns/1ps
 
 module ae350_uart_tb #(
-    parameter integer FORCE_UART = 0
+    parameter integer FORCE_UART = 0,
+    // 0: intact bus. 1: pattern 5 (0x00000002) arrives with data bit 0 set.
+    // 2: pattern 9 is written with address bit 31 clear.
+    parameter integer FAULT = 0
 );
     reg clk = 1'b0;
     wire tx;
@@ -37,6 +40,60 @@ module ae350_uart_tb #(
         begin
             for (nibble = 7; nibble >= 0; nibble = nibble - 1)
                 receive_byte(hex_char(value >> (4 * nibble)));
+        end
+    endtask
+
+    function [31:0] pattern(input integer index);
+        case (index)
+            0: pattern = 32'ha5a5a5a5;
+            1: pattern = 32'h5a5a5a5a;
+            2: pattern = 32'hffffffff;
+            3: pattern = 32'h00000000;
+            default: pattern = 32'd1 << (index - 4);
+        endcase
+    endfunction
+
+    // Issue back-to-back AHB writes as the AE350 program would: each address
+    // phase overlaps the previous write's data phase. The last write is the
+    // mcycle store to 0xe8000004.
+    task write_patterns;
+        integer index;
+        reg [31:0] addr;
+        reg [31:0] data;
+        begin
+            for (index = 0; index <= 37; index = index + 1) begin
+                if (index <= 36) begin
+                    addr = (index == 36) ? 32'he8000004 : 32'he8000000;
+                    if (FAULT == 2 && index == 9)
+                        addr = addr & 32'h7fffffff;
+                    force dut.exts_addr = addr;
+                    force dut.exts_sel = 1'b1;
+                end else begin
+                    force dut.exts_sel = 1'b0;
+                end
+                if (index > 0) begin
+                    data = (index == 37) ? 32'h1234abcd : pattern(index - 1);
+                    if (FAULT == 1 && index - 1 == 5)
+                        data = data | 32'd1;
+                    force dut.exts_wdata = data;
+                end
+                @(negedge clk);
+            end
+            repeat (2) @(negedge clk);
+        end
+    endtask
+
+    task automatic receive_bad(input [7:0] index, input [31:0] addr,
+                               input [31:0] data);
+        begin
+            receive_byte("B"); receive_byte("A"); receive_byte("D");
+            receive_byte(" "); receive_byte("N"); receive_byte("=");
+            receive_byte(hex_char(index[7:4])); receive_byte(hex_char(index[3:0]));
+            receive_byte(" "); receive_byte("A"); receive_byte("=");
+            receive_hex(addr);
+            receive_byte(" "); receive_byte("D"); receive_byte("=");
+            receive_hex(data);
+            receive_byte(8'h0d); receive_byte(8'h0a);
         end
     endtask
 
@@ -103,20 +160,29 @@ module ae350_uart_tb #(
             $display("PASS: diagnostic UART report runs without AE350 write");
         end else begin
             if (tx !== 1'b1) $fatal(1, "UART transmitted before CPU report");
-            force dut.exts_sel = 1'b1;
-            @(negedge clk);
-            force dut.exts_sel = 1'b0;
-            repeat (2) @(negedge clk);
-            if (dut.cpu_started !== 1'b1)
-                $fatal(1, "AHB status write was not captured");
-
-            receive_byte("T"); receive_byte("i"); receive_byte("n");
-            receive_byte("y"); receive_byte("N"); receive_byte("E");
-            receive_byte("S"); receive_byte(" "); receive_byte("A");
-            receive_byte("E"); receive_byte("3"); receive_byte("5");
-            receive_byte("0"); receive_byte(" "); receive_byte("O");
-            receive_byte("K"); receive_byte(8'h0d); receive_byte(8'h0a);
-            $display("PASS: AHB write starts the complete UART report");
+            write_patterns();
+            if (FAULT == 1) begin
+                if (dut.cpu_started !== 1'b0 || dut.bus_error !== 1'b1)
+                    $fatal(1, "flipped data bit was not reported");
+                receive_bad(8'h05, 32'he8000000, 32'h00000003);
+                $display("PASS: flipped data bit gives the BAD report");
+            end else if (FAULT == 2) begin
+                if (dut.cpu_started !== 1'b0 || dut.bus_error !== 1'b1)
+                    $fatal(1, "wrong write address was not reported");
+                receive_bad(8'h09, 32'h68000000, 32'h00000020);
+                $display("PASS: wrong write address gives the BAD report");
+            end else begin
+                if (dut.cpu_started !== 1'b1 || dut.bus_error !== 1'b0 ||
+                    dut.cpu_cycles !== 32'h1234abcd)
+                    $fatal(1, "AHB pattern sequence was not accepted");
+                receive_byte("T"); receive_byte("i"); receive_byte("n");
+                receive_byte("y"); receive_byte("N"); receive_byte("E");
+                receive_byte("S"); receive_byte(" "); receive_byte("A");
+                receive_byte("E"); receive_byte("3"); receive_byte("5");
+                receive_byte("0"); receive_byte(" "); receive_byte("O");
+                receive_byte("K"); receive_byte(8'h0d); receive_byte(8'h0a);
+                $display("PASS: all AHB address and data patterns start the OK report");
+            end
         end
         $finish;
     end

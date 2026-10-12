@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-// First TinyNES hardware gate: the AE350 writes a status word over AHB;
-// fabric reports that event periodically on the FPGA UART at 115200 8N1.
+// First TinyNES hardware gate: the AE350 writes a sequence of data patterns
+// over AHB; fabric checks every address and data bit and reports the result
+// periodically on the FPGA UART at 115200 8N1.
 // The program then keeps storing its mcycle count, which fabric pairs with
 // a count of the 50 MHz board oscillator to measure the core clock.
 module ae350_uart #(
@@ -109,21 +110,34 @@ module ae350_uart #(
             ref_count_bus[ref_bit] <= ^(ref_gray_sync >> ref_bit);
     end
 
-    // Reset vector 0x80000000. The program writes bit 4 to 0xe8000000,
-    // then loops storing mcycle to 0xe8000004. These are RV32I/Zicsr words.
+    // Reset vector 0x80000000. The program stores 0xa5a5a5a5, 0x5a5a5a5a,
+    // 0xffffffff, 0 and then a walking one to 0xe8000000, so each EXTS_HWDATA
+    // bit is seen at 0 and 1, alone and against its neighbours. It then loops
+    // storing mcycle to 0xe8000004. These are RV32I/Zicsr words.
     wire [31:0] rom_addr;
     wire [1:0] rom_trans;
     reg rom_addr_seen = 1'b0;
     reg rom_seen = 1'b0;
     reg [31:0] rom_data;
     always @* begin
-        case (rom_addr[4:2])
-            3'd0: rom_data = 32'he80002b7; // lui t0, 0xe8000
-            3'd1: rom_data = 32'h01000313; // addi t1, zero, 16
-            3'd2: rom_data = 32'h0062a023; // sw t1, 0(t0)
-            3'd3: rom_data = 32'hb0002373; // csrr t1, mcycle
-            3'd4: rom_data = 32'h0062a223; // sw t1, 4(t0)
-            default: rom_data = 32'hff9ff06f; // jal zero, -8
+        case (rom_addr[6:2])
+            5'd0:  rom_data = 32'he80002b7; // lui t0, 0xe8000
+            5'd1:  rom_data = 32'ha5a5a337; // lui t1, 0xa5a5a
+            5'd2:  rom_data = 32'h5a530313; // addi t1, t1, 0x5a5
+            5'd3:  rom_data = 32'h0062a023; // sw t1, 0(t0)
+            5'd4:  rom_data = 32'hfff34313; // xori t1, t1, -1
+            5'd5:  rom_data = 32'h0062a023; // sw t1, 0(t0)
+            5'd6:  rom_data = 32'hfff00313; // addi t1, zero, -1
+            5'd7:  rom_data = 32'h0062a023; // sw t1, 0(t0)
+            5'd8:  rom_data = 32'h0002a023; // sw zero, 0(t0)
+            5'd9:  rom_data = 32'h00100313; // addi t1, zero, 1
+            5'd10: rom_data = 32'h0062a023; // sw t1, 0(t0)
+            5'd11: rom_data = 32'h00131313; // slli t1, t1, 1
+            5'd12: rom_data = 32'hfe031ce3; // bne t1, zero, -8
+            5'd13: rom_data = 32'hb0002373; // csrr t1, mcycle
+            5'd14: rom_data = 32'h0062a223; // sw t1, 4(t0)
+            5'd15: rom_data = 32'hff9ff06f; // jal zero, -8
+            default: rom_data = 32'h0000006f; // jal zero, 0
         endcase
     end
 
@@ -132,11 +146,33 @@ module ae350_uart #(
     wire exts_sel;
     wire [1:0] exts_trans;
     wire exts_write;
+    localparam [31:0] STATUS_ADDR = 32'he8000000;
+    localparam [31:0] CYCLE_ADDR = 32'he8000004;
+    localparam [5:0] PATTERN_COUNT = 6'd36;
     reg write_pending = 1'b0;
     reg cycle_pending = 1'b0;
+    reg other_pending = 1'b0;
+    reg [31:0] pending_addr = 32'd0;
+    reg [5:0] pattern_index = 6'd0;
+    // cpu_started: every pattern arrived intact. bus_error: the first
+    // mismatched or unexpected write, with its pattern index, address and data.
     reg cpu_started = 1'b0;
+    reg bus_error = 1'b0;
+    reg [5:0] error_index = 6'd0;
+    reg [31:0] error_addr = 32'd0;
+    reg [31:0] error_data = 32'd0;
     reg [31:0] cpu_cycles = 32'd0;
     reg [31:0] ref_cycles = 32'd0;
+
+    function [31:0] expected_pattern(input [5:0] index);
+        case (index)
+            6'd0: expected_pattern = 32'ha5a5a5a5;
+            6'd1: expected_pattern = 32'h5a5a5a5a;
+            6'd2: expected_pattern = 32'hffffffff;
+            6'd3: expected_pattern = 32'h00000000;
+            default: expected_pattern = 32'd1 << (index - 6'd4);
+        endcase
+    endfunction
 
     always @(posedge bus_clk or negedge resetn) begin
         if (!resetn)
@@ -152,27 +188,49 @@ module ae350_uart #(
             rom_seen <= 1'b1;
     end
 
-    // AHB-Lite places write data one bus cycle after address/control.
+    wire exts_write_start = exts_sel && exts_trans[1] && exts_write;
+    wire status_bad = write_pending &&
+                      (pattern_index == PATTERN_COUNT ||
+                       exts_wdata != expected_pattern(pattern_index));
+
+    // AHB-Lite places write data one bus cycle after address/control. All
+    // 32 address bits are decoded; any other write address is an error.
     always @(posedge bus_clk or negedge resetn) begin
         if (!resetn) begin
             write_pending <= 1'b0;
             cycle_pending <= 1'b0;
+            other_pending <= 1'b0;
+            pending_addr <= 32'd0;
+            pattern_index <= 6'd0;
             cpu_started <= 1'b0;
+            bus_error <= 1'b0;
+            error_index <= 6'd0;
+            error_addr <= 32'd0;
+            error_data <= 32'd0;
             cpu_cycles <= 32'd0;
             ref_cycles <= 32'd0;
         end else begin
-            if (write_pending && exts_wdata[4])
-                cpu_started <= 1'b1;
+            if ((status_bad || other_pending) && !bus_error) begin
+                bus_error <= 1'b1;
+                error_index <= pattern_index;
+                error_addr <= pending_addr;
+                error_data <= exts_wdata;
+            end else if (write_pending && !bus_error) begin
+                pattern_index <= pattern_index + 1'b1;
+                if (pattern_index == PATTERN_COUNT - 1'b1)
+                    cpu_started <= 1'b1;
+            end
             // Pair each mcycle value with the oscillator count taken in its
             // data phase.
             if (cycle_pending) begin
                 cpu_cycles <= exts_wdata;
                 ref_cycles <= ref_count_bus;
             end
-            write_pending <= exts_sel && exts_trans[1] && exts_write &&
-                             (exts_addr[7:2] == 6'd0);
-            cycle_pending <= exts_sel && exts_trans[1] && exts_write &&
-                             (exts_addr[7:2] == 6'd1);
+            write_pending <= exts_write_start && exts_addr == STATUS_ADDR;
+            cycle_pending <= exts_write_start && exts_addr == CYCLE_ADDR;
+            other_pending <= exts_write_start && exts_addr != STATUS_ADDR &&
+                             exts_addr != CYCLE_ADDR;
+            pending_addr <= exts_addr;
         end
     end
 
@@ -267,9 +325,14 @@ module ae350_uart #(
     // The FT2232 one-wire bridge is slow to deliver sustained data. Send a
     // short line every 2^26 bus clocks, about 0.895 s at 75 MHz.
     localparam integer UART_DIV = 651; // 75 MHz / 115200 ~= 651
-    localparam [5:0] REPORT_LAST_INDEX = (FORCE_UART == 2) ? 6'd45 : 6'd17;
     reg [25:0] report_wait = 26'd0;
     reg [5:0] char_index = 6'd0;
+    // The normal line is chosen at its first character and held to its end.
+    reg report_bad = 1'b0;
+    wire line_bad = (char_index == 6'd0) ? bus_error : report_bad;
+    wire [5:0] report_last_index = (FORCE_UART == 2) ? 6'd45 :
+                                   (FORCE_UART == 1 || !line_bad) ? 6'd17 :
+                                   6'd31;
     // The trace line freezes one cycle pair before printing either field.
     reg [31:0] report_cycles = 32'd0;
     reg [31:0] report_ref = 32'd0;
@@ -286,6 +349,11 @@ module ae350_uart #(
         input rom_addr_seen_in,
         input rom_seen_in,
         input cpu_started_in,
+        input bus_error_in,
+        input line_bad_in,
+        input [5:0] error_index_in,
+        input [31:0] error_addr_in,
+        input [31:0] error_data_in,
         input [31:0] cycles_in,
         input [31:0] ref_in
     );
@@ -312,7 +380,8 @@ module ae350_uart #(
                 6'd14: report_char = "H";
                 6'd15: report_char = "B";
                 6'd16: report_char = "=";
-                6'd17: report_char = cpu_started_in ? "1" : "0";
+                6'd17: report_char = bus_error_in ? "E" :
+                                     cpu_started_in ? "1" : "0";
                 6'd18: report_char = " ";
                 6'd19: report_char = "C";
                 6'd20: report_char = "Y";
@@ -347,6 +416,29 @@ module ae350_uart #(
                 6'd16: report_char = 8'h0d;
                 default: report_char = 8'h0a;
             endcase
+        end else if (line_bad_in) begin
+            if (index == 6'd6)
+                report_char = hex_char({2'b00, error_index_in[5:4]});
+            else if (index == 6'd7)
+                report_char = hex_char(error_index_in[3:0]);
+            else if (index >= 6'd11 && index <= 6'd18)
+                report_char = hex_char(error_addr_in >> (4 * (6'd18 - index)));
+            else if (index >= 6'd22 && index <= 6'd29)
+                report_char = hex_char(error_data_in >> (4 * (6'd29 - index)));
+            else case (index)
+                6'd0:  report_char = "B";
+                6'd1:  report_char = "A";
+                6'd2:  report_char = "D";
+                6'd4:  report_char = "N";
+                6'd5:  report_char = "=";
+                6'd9:  report_char = "A";
+                6'd10: report_char = "=";
+                6'd20: report_char = "D";
+                6'd21: report_char = "=";
+                6'd30: report_char = 8'h0d;
+                6'd31: report_char = 8'h0a;
+                default: report_char = " ";
+            endcase
         end else case (index)
             6'd0:  report_char = "T";
             6'd1:  report_char = "i";
@@ -374,6 +466,7 @@ module ae350_uart #(
         if (!resetn) begin
             report_wait <= 26'd0;
             char_index <= 6'd0;
+            report_bad <= 1'b0;
             report_cycles <= 32'd0;
             report_ref <= 32'd0;
             tx_shift <= 10'h3ff;
@@ -390,18 +483,23 @@ module ae350_uart #(
                 end else begin
                     baud_wait <= baud_wait - 1'b1;
                 end
-            end else if ((cpu_started || FORCE_UART != 0) && report_wait == 0) begin
+            end else if ((cpu_started || bus_error || FORCE_UART != 0) &&
+                         report_wait == 0) begin
                 tx_shift <= {1'b1, report_char(char_index, rom_addr_seen,
                                                rom_seen, cpu_started,
-                                               report_cycles, report_ref),
+                                               bus_error, line_bad,
+                                               error_index, error_addr,
+                                               error_data, report_cycles,
+                                               report_ref),
                              1'b0};
+                report_bad <= line_bad;
                 if (char_index == 6'd18) begin
                     report_cycles <= cpu_cycles;
                     report_ref <= ref_cycles;
                 end
                 bits_left <= 4'd10;
                 baud_wait <= UART_DIV - 1;
-                if (char_index == REPORT_LAST_INDEX) begin
+                if (char_index == report_last_index) begin
                     char_index <= 6'd0;
                     report_wait <= 26'h3ffffff;
                 end else begin

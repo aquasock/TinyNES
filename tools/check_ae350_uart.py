@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: MIT
 """Verify the AE350-started UART report in one-wire debug mode.
 
+A gate line starting with BAD, or a trace line with AHB=E, reports the first
+AHB write whose address or data did not match, and fails the check at once.
+
 With --clock N, also read N+1 trace reports and derive the A25 core clock from
 consecutive mcycle (CYC) and 50 MHz board-oscillator (REF) pairs.
 """
@@ -43,6 +46,9 @@ def main():
             *lines, rest = received.split(b"\r\n")
             received = bytearray(rest[-4096:])
             for line in lines:
+                if line.startswith(b"BAD ") or b" AHB=E " in line:
+                    print(f"FAIL: AE350 bus check {line.decode('ascii', 'replace')}")
+                    return 1
                 if not line.startswith(args.expect.encode("ascii")):
                     continue
                 if not matched:

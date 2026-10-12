@@ -8,16 +8,22 @@ of this repository yet.
 
 ## First hardware gate: AE350 UART
 
-The first image proves only that an AE350 program starts, reaches the fabric
-AHB bus, and sets a status word. The fabric then sends `TinyNES AE350 OK` over
-the board's FPGA UART (U15) at 115200 8N1 about once per second. The program is
-six RV32I words in `fpga/ae350_uart/ae350_uart.sv`; after the status write it
-keeps storing its `mcycle` count so the core clock can be measured. The A25
+The first image proves only that an AE350 program starts and that every
+address and data bit of its AHB writes reaches the fabric intact. The program
+stores `0xa5a5a5a5`, `0x5a5a5a5a`, `0xffffffff`, `0` and then a walking one to
+`0xe8000000`, 36 writes in all. The fabric decodes all 32 address bits and
+compares each write with the expected pattern. When all 36 match it sends
+`TinyNES AE350 OK` over the board's FPGA UART (U15) at 115200 8N1 about once per
+second. The program is sixteen RV32I words in `fpga/ae350_uart/ae350_uart.sv`;
+after the patterns it keeps storing its `mcycle` count to `0xe8000004` so the
+core clock can be measured. The A25
 core runs at 750 MHz from `PLL_R[0]` `CLKOUT1` and the AHB bus at 75 MHz from
 `CLKOUT0`. It has no DDR3, NES emulator, video, audio, or BL616 dependency.
 
-The status check uses write-data bit 4 and the AHB select signal rather than a
-full address and data decode.
+A write to any other address, a data mismatch, or an extra pattern write
+instead sends `BAD N=nn A=aaaaaaaa D=dddddddd` for the first bad write: `N` is
+the pattern index in hex (00-03 for the fixed words, then 04 + bit for the
+walking one), `A` the write address and `D` the data received.
 
 The build uses Yosys, a GW5AST-138C-capable nextpnr-himbaechel, and Apicula's
 open-source bitstream packer. It does not invoke Gowin EDA or use generated
@@ -31,6 +37,9 @@ iverilog -g2012 -s ae350_uart_tb -o build/ae350_uart/uart_tb \
   fpga/ae350_uart/ae350_uart.sv tests/ae350_uart_tb.sv
 vvp build/ae350_uart/uart_tb
 ```
+
+`-Pae350_uart_tb.FAULT=1` flips one data bit and `-Pae350_uart_tb.FAULT=2`
+clears address bit 31 of one write; both runs expect the `BAD` line.
 
 If the hardware report is silent, build the isolated UART diagnostic. It sends
 `UART DIAGNOSTIC!` from fabric logic after PLL lock without waiting for an AE350
@@ -70,8 +79,8 @@ python3 tools/check_ae350_uart.py --port /dev/ttyUSB1 --expect 'UART DIAGNOSTIC!
 If the isolated UART works but the normal image is silent, build the AE350
 trace image with `TINY_NES_UART_DIAG=2 bash tools/build_ae350_uart.sh`. It
 reports `ADDR=1` once the reset-vector address appears on the ROM bus,
-`ROM=1` once an active ROM transfer appears, and `AHB=1` once the expected
-status write is captured. Each field stays set once seen. The line then gives
+`ROM=1` once an active ROM transfer appears, and `AHB=1` once all 36
+patterns arrive intact, or `AHB=E` after a bad write. Each field stays set once seen. The line then gives
 the last `mcycle` value the CPU stored (`CYC`) and the count of the 50 MHz
 board oscillator taken in the same bus cycle (`REF`), both in hex. The image is
 `build/ae350_uart_trace/ae350_uart.fs`. To measure the core clock from four

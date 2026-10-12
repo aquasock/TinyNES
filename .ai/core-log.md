@@ -161,3 +161,36 @@ None.
 - User Test: PASS
 
 ---
+
+## 6 COMMIT Unreleased 2026-10-12T10:15:49-07:00
+
+#### Coming From:
+
+Unreleased 6534144
+
+#### Purpose:
+
+Replace the AE350 gate's bit-4 and select status check with a full `EXTS_HADDR` and `EXTS_HWDATA` decode so that `TinyNES AE350 OK` proves every address and data bit of the measured AE350 output map on hardware.
+
+#### Outcome:
+
+The ROM in `fpga/ae350_uart/ae350_uart.sv` is now sixteen RV32I words, encoded by hand and checked with the capstone disassembler, that store `0xa5a5a5a5`, `0x5a5a5a5a`, `0xffffffff`, `0` and a walking one to `0xe8000000`, 36 writes in all, before the `mcycle` loop to `0xe8000004`. Unused ROM addresses now return a self-jump. The gate compares all 32 bits of `EXTS_HADDR` with those two addresses and each status write's data with the expected pattern. `TinyNES AE350 OK` is sent only after all 36 match. The first write to any other address, any data mismatch, or an extra pattern write instead sends `BAD N=nn A=aaaaaaaa D=dddddddd` with the pattern index, address and received data, and the trace field shows `AHB=E`. `tests/ae350_uart_tb.sv` drives the writes back to back with overlapping address and data phases and gains a `FAULT` parameter. The normal, diagnostic and trace simulations passed, as did a flipped data bit, which reported `BAD N=05 A=e8000000 D=00000003`, and a cleared address bit 31, which reported `BAD N=09 A=68000000 D=00000020`. `tools/check_ae350_uart.py` now fails at once on a `BAD` or `AHB=E` line and prints it, and the README describes the decode. Unseeded builds passed with bus Fmax 113.33 MHz for normal and 103.22 MHz for trace. `tools/sweep.py` over normal and trace with seeds 1 to 16 was 32 of 32 clean with no hold violations. `bus_clk` Fmax was 99.44 to 118.26 MHz in normal and 97.49 to 108.67 MHz in trace, down from entry 5 because of the comparators but above the 75 MHz target. In one-wire mode the unseeded normal image, SHA-256 `ae9babe6643fc360b227b46e1d74bc715d2391c9d3fb4db0c2f498f8b3327e5f`, printed `TinyNES AE350 OK` on two loads. The unseeded trace image, SHA-256 `d12c2c1911fe82182e162b93cdab400b93888fd28790760dba60a7f2f2ba3421`, reported `ADDR=1 ROM=1 AHB=1` with the core clock measured at 750.0000 MHz over four intervals. The measured Apicula output map is therefore exact for every `EXTS_HADDR` and `EXTS_HWDATA` bit, including `EXTS_HADDR31`, `EXTS_HWDATA0` and `EXTS_HWDATA3`, which entry 1 recorded as missing. These were agent-run SRAM loads on the user's board, and the user accepted the result. The core-syntax audit passed.
+
+#### Next Steps:
+
+The AE350 UART gate is complete, so the next cycle should propose the next TinyNES milestone for user approval. The README paragraph that says the AE350 bus clocks reach the core through general fabric routing has been out of date since entry 5 and should be corrected in that cycle.
+
+#### Files Modified:
+
+- README.md
+- fpga/ae350_uart/ae350_uart.sv
+- tests/ae350_uart_tb.sv
+- tools/check_ae350_uart.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
