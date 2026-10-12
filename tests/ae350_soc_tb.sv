@@ -119,19 +119,76 @@ module tb_ahb_master #(
     endtask
 endmodule
 
+// Gowin's ODDR for simulation: both inputs are registered on the rising
+// edge; Q0 then gives D0 for the high half of the clock and D1 for the low
+// half.
+module ODDR #(
+    parameter TXCLK_POL = 1'b0,
+    parameter INIT = 1'b0
+) (
+    input  wire D0,
+    input  wire D1,
+    input  wire TX,
+    input  wire CLK,
+    output reg  Q0 = INIT,
+    output wire Q1
+);
+    reg d1 = INIT;
+    assign Q1 = 1'b0;
+    always @(posedge CLK) begin
+        Q0 <= D0;
+        d1 <= D1;
+    end
+    always @(negedge CLK)
+        Q0 <= d1;
+endmodule
+
 module ae350_soc_tb #(
     // 0: every port, register and UART path. 1: the NOBOOT report and the
     // CPU taking the UART over from it.
     parameter integer TEST = 0
 );
     localparam integer NOBOOT_BITS = 15;
+    // The bus clock is 75 MHz, as on the board, so the SDRAM model's
+    // timing checks hold the controller to the real nanoseconds.
     reg clk = 1'b0;
     wire tx;
-    always #5 clk = ~clk;
+    always #6.667 clk = ~clk;
 
-    ae350_soc_top #(.NOBOOT_BITS(NOBOOT_BITS)) dut (
+    wire sdram_clk;
+    wire sdram_cs_n;
+    wire sdram_ras_n;
+    wire sdram_cas_n;
+    wire sdram_we_n;
+    wire [1:0] sdram_ba;
+    wire [12:0] sdram_a;
+    wire [1:0] sdram_dqm;
+    wire [15:0] sdram_dq;
+
+    ae350_soc_top #(.NOBOOT_BITS(NOBOOT_BITS), .SDRAM_INIT_CYCLES(100)) dut (
         .sys_clk(clk),
-        .uart_tx(tx)
+        .uart_tx(tx),
+        .sdram_clk(sdram_clk),
+        .sdram_cs_n(sdram_cs_n),
+        .sdram_ras_n(sdram_ras_n),
+        .sdram_cas_n(sdram_cas_n),
+        .sdram_we_n(sdram_we_n),
+        .sdram_ba(sdram_ba),
+        .sdram_a(sdram_a),
+        .sdram_dqm(sdram_dqm),
+        .sdram_dq(sdram_dq)
+    );
+
+    sdram_model chip (
+        .clk(sdram_clk),
+        .cs_n(sdram_cs_n),
+        .ras_n(sdram_ras_n),
+        .cas_n(sdram_cas_n),
+        .we_n(sdram_we_n),
+        .ba(sdram_ba),
+        .a(sdram_a),
+        .dqm(sdram_dqm),
+        .dq(sdram_dq)
     );
 
     wire rom_ready = dut.rom_ready;
@@ -277,29 +334,29 @@ module ae350_soc_tb #(
         integer index;
         begin
             ram_m.clear();
-            ram_m.push(32'h40000000, 1'b1, 3'd3, 64'h0123456789abcdef, 1'b0); // 0
-            ram_m.push(32'h40000008, 1'b1, 3'd2, 64'h55555555_deadbeef, 1'b0);
-            ram_m.push(32'h4000000c, 1'b1, 3'd2, 64'hcafef00d_aaaaaaaa, 1'b0);
+            ram_m.push(32'h60000000, 1'b1, 3'd3, 64'h0123456789abcdef, 1'b0); // 0
+            ram_m.push(32'h60000008, 1'b1, 3'd2, 64'h55555555_deadbeef, 1'b0);
+            ram_m.push(32'h6000000c, 1'b1, 3'd2, 64'hcafef00d_aaaaaaaa, 1'b0);
             for (index = 0; index < 8; index = index + 1)                    // 3-10
-                ram_m.push(32'h40000010 + index, 1'b1, 3'd0,
+                ram_m.push(32'h60000010 + index, 1'b1, 3'd0,
                            {8{8'hee}} ^ ({8{8'hee}} & (64'hff << (8 * index))) |
                            ((64'h10 + index) << (8 * index)), 1'b0);
-            ram_m.push(32'h40000018, 1'b1, 3'd3, 64'hffffffff_ffffffff, 1'b0); // 11
-            ram_m.push(32'h40000018, 1'b1, 3'd1, 64'h00000000_00001122, 1'b0);
-            ram_m.push(32'h4000001e, 1'b1, 3'd1, 64'h3344eeee_eeeeeeee, 1'b0);
-            ram_m.push(32'h4000fff8, 1'b1, 3'd3, 64'hfedcba98_76543210, 1'b0);
+            ram_m.push(32'h60000018, 1'b1, 3'd3, 64'hffffffff_ffffffff, 1'b0); // 11
+            ram_m.push(32'h60000018, 1'b1, 3'd1, 64'h00000000_00001122, 1'b0);
+            ram_m.push(32'h6000001e, 1'b1, 3'd1, 64'h3344eeee_eeeeeeee, 1'b0);
+            ram_m.push(32'h6000fff8, 1'b1, 3'd3, 64'hfedcba98_76543210, 1'b0);
             ram_m.push(32'h00000000, 1'b1, 3'd3, 64'h11111111_11111111, 1'b0); // 15
-            ram_m.push(32'h40010000, 1'b1, 3'd3, 64'h22222222_22222222, 1'b0);
-            ram_m.push(32'h40000000, 1'b0, 3'd3, 0, 1'b0);                    // 17
-            ram_m.push(32'h40000008, 1'b0, 3'd3, 0, 1'b1);
-            ram_m.push(32'h40000010, 1'b0, 3'd3, 0, 1'b1);
-            ram_m.push(32'h40000018, 1'b0, 3'd3, 0, 1'b1);
-            ram_m.push(32'h4000fff8, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(32'h60010000, 1'b1, 3'd3, 64'h22222222_22222222, 1'b0);
+            ram_m.push(32'h60000000, 1'b0, 3'd3, 0, 1'b0);                    // 17
+            ram_m.push(32'h60000008, 1'b0, 3'd3, 0, 1'b1);
+            ram_m.push(32'h60000010, 1'b0, 3'd3, 0, 1'b1);
+            ram_m.push(32'h60000018, 1'b0, 3'd3, 0, 1'b1);
+            ram_m.push(32'h6000fff8, 1'b0, 3'd3, 0, 1'b0);
             ram_m.push(32'h80000000, 1'b0, 3'd3, 0, 1'b0);                    // 22
-            ram_m.push(32'h40000020, 1'b1, 3'd3, 64'ha1a2a3a4_a5a6a7a8, 1'b0);
-            ram_m.push(32'h40000020, 1'b0, 3'd3, 0, 1'b0);
-            ram_m.push(32'h40000020, 1'b1, 3'd2, 64'h00000000_b1b2b3b4, 1'b0);
-            ram_m.push(32'h40000020, 1'b0, 3'd2, 0, 1'b0);                    // 26
+            ram_m.push(32'h60000020, 1'b1, 3'd3, 64'ha1a2a3a4_a5a6a7a8, 1'b0);
+            ram_m.push(32'h60000020, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(32'h60000020, 1'b1, 3'd2, 64'h00000000_b1b2b3b4, 1'b0);
+            ram_m.push(32'h60000020, 1'b0, 3'd2, 0, 1'b0);                    // 26
             ram_m.run();
             for (index = 0; index <= 14; index = index + 1)
                 ram_m.expect_write_ok(index);
@@ -320,7 +377,7 @@ module ae350_soc_tb #(
             ram_m.clear();
             ram_m.push(32'h00000018, 1'b0, 3'd3, 0, 1'b0);
             ram_m.push(32'h00000000, 1'b0, 3'd3, 0, 1'b1);
-            ram_m.push(32'h40000020, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(32'h60000020, 1'b0, 3'd3, 0, 1'b0);
             ram_m.push(32'h80000000, 1'b0, 3'd2, 0, 1'b0);
             ram_m.run();
             ram_m.expect_ok(0, 64'd0);
@@ -328,7 +385,122 @@ module ae350_soc_tb #(
             ram_m.expect_ok(2, 64'ha1a2a3a4_b1b2b3b4);
             ram_m.expect_ok(3, 64'd0);
             ram_data = 1'b1;
-            $display("PASS: RAM port byte lanes, ERROR outside 0x4000xxxx, read after write, fetches outside read zero");
+            $display("PASS: RAM port byte lanes, ERROR outside 0x6000xxxx, read after write, fetches outside read zero");
+        end
+    endtask
+
+    // The SDRAM window at 0x40000000 (32 MiB). No two rows used here share
+    // a slot in the model's storage while both are still to be read.
+    localparam [31:0] S = 32'h40000000;
+    task test_sdram;
+        integer index;
+        integer refreshes;
+        begin
+            ram_m.clear();
+            ram_m.push(S + 32'h00, 1'b1, 3'd3, 64'h0123456789abcdef, 1'b0); // 0
+            ram_m.push(S + 32'h08, 1'b1, 3'd2, 64'h55555555_deadbeef, 1'b0);
+            ram_m.push(S + 32'h0c, 1'b1, 3'd2, 64'hcafef00d_aaaaaaaa, 1'b0);
+            for (index = 0; index < 8; index = index + 1)                    // 3-10
+                ram_m.push(S + 32'h10 + index, 1'b1, 3'd0,
+                           {8{8'hee}} ^ ({8{8'hee}} & (64'hff << (8 * index))) |
+                           ((64'h10 + index) << (8 * index)), 1'b0);
+            ram_m.push(S + 32'h18, 1'b1, 3'd3, 64'hffffffff_ffffffff, 1'b0); // 11
+            ram_m.push(S + 32'h18, 1'b1, 3'd1, 64'h00000000_00001122, 1'b0);
+            ram_m.push(S + 32'h1e, 1'b1, 3'd1, 64'h3344eeee_eeeeeeee, 1'b0);
+            ram_m.push(S + 32'h1fffff8, 1'b1, 3'd3, 64'hfedcba98_76543210, 1'b0);
+            ram_m.push(32'h42000000, 1'b1, 3'd3, 64'h22222222_22222222, 1'b0); // 15
+            ram_m.push(S + 32'h00, 1'b0, 3'd3, 0, 1'b0);                      // 16
+            ram_m.push(S + 32'h08, 1'b0, 3'd3, 0, 1'b1);
+            ram_m.push(S + 32'h10, 1'b0, 3'd3, 0, 1'b1);
+            ram_m.push(S + 32'h18, 1'b0, 3'd3, 0, 1'b1);
+            ram_m.push(S + 32'h1fffff8, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(32'h42000000, 1'b0, 3'd3, 0, 1'b0);                    // 21
+            // A cache-line fill that starts mid-line and wraps.
+            ram_m.push(S + 32'h110, 1'b1, 3'd3, 64'h11111111_11111111, 1'b0); // 22
+            ram_m.push(S + 32'h118, 1'b1, 3'd3, 64'h22222222_22222222, 1'b0);
+            ram_m.push(S + 32'h100, 1'b1, 3'd3, 64'h33333333_33333333, 1'b0);
+            ram_m.push(S + 32'h108, 1'b1, 3'd3, 64'h44444444_44444444, 1'b0);
+            ram_m.push(S + 32'h110, 1'b0, 3'd3, 0, 1'b0);                     // 26
+            ram_m.push(S + 32'h118, 1'b0, 3'd3, 0, 1'b1);
+            ram_m.push(S + 32'h100, 1'b0, 3'd3, 0, 1'b1);
+            ram_m.push(S + 32'h108, 1'b0, 3'd3, 0, 1'b1);
+            // A write to the buffered line, then reads of it.
+            ram_m.push(S + 32'h108, 1'b1, 3'd2, 64'h00000000_b1b2b3b4, 1'b0); // 30
+            ram_m.push(S + 32'h108, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(S + 32'h100, 1'b0, 3'd3, 0, 1'b0);
+            // Each bank, another row, and a row with bits on in every half.
+            ram_m.push(S + 32'h400, 1'b1, 3'd3, 64'ha1a1a1a1_a1a1a1a1, 1'b0); // 33
+            ram_m.push(S + 32'h800, 1'b1, 3'd3, 64'ha2a2a2a2_a2a2a2a2, 1'b0);
+            ram_m.push(S + 32'hc00, 1'b1, 3'd3, 64'ha3a3a3a3_a3a3a3a3, 1'b0);
+            ram_m.push(S + 32'h1000, 1'b1, 3'd3, 64'ha4a4a4a4_a4a4a4a4, 1'b0);
+            ram_m.push(S + 32'ha521f8, 1'b1, 3'd3, 64'ha5a5a5a5_a5a5a5a5, 1'b0);
+            ram_m.push(S + 32'h400, 1'b0, 3'd3, 0, 1'b0);                     // 38
+            ram_m.push(S + 32'h800, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(S + 32'hc00, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(S + 32'h1000, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(S + 32'ha521f8, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(S + 32'h00, 1'b0, 3'd3, 0, 1'b0);                      // 43
+            ram_m.run();
+            for (index = 0; index <= 14; index = index + 1)
+                ram_m.expect_write_ok(index);
+            ram_m.expect_error(15);
+            ram_m.expect_ok(16, 64'h0123456789abcdef);
+            ram_m.expect_ok(17, 64'hcafef00d_deadbeef);
+            ram_m.expect_ok(18, 64'h17161514_13121110);
+            ram_m.expect_ok(19, 64'h3344ffff_ffff1122);
+            ram_m.expect_ok(20, 64'hfedcba98_76543210);
+            ram_m.expect_error(21);
+            ram_m.expect_ok(26, 64'h11111111_11111111);
+            ram_m.expect_ok(27, 64'h22222222_22222222);
+            ram_m.expect_ok(28, 64'h33333333_33333333);
+            ram_m.expect_ok(29, 64'h44444444_44444444);
+            ram_m.expect_write_ok(30);
+            ram_m.expect_ok(31, 64'h44444444_b1b2b3b4);
+            ram_m.expect_ok(32, 64'h33333333_33333333);
+            ram_m.expect_ok(38, 64'ha1a1a1a1_a1a1a1a1);
+            ram_m.expect_ok(39, 64'ha2a2a2a2_a2a2a2a2);
+            ram_m.expect_ok(40, 64'ha3a3a3a3_a3a3a3a3);
+            ram_m.expect_ok(41, 64'ha4a4a4a4_a4a4a4a4);
+            ram_m.expect_ok(42, 64'ha5a5a5a5_a5a5a5a5);
+            ram_m.expect_ok(43, 64'h0123456789abcdef);
+            // Idle long enough for several refreshes, then read back.
+            refreshes = chip.refreshes;
+            repeat (4 * 525) @(posedge clk);
+            if (chip.refreshes - refreshes < 3)
+                $fatal(1, "SDRAM not refreshed while idle");
+            ram_m.clear();
+            ram_m.push(S + 32'h1fffff8, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(S + 32'h108, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.run();
+            ram_m.expect_ok(0, 64'hfedcba98_76543210);
+            ram_m.expect_ok(1, 64'h44444444_b1b2b3b4);
+            // Instruction fetches: from the SDRAM, and zero beyond it.
+            ram_data = 1'b0;
+            ram_m.clear();
+            ram_m.push(32'h42000000, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(S + 32'h110, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.push(S + 32'h118, 1'b0, 3'd3, 0, 1'b1);
+            ram_m.run();
+            ram_m.expect_ok(0, 64'd0);
+            ram_m.expect_ok(1, 64'h11111111_11111111);
+            ram_m.expect_ok(2, 64'h22222222_22222222);
+            ram_data = 1'b1;
+            // Address lines: a doubleword at 0 and at each one-hot address
+            // from bit 3 to bit 24, each holding its own address.
+            ram_m.clear();
+            ram_m.push(S, 1'b1, 3'd3, {32'h5a5a5a5a, S}, 1'b0);
+            for (index = 3; index < 25; index = index + 1)
+                ram_m.push(S + (32'd1 << index), 1'b1, 3'd3,
+                           {32'h5a5a5a5a, S + (32'd1 << index)}, 1'b0);
+            ram_m.push(S, 1'b0, 3'd3, 0, 1'b0);
+            for (index = 3; index < 25; index = index + 1)
+                ram_m.push(S + (32'd1 << index), 1'b0, 3'd3, 0, 1'b0);
+            ram_m.run();
+            ram_m.expect_ok(23, {32'h5a5a5a5a, S});
+            for (index = 3; index < 25; index = index + 1)
+                ram_m.expect_ok(21 + index, {32'h5a5a5a5a, S + (32'd1 << index)});
+            $display("PASS: SDRAM byte lanes, wrapped line fill, buffered-line write, banks and rows, address lines, ERROR beyond 32 MiB, refresh (%0d reads, %0d writes, %0d refreshes)",
+                     chip.reads, chip.writes, chip.refreshes);
         end
     endtask
 
@@ -397,10 +569,12 @@ module ae350_soc_tb #(
         force dut.exts_wdata = ext_hwdata;
 
         wait (dut.resetn);
+        wait (dut.sdram.ready);
         repeat (3) @(negedge clk);
         if (TEST == 0) begin
             test_rom();
             test_ram();
+            test_sdram();
             test_registers();
             // The second write waits for the first byte to leave the holding
             // register; the rest wait in turn while the line is sent.
@@ -419,20 +593,20 @@ module ae350_soc_tb #(
             rom_m.push(32'h80000008, 1'b0, 3'd2, 0, 1'b1);
             rom_m.run();
             ram_m.clear();
-            ram_m.push(32'h40000000, 1'b1, 3'd2, 64'h1, 1'b0);
+            ram_m.push(32'h60000000, 1'b1, 3'd2, 64'h1, 1'b0);
             ram_m.push(32'h00000010, 1'b0, 3'd2, 0, 1'b0);
-            ram_m.push(32'h40000000, 1'b0, 3'd2, 0, 1'b0);
+            ram_m.push(32'h60000000, 1'b0, 3'd2, 0, 1'b0);
             ram_m.run();
             ram_m.expect_error(1);
             ext_m.clear();
             ext_m.push(32'he8000008, 1'b0, 3'd2, 0, 1'b0);
             ext_m.run();
-            receive_noboot(32'd3, 32'h80000008, 32'd3, 32'd1, 32'h40000000, 32'h82d00001,
+            receive_noboot(32'd3, 32'h80000008, 32'd3, 32'd1, 32'h60000000, 32'h82d00001,
                            32'h00000010, 32'h00000010);
             rom_m.clear();
             rom_m.push(32'h80000010, 1'b0, 3'd2, 0, 1'b0);
             rom_m.run();
-            receive_noboot(32'd4, 32'h80000010, 32'd3, 32'd1, 32'h40000000, 32'h82d00001,
+            receive_noboot(32'd4, 32'h80000010, 32'd3, 32'd1, 32'h60000000, 32'h82d00001,
                            32'h00000010, 32'h00000010);
             fork
                 cpu_transmit("Z", 1);

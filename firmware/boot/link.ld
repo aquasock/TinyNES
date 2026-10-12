@@ -11,7 +11,7 @@ ENTRY(_start)
 MEMORY
 {
 	rom (rx)  : ORIGIN = 0x80000000, LENGTH = 32K
-	ram (rw)  : ORIGIN = 0x40000000, LENGTH = 64K
+	ram (rw)  : ORIGIN = 0x60000000, LENGTH = 64K
 }
 
 __stack_size = 4K;

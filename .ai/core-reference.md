@@ -134,6 +134,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Which clock drives the AE350 A25 core, how fast can it run, and how fast may its buses run? | DEV | DEV-008 |
 | How does a top-edge PLL output reach the global clock network? | DEV | DEV-009 |
 | What does the A25 fetch on its RAM port outside the RAM, and why must those fetches not get ERROR? | DEV | DEV-010 |
+| Which addresses does the AE350's RAM port carry, and are they cached? | DEV | DEV-011 |
 | Is there a core with no emulator for TinyDesk to sit on? | DEV | DEV-005 |
 | Which FPGA pins are the JTAG programmer's? | BRD | BRD-001 |
 | Why does the SD card fail to mount? | BRD | BRD-002 |
@@ -144,6 +145,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Can one-wire and two-wire run together? | BRD | BRD-007 |
 | Can a Raspberry Pi HAT go on the dock's 40-pin headers? | BRD | BRD-008 |
 | How is the BL616 recovered if a firmware stops it before USB comes up? | BRD | BRD-009 |
+| Which SDRAM module is fitted, on which connector, and on which FPGA pins? | BRD | BRD-010 |
 | Where are the board's PMOD sockets, and how are their pins numbered? | PMOD | PMOD-001 |
 | How does the core learn what is seated in the PMOD sockets? | PMOD | PMOD-002 |
 | Which register selects a PMOD personality, and what are the values? | PMOD | PMOD-004 |
@@ -282,7 +284,8 @@ DEV-006: "The FPGA is not empty at power-up: with no tangload it is already runn
 DEV-007: "The FPGA's 16 MB XTX configuration flash (JEDEC 0b 40 18) holds one image at offset 0, 1,084,246 B, a compressed GW5AST-138 bitstream matching no TangCore 0.9 core; TangCore's installer and firmware never write that flash, so it is most likely the factory splash core"
 DEV-008: "The A25 core runs at PLL_R[0] CLKOUT1's frequency whatever net drives CORE_CLK; it measured 750.0000 MHz against the 50 MHz oscillator in an open-flow build with a 75 MHz bus; Gowin's manual keeps AHB and APB synchronous and below 200 MHz"
 DEV-009: "PLL_R[0] CLKOUT0 reaches the global clock network through TRPLL0CLK0 at the centre mux; entering at (54,93) SPINE8 or SPINE10 (TOP bridge inputs) clocks the AE350 buses, entering at (54,88) SPINE16 (BOTTOM bridge input) leaves them dead"
-DEV-010: "The A25 fetches down mispredicted paths to address 0 on the RAM port (HPROT[0] 0, 32-byte WRAP4 line fills with the I-cache on); with both caches on, one ERROR on such a fill stops the core, so ahb_ram answers fetches outside its window with zero and OKAY"
+DEV-010: "The A25 fetches down mispredicted paths to address 0 on the RAM port (HPROT[0] 0, 32-byte WRAP4 line fills with the I-cache on); with both caches on, one ERROR on such a fill stops the core, so ahb_ram answers fetches outside its block RAM and SDRAM windows with zero and OKAY"
+DEV-011: "The AE350 RAM port (DDR_H*) carries 0x40000000 to at least 0x7fffffff, cacheable: TinyNES runs block RAM at 0x60000000 and SDRAM at 0x40000000 there with both caches on, and Tang-PSX ran DDR3 up to 0x7fffffff"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
 BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
@@ -292,6 +295,7 @@ BRD-006: "Which firmware the BL616 runs is chosen at a cold power-up: with the p
 BRD-007: "One-wire and two-wire cannot be combined: by the user's account the board's modules are powered from one input or the other, never both, and making the two work together was tried at length in the earlier projects without success; no written record of that work was found"
 BRD-008: "The dock's two 2x20 2.54 mm headers are the SDRAM connectors J9 (SDRAM0) and J10 (SDRAM1), MiSTer-style: FPGA I/O on pins 1-10, 13-28 and 31-40, +5 V on pin 11, ground on pin 12; they are not Raspberry Pi headers, and a Pi HAT fitted directly would put the board's 5 V on a HAT signal and short eight FPGA pins through the HAT's ground pins; a Sipeed SDRAM module uses all 38 I/O, pins 29 and 30 being its DQM"
 BRD-009: "The BL616 has a BOOT button inside the case for its ROM bootloader; a recovery writes only the application at 0x40000 with BLFlashCommand --write, never make flash, which would overwrite Sipeed's loader at 0x0"
+BRD-010: "J9 holds Sipeed's SDRAM module with two W9825G6KH-6, driven as one 32 MiB x16 device on one chip select; J10 is empty; pins: dq0-15 E14 E13 C15 C14 B13 C13 A14 A13 B21 A21 B20 A20 A15 A16 B15 B16, a0-12 D19 E19 C19 C18 E16 D15 D14 A19 A18 C17 D20 D17 B18, ba F15 C20, dqm F14 F13, clk B17, we_n D16, ras_n F16, cas_n E17, cs_n F21, LVCMOS33"
 PMOD-001: "Two PMOD sockets: PMOD1 beside HDMI on W19 W20 F19 F20 E22 D22 E21 D21 and PMOD0 on V18 V19 G21 G22 F18 E18 C22 B22, all LVCMOS33; Sipeed interleaves the rows, so IO0/2/4/6 are Digilent pins 1-4 and IO1/3/5/7 are pins 7-10, and flipping a module swaps pins 1-4 with 7-10"
 PMOD-002: "/tang.ini at the SD root is the socket contract (pmod0/pmod1 plus _flip, flat under [tang]); a missing file or absent entry releases the socket and unknown modules are refused; modules carry no ID pins, so presence can never be detected; this firmware parses it (tang_ini.c) and, by the user's choice, does not enforce flip safety"
 PMOD-004: "On the merged Phosphor core the socket control register is 0xc0: hold 0, PMOD0 personality 7:4, PMOD1 11:8, flips 12/13; personalities 0 none, 1 oledrgb, 2 vga J1, 3 vga J2, 4 rotary encoder; both sockets power up released, so a host must declare them; the bring-up core has the same layout at 0x10, which is not extended frame type 0x10"
@@ -380,7 +384,7 @@ PSX-001: "This board is GW5AST-138 revision C (package mark 2518CA0N), while the
 PSX-002: "GW5AST-138: 138,240 LUTs, 139,095 registers, 340 BSRAM blocks of 18 Kbit, about 765 KB"
 PSX-003: "50 MHz oscillator on FPGA pin V22; the BL616 control UART reaches the FPGA on V14 (FPGA RX) and U15 (FPGA TX), LVCMOS33 - the other end of the link PROT-003 describes from the BL616 side"
 PSX-004: "Module connector U1201, 8-pin JST SH: 1 5V0 via diode (~4.4 V), 2 TMS T13, 3 TDO U13, 4 TCK V12, 5 TDI R13, 6 RX V14, 7 TX U15, 8 GND; the JTAG nets are shared with the BL616, so an external adapter must be released during a tangload, pins 6 and 7 stay unconnected, and pin 1 must not reach a 3.3 V adapter"
-PSX-005: "Dock SDRAM is Winbond W9825G6KH-6, 32 MB x16 at 166 MHz, on connectors J9 and J10, separate from the SOM's 1 GiB x32 DDR3; neither is the BL616's memory, which is 320 KB of on-chip OCRAM (BL6-002)"
+PSX-005: "Dock SDRAM is Winbond W9825G6KH-6, 32 MB x16 at 166 MHz, on connectors J9 and J10 (on this board, J9 only: BRD-010), separate from the SOM's 1 GiB x32 DDR3; neither is the BL616's memory, which is 320 KB of on-chip OCRAM (BL6-002)"
 PSX-006: "A loaded core is indicated by active_core, the low byte of its CORE_ID (0x01 nestang, 0x50 Phosphor, 0x51 Gate 1), not by core_running, which reads no while a core answers; uploads are refused while a core runs; the link is 2 Mbaud with a 5 Mbaud fast mode and needs an iosys clock at least 8x the baud"
 BLE-001: "The BL616's antenna pin runs through L9 (0 ohm) to U35, a U.FL jack marked ANT on the dock's underside, with no antenna from the factory; bare, the radio connects only close up with frequent HCI 0x3E failures; since 2026-10-10 a 2.4 GHz 6 dBi antenna is fitted on an RP-SMA pigtail, and a device that read -70 dBm bare reads -33 dBm"
 BLE-002: "Scanning and connecting need the SDK's ble1m10s1bredr0 controller library (central, observer, 10 links); ble1m0s1bredr0 has neither role; Bluetooth costs 236,096 B of image, 32 KB of RAM the linker reserves and 52.6 KB of boot heap, and the controller cannot be shut down once started; the stack starts on first use or at boot when pairings are saved"
@@ -542,10 +546,23 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   status: VERIFIED
   verified_date: 2026-10-12
   statement: "Running the TinyNES boot program from the ROM port at 0x80000000, with its data and stack at 0x40000000 on the RAM port (DDR_H*), the A25 put instruction fetches (DDR_HPROT[0] 0) to address 0x00000000 on the RAM port that the program never executes. With the caches off they were single 32-bit reads, 4 per run. With only the I-cache on they were 64-bit WRAP4 line fills at 0x0, 12 per run. With both caches on they were WRAP4 line fills at 0x0 and 0x18, 4 per run. A fabric RAM that answered them with ERROR raised no trap when the caches were off or only one cache was on, and the program finished. With both caches on (mcache_ctl 3), the core stopped for good straight after the eighth such ERROR, a line fill at 0x18, which came just after csrs mcache_ctl and fence.i: no further transfer appeared on the ROM, RAM or EXTS ports. Answering the same fetches with zero data and OKAY, while data accesses outside the RAM still got ERROR, let the same program run to completion with both caches on."
-  consequence: "Every RAM-port slave must answer an instruction fetch outside its memory with OKAY, not ERROR. fpga/ae350_soc/ahb_ram.sv returns zero for one, which is an illegal instruction, so a fetch that really executes still traps, and it keeps ERROR for data accesses outside the RAM. Any later RAM bridge, such as one to SDRAM, needs the same rule. The NOBOOT report's S1, SL and ST fields count these stray transfers."
+  consequence: "Every RAM-port slave must answer an instruction fetch outside its memory with OKAY, not ERROR. fpga/ae350_soc/ahb_ram.sv, which fronts both the block RAM at 0x60000000 and the SDRAM at 0x40000000 (ahb_sdram.sv), returns zero for a fetch outside both windows, which is an illegal instruction, so a fetch that really executes still traps, and it keeps ERROR for data accesses there. Any further RAM-port slave needs the same rule. The NOBOOT report's S1, SL and ST fields count these stray transfers."
   sources:
     - "This project's fpga/ae350_soc/ae350_soc.sv (NOBOOT RAML, ST, S1 and SL fields, CPU_TX_DROP), fpga/ae350_soc/ahb_ram.sv and firmware/boot/main.c"
-  verification: "Measured on this board on 2026-10-12 (core-log entry 7) with CPU_TX_DROP images loaded by the agent in one-wire mode, varying only the mcache_ctl bits the firmware sets (0, 1, 2, 3), then the fixed image, which printed TinyNES AE350 C OK UNC=03bc52c0 CAC=001e33e1 and passed tools/check_ae350_uart.py. Why the A25 fetches from address 0 is not known; a predictor holding a zero target is a guess, not a finding."
+  verification: "Measured on this board on 2026-10-12 (core-log entry 7) with CPU_TX_DROP images loaded by the agent in one-wire mode, varying only the mcache_ctl bits the firmware sets (0, 1, 2, 3), then the fixed image, which printed TinyNES AE350 C OK UNC=03bc52c0 CAC=001e33e1 and passed tools/check_ae350_uart.py. Why the A25 fetches from address 0 is not known; a predictor holding a zero target is a guess, not a finding. Revised 2026-10-12 (core-log entry 8): the block RAM moved to 0x60000000 and ahb_ram now applies the rule outside both its windows, the SDRAM's included; that image ran to completion with both caches on."
+
+- record_id: DEV-011
+  kind: DEVICE
+  topic_id: DEV
+  title: "The AE350 RAM port carries 0x40000000 to 0x7fffffff, and it is cacheable"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "The A25 sends data accesses and instruction fetches for 0x40000000 and 0x60000000, and in Tang-PSX up to 0x7fffffff, out on the 64-bit RAM AHB port (DDR_H*), with the full 32-bit address on DDR_HADDR, and caches them once mcache_ctl enables the caches: the D-cache fills and writes back 32-byte lines there as WRAP4 bursts of doublewords. Wrong-path fetches to address 0 also come out on this port (DEV-010)."
+  consequence: "The fabric decodes the RAM port itself and can put several memories on it: TinyNES places 64 KiB of block RAM at 0x60000000 and the dock's 32 MiB SDRAM at 0x40000000, both cacheable, and Tang-PSX put 1 GiB of DDR3 at 0x40000000. Anything a fabric master writes there must be invalidated in the D-cache before the CPU reads it, and anything the CPU writes must be written back first (MCCTL command 6 in firmware/boot/tinynes.h)."
+  sources:
+    - "This project's fpga/ae350_soc/ahb_ram.sv (BASE, SDRAM_BASE) and firmware/boot/main.c (test_words with the caches on over both windows)"
+    - "Tang-PSX 61974ca, .ai/core-reference.md AE350-002 and AE350-003 (RAM port at 0x40000000, cacheable) and .ai/core-log.md entry 44 (L2 bypass range 0x7fe00000-0x7fffffff on DDR3 behind the RAM port)"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 8): the image placing block RAM at 0x60000000 and SDRAM at 0x40000000 passed every RAM test with the caches off and on and printed a cached block RAM time matching entry 7's (CAC=001e33f4 against 001e33e1). Whether the port also carries 0x00000000 to 0x3fffffff as memory, rather than only the stray fetches of DEV-010, was not tested; Gowin's manual was not read for the port's decode."
 
 - record_id: BRD-001
   kind: BOARD
@@ -647,7 +664,7 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "this project's own photograph of the dock's front edge, which showed the two headers (`images/circuit_boards/dock_front.jpg`, removed from this repository on 2026-10-10)"
     - "Adafruit, 2.2-inch PiTFT HAT guide: ILI9340 over the Pi's SPI with GPIO 25 and four buttons"
     - "litex-hub/litex-boards c2abe2465dbe: litex_boards/extensions/sdram_modules.py SipeedSDRAM (dm on conn:29 conn:30) and MiSTerSDRAM (no signal on 29 or 30); litex_boards/extensions/sipeed.py TangConsoleDock sdram0_connector (J9, pin n is conn:n, 5 V on 11, ground on 12)"
-  verification: "Read from the schematic text and the board photograph on 2026-10-06; nothing was fitted or measured (core-log entry 41). The HAT's own pin assignments beyond those Adafruit's guide states were not checked against its schematic. Revised 2026-10-12 (core-log entry 7): pins 29 and 30 are the Sipeed module's DQM, from litex-boards' module and dock definitions; which module is fitted to this board, and what a MiSTer module connects to 29 and 30, have not been checked."
+  verification: "Read from the schematic text and the board photograph on 2026-10-06; nothing was fitted or measured (core-log entry 41). The HAT's own pin assignments beyond those Adafruit's guide states were not checked against its schematic. Revised 2026-10-12 (core-log entry 7): pins 29 and 30 are the Sipeed module's DQM, from litex-boards' module and dock definitions; which module is fitted to this board, and what a MiSTer module connects to 29 and 30, have not been checked. Revised 2026-10-12 (core-log entry 8): J9 holds a Sipeed SDRAM module and J10 is empty (BRD-010); byte and halfword stores to it passed with DQM on pins 29 and 30, confirming them for the Sipeed module. A MiSTer module's 29 and 30 remain unchecked."
 
 - record_id: BRD-009
   kind: BOARD
@@ -661,6 +678,21 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "The user's account, 2026-10-11: the BOOT button exists, is inside the case, and was used to write firmware before"
     - "Bouffalo SDK tools/bflb_tools/bouffalo_flash_cube/BLFlashCommand-ubuntu --help (read, write, start, len, file)"
   verification: "Not exercised in this project: the user declined a recovery test as unnecessary, the console being awkward to open (core-log entry 21). The BLFlashCommand options were read from its help text."
+
+- record_id: BRD-010
+  kind: BOARD
+  topic_id: BRD
+  title: "The SDRAM module fitted on J9, and its FPGA pins"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "On this board J9 (SDRAM0) holds the SDRAM module that ships fitted on Sipeed's Tang Console 138K, carrying two Winbond W9825G6KH-6 (markings 2541P 6522BAOOOZW); J10 is empty. Each W9825G6KH-6 is 256 Mbit x16: 4 banks of 8192 rows of 512 columns, CL2 or CL3, tRCD and tRP 15 ns, tRC 60 ns, tRAS 42 ns, 8192 refreshes per 64 ms; CKE is not on the connector. Driven as one x16 device on the connector's single chip select it is 32 MiB. Its FPGA pins, all LVCMOS33, are: dq0-dq15 E14 E13 C15 C14 B13 C13 A14 A13 B21 A21 B20 A20 A15 A16 B15 B16; a0-a12 D19 E19 C19 C18 E16 D15 D14 A19 A18 C17 D20 D17 B18; ba0 F15, ba1 C20; dqm0 F14, dqm1 F13; clk B17; we_n D16; ras_n F16; cas_n E17; cs_n F21. By the user's account this is Sipeed's newer 64 MB module, sold in Sipeed's store, whose second chip would need its own select."
+  consequence: "fpga/ae350_soc/ae350_soc.cst constrains these pins, and fpga/ae350_soc/ahb_sdram.sv runs the module as one 32 MiB device at the 75 MHz bus clock, CL3, with the SDRAM clock an ODDR-inverted copy of the bus clock. Using the second chip waits on finding which connector pin selects it; until then 32 MiB is what any core here can count on."
+  sources:
+    - "litex-hub/litex-boards c2abe2465dbe: litex_boards/extensions/sipeed.py TangConsoleDock sdram0_connector and litex_boards/extensions/sdram_modules.py SipeedSDRAM"
+    - "nand2mario/nestang src/boards/console138k/console.cst (the same pins, by name)"
+    - "Winbond W9825G6KH datasheet (organisation and AC timing for the -6 grade)"
+    - "User statement, 2026-10-12: two chips marked 'winbond W9825G6KH-6 2541P 6522BAOOOZW' on one module, the other 40-pin header empty, believed to be Sipeed's 64 MB module"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 8) with an agent-run SRAM load in one-wire mode: the TinyNES image wrote and read all 32 MiB with a pattern and its inverse, walked every address line from bit 2 to bit 24, and checked byte and halfword lanes with the caches off and on, all passing (TinyNES SDRAM OK 32M). The two pin sources agree pin for pin. The chip markings are the user's reading; the 64 MB module and its second select are not verified."
 
 - record_id: PMOD-001
   kind: BOARD
@@ -1842,11 +1874,11 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   status: SOURCED
   verified_date: 2026-10-03
   statement: "The dock exposes two 40-pin SDRAM connectors, J9 and J10, each able to carry one 16-bit SDR SDRAM; the add-on module is a Winbond W9825G6KH-6, 256 Mbit (32 MB) x16, 166 MHz grade, 3.3 V I/O, with CLK on connector pin 20. Separately the SOM fits two Hynix H5TQ4G63EFR-RDC x16 DDR3 devices forming a 1 GiB x32 array on a shared address and command bus."
-  consequence: "Recorded because the memory question keeps coming up: the RAMs on this bench are distinct and only one belongs to the firmware. The BL616 has 320 KB of on-chip OCRAM and no external RAM (BL6-002); the FPGA has the DDR3 array and optionally these SDRAM modules on the dock. Nothing in this firmware touches either FPGA-side memory."
+  consequence: "Recorded because the memory question keeps coming up: the RAMs on this bench are distinct and only one belongs to the BL616. The BL616 has 320 KB of on-chip OCRAM and no external RAM (BL6-002); the FPGA has the DDR3 array and optionally these SDRAM modules on the dock. TinyTang's BL616 firmware touches neither FPGA-side memory; TinyNES's AE350 system uses the module on J9 as its main memory (BRD-010)."
   sources:
     - "Tang-PSX, .ai/core-reference.md records SDR-001 and BRD-001, harvested as that project is archived"
     - "litex-boards commit e4307929c38a, sipeed_tang_console.py: sdram0/1_connector and the W9825G6KH6 module selection"
-  verification: "Read from Tang-PSX's reference, which confirmed the part by photograph only. Which connectors are populated on this bench, and the connector pin mapping, are not verified."
+  verification: "Read from Tang-PSX's reference, which confirmed the part by photograph only. Revised 2026-10-12 (core-log entry 8): on this bench J9 is populated and J10 empty, and the J9 pin mapping is verified on hardware; both are in BRD-010."
 
 - record_id: PSX-006
   kind: EXTERNAL
@@ -2354,7 +2386,7 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - A `core-syntax.md` audit is required whenever this file changes, per `.ai/core.md`.
 
 ```yaml
-last_reviewed: 2026-10-11
+last_reviewed: 2026-10-12
 ```
 
 ---

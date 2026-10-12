@@ -105,32 +105,46 @@ alter BL616 firmware or the FPGA's configuration flash.
 | AHB port | Address | What the fabric puts there |
 |---|---|---|
 | ROM | `0x80000000` | 32 KiB block-RAM boot ROM (`ahb_boot_rom.sv`) holding the firmware image |
-| RAM (64-bit) | `0x40000000` | 64 KiB block RAM (`ahb_ram.sv`); a data access to any other address on this port gets an AHB ERROR, and an instruction fetch reads zero |
+| RAM (64-bit) | `0x60000000` | 64 KiB block RAM (`ahb_ram.sv`) holding the firmware's data and stack |
+| RAM (64-bit) | `0x40000000` | 32 MiB SDRAM on the dock's J9 module (`ahb_sdram.sv`); a data access to any address on this port outside the two RAMs gets an AHB ERROR, and an instruction fetch reads zero |
 | EXTS (uncached) | `0xe8000000` | UART data `+0x00`, UART status `+0x04`, ID `0x544e3031` ("TN01") `+0x08`, scratch `+0x0c` (`exts_uart.sv`) |
 
 The clocks are the same as in the UART gate: the core runs at 750 MHz and the
 buses at 75 MHz. The UART is the same FPGA UART at 115200 8N1.
 
+Both RAMs are cacheable. The SDRAM is the module Sipeed fits to the Tang
+Console 138K: two Winbond W9825G6KH-6 on J9, driven as one 32 MiB x16 device
+on its single chip select (J10 is left empty). The controller runs on the
+75 MHz bus clock at CAS latency 3, with the SDRAM clock an inverted copy from
+an `ODDR`. It keeps one 32-byte line in a read buffer, filled critical word
+first, merges posted writes into it, and opens and closes a row for each
+access.
+
 The A25 fetches instructions down mispredicted paths, and some of those
 fetches go to address 0, which lands on the RAM port. With both caches on, a
 line fill that gets ERROR there stops the core for good. So the RAM port
-answers an instruction fetch outside its window with zero and OKAY; zero is
+answers an instruction fetch outside both RAMs with zero and OKAY; zero is
 an illegal instruction, so a fetch that is really executed still traps.
 
 `firmware/boot/` is the boot program, in C with a short assembly start-up.
-It checks the EXTS registers. Then it tests the RAM with the A25 caches off
-and again with them on; the cached pass writes back and invalidates the
-D-cache, so the data crosses the bus as cache-line bursts. After that it
-reports once a second:
+It checks the EXTS registers. Then it tests the block RAM and the SDRAM with
+the A25 caches off and again with them on; each cached pass writes back and
+invalidates the D-cache, so the data crosses the bus as cache-line bursts.
+The SDRAM tests cover byte and halfword lanes, every address line, and a
+pattern and its inverse over all 32 MiB. After that it reports once a second:
 
 ```text
 TinyNES AE350 boot ROM
 TinyNES AE350 C OK UNC=<cycles> CAC=<cycles>
+TinyNES SDRAM OK 32M MISS=<cycles> RD=<KB/s> WR=<KB/s> FULL=<ms>
 ```
 
-`UNC` and `CAC` are the core cycles each RAM test took, in hex. On the board
-they are `UNC=03bc52c0 CAC=001e33e1`: the cached test is about 32 times
-faster. A failed check
+`UNC` and `CAC` are the core cycles each block RAM test took, in hex. On the
+board they are `UNC=03f15308 CAC=001e33f4`: the cached test is about 33
+times faster. The SDRAM line is in decimal. `MISS` is the core cycles per
+cache line read from the SDRAM, `RD` and `WR` the rates reading and writing
+1 MiB with the caches on, and `FULL` the time the cached 32 MiB test took.
+On the board they are `MISS=370 RD=61607 WR=34072 FULL=3044`. A failed check
 or a trap prints a line starting with `BAD`. If the CPU has written nothing to
 the UART about 1.8 s after reset, the fabric reports instead, once a second
 until the CPU writes:
@@ -141,8 +155,8 @@ NOBOOT ROM=<count> LAST=<address> RAM=<count> EXT=<count> RAML=<address> ST=<sta
 
 The counts are the transfers each port has accepted. `LAST` and `RAML` are
 the addresses of the last ROM and RAM transfers. `S1` and `SL` are the
-addresses of the first and last stray RAM transfers, those outside the RAM
-window. `ST` holds, from the top byte down:
+addresses of the first and last stray RAM transfers, those outside both
+RAMs. `ST` holds, from the top byte down:
 
 - the last stray transfer's `HPROT[0]` (0 for an instruction fetch),
   `HBURST`, `HWRITE` and `HSIZE`;
@@ -172,8 +186,9 @@ bash tools/build_ae350_soc.sh
 ```
 
 The testbench drives each AHB port directly. `TEST=0` covers the ROM, the RAM's
-byte lanes, ERROR responses and zero-reading fetches, the EXTS registers and
-the CPU UART. `TEST=1`
+byte lanes, ERROR responses and zero-reading fetches, the EXTS registers, the
+CPU UART, and the SDRAM controller against `tests/sdram_model.sv`, a
+W9825G6KH-6 model that checks command order and timing. `TEST=1`
 covers the `NOBOOT` report and the CPU taking the UART over:
 
 ```sh
@@ -182,7 +197,7 @@ for t in 0 1; do
   iverilog -g2012 -s ae350_soc_tb -Pae350_soc_tb.TEST=$t \
     -o build/ae350_soc_tb/tb$t \
     ~/oss-cad-suite/share/yosys/gowin/cells_xtra_gw5a.v \
-    fpga/ae350_soc/*.sv tests/ae350_soc_tb.sv
+    fpga/ae350_soc/*.sv tests/sdram_model.sv tests/ae350_soc_tb.sv
   vvp build/ae350_soc_tb/tb$t
 done
 ```
@@ -194,6 +209,7 @@ On hardware, load it the same way as the UART gate. The checker fails on
 source ~/oss-cad-suite/environment
 openFPGALoader -b tangmega138k build/ae350_soc/ae350_soc.fs
 python3 tools/check_ae350_uart.py --port /dev/ttyUSB1 --expect 'TinyNES AE350 C OK'
+python3 tools/check_ae350_uart.py --port /dev/ttyUSB1 --expect 'TinyNES SDRAM OK 32M'
 ```
 
 ## Build sweeps

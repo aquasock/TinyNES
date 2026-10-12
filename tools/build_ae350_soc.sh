@@ -40,7 +40,7 @@ cd "$root"
 echo "Yosys synthesis"
 yosys -Q -T -q -l "$out/synth.log" -p "
     read_verilog -lib $suite/share/yosys/gowin/cells_xtra_gw5a.v
-    read_verilog -sv $src/ahb_boot_rom.sv $src/ahb_ram.sv $src/exts_uart.sv $src/ae350_soc.sv
+    read_verilog -sv $src/ahb_boot_rom.sv $src/ahb_ram.sv $src/ahb_sdram.sv $src/exts_uart.sv $src/ae350_soc.sv
     $synth_param
     synth_gowin -family gw5a -top ae350_soc_top
     write_json $out/ae350_soc.json

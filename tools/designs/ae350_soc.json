@@ -4,6 +4,7 @@
     "sources": [
         "fpga/ae350_soc/ahb_boot_rom.sv",
         "fpga/ae350_soc/ahb_ram.sv",
+        "fpga/ae350_soc/ahb_sdram.sv",
         "fpga/ae350_soc/exts_uart.sv",
         "fpga/ae350_soc/ae350_soc.sv"
     ],

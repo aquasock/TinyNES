@@ -240,3 +240,44 @@ The next cycle should propose the next step toward running Nestopia for user app
 - User Test: PASS
 
 ---
+
+## 8 COMMIT Unreleased 2026-10-12T12:49:40-07:00
+
+#### Coming From:
+
+Unreleased 9c4935b
+
+#### Purpose:
+
+Put the dock's SDRAM module behind the AE350 RAM port as 32 MiB of cacheable main memory, tested from the A25, as the memory the Nestopia port will run in.
+
+#### Outcome:
+
+`fpga/ae350_soc/ahb_sdram.sv` is a new SDRAM controller on the 75 MHz bus clock at CAS latency 3, with the SDRAM clock an inverted copy of the bus clock from an `ODDR`, read capture on the falling edge, a one-line 32-byte read buffer filled critical word first, posted writes merged into that buffer, a row opened and closed per access, and periodic refresh. `ahb_ram.sv` moved the 64 KiB block RAM to `0x60000000`, sends `0x40000000` to `0x41ffffff` to the controller, and keeps the DEV-010 rule outside both windows; `ae350_soc.sv` and `ae350_soc.cst` add the 38 J9 pins, and the firmware's `link.ld` follows the block RAM. The pins and the module, two W9825G6KH-6 on J9 driven as one 32 MiB device on its single chip select with J10 empty, are recorded as BRD-010, and the RAM port's decode and caching of both windows as DEV-011; DEV-010, BRD-008 and PSX-005 were revised. `tests/sdram_model.sv` is a new W9825G6KH-6 model that checks command order, timing, refresh interval and bank state and aliases rows so that address faults read X, and `tests/ae350_soc_tb.sv` runs the controller against it at 75 MHz; deliberate controller faults in capture timing, tRCD, tRC, tWR, refresh rate, row and column address bits, write merging and DQM were each caught, and both testbench modes passed. The firmware tests the SDRAM's byte and halfword lanes with the caches off and on, walks every address line, runs a pattern and its inverse over all 32 MiB with the caches on, and measures the SDRAM. The first FPGA build failed in Yosys because the controller's wait counter had an initial value different from its asynchronous reset value; matching them fixed it. The default-seed image, SHA-256 `8be6c686f2d14986873cb5ceeb82940c0313a5c2b88e8f66eac70520d0e76812` with bus Fmax 175.59 MHz, was loaded by the agent to SRAM in one-wire mode and printed `TinyNES AE350 C OK UNC=03f15308 CAC=001e33f4` and `TinyNES SDRAM OK 32M MISS=370 RD=61607 WR=34072 FULL=3044`, so an SDRAM cache-line miss costs 370 core cycles, cached reads run at 61,607 KB/s and writes at 34,072 KB/s, and the full 32 MiB test took 3,044 ms; `tools/check_ae350_uart.py` passed on the SDRAM line. `tools/sweep.py` over seeds 1 to 16 was 16 of 16 clean with no hold violations, with bus Fmax 152.72 to 184.81 MHz, median 166.835 MHz. The README documents the memory map, the controller and the new report line. The user accepted the result. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should propose a C and C++ runtime and program loader for the AE350, with the heap and large data in SDRAM, as the next step toward a headless Nestopia benchmark, for user approval; the module's second chip stays unused until the pin that selects it is found.
+
+#### Files Modified:
+
+- README.md
+- firmware/boot/link.ld
+- firmware/boot/main.c
+- firmware/boot/tinynes.h
+- fpga/ae350_soc/ae350_soc.cst
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/ahb_ram.sv
+- fpga/ae350_soc/ahb_sdram.sv
+- tests/ae350_soc_tb.sv
+- tests/sdram_model.sv
+- tools/build_ae350_soc.sh
+- tools/designs/ae350_soc.json
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

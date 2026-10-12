@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // TinyNES AE350 system: the A25 boots C firmware from a block-RAM ROM on the
 // ROM port (ahb_boot_rom), keeps its data and stack in block RAM on the RAM
-// port at 0x40000000 (ahb_ram), and prints on the FPGA UART at 115200 8N1
-// through registers in the EXTS window (exts_uart).
+// port at 0x60000000 (ahb_ram), has the dock's 32 MiB SDRAM on J9 at
+// 0x40000000 on the same port (ahb_sdram), and prints on the FPGA UART at
+// 115200 8N1 through registers in the EXTS window (exts_uart).
 //
 // If the CPU has written nothing to the UART 2^NOBOOT_BITS bus clocks after
 // reset (about 1.8 s), fabric reports instead, about once a second until the
@@ -15,13 +16,24 @@ module ae350_soc_top #(
     parameter INIT_FILE = "build/firmware/boot/boot.hex",
     parameter integer UART_DIV = 651, // 75 MHz / 115200
     parameter integer NOBOOT_BITS = 27,
+    parameter integer SDRAM_INIT_CYCLES = 15000, // 200 us at 75 MHz
     // Diagnostics: CPU_HOLD 1 holds the A25 in reset; CPU_TX_DROP 1 lets it
     // run but drops its UART bytes. Either way only NOBOOT reports.
     parameter integer CPU_HOLD = 0,
     parameter integer CPU_TX_DROP = 0
 ) (
-    input  wire sys_clk,
-    output wire uart_tx
+    input  wire        sys_clk,
+    output wire        uart_tx,
+
+    output wire        sdram_clk,
+    output wire        sdram_cs_n,
+    output wire        sdram_ras_n,
+    output wire        sdram_cas_n,
+    output wire        sdram_we_n,
+    output wire [1:0]  sdram_ba,
+    output wire [12:0] sdram_a,
+    output wire [1:0]  sdram_dqm,
+    inout  wire [15:0] sdram_dq
 );
     wire pll_locked;
     wire bus_clk;
@@ -120,6 +132,14 @@ module ae350_soc_top #(
     wire [2:0] ram_burst;
     wire [3:0] ram_prot;
 
+    wire sd_req;
+    wire sd_write;
+    wire [24:3] sd_addr;
+    wire [7:0] sd_lanes;
+    wire [63:0] sd_wdata;
+    wire sd_ack;
+    wire [63:0] sd_rdata;
+
     wire [31:0] exts_addr;
     wire [31:0] exts_wdata;
     wire exts_sel;
@@ -150,7 +170,36 @@ module ae350_soc_top #(
         .hrdata(ram_rdata),
         .hready(ram_ready),
         .hresp(ram_resp),
-        .stray(ram_stray)
+        .stray(ram_stray),
+        .sd_req(sd_req),
+        .sd_write(sd_write),
+        .sd_addr(sd_addr),
+        .sd_lanes(sd_lanes),
+        .sd_wdata(sd_wdata),
+        .sd_ack(sd_ack),
+        .sd_rdata(sd_rdata)
+    );
+
+    ahb_sdram #(.INIT_CYCLES(SDRAM_INIT_CYCLES)) sdram (
+        .clk(bus_clk),
+        .resetn(resetn),
+        .req(sd_req),
+        .write(sd_write),
+        .addr(sd_addr),
+        .lanes(sd_lanes),
+        .wdata(sd_wdata),
+        .ack(sd_ack),
+        .rdata(sd_rdata),
+        .ready(),
+        .sdram_clk(sdram_clk),
+        .sdram_cs_n(sdram_cs_n),
+        .sdram_ras_n(sdram_ras_n),
+        .sdram_cas_n(sdram_cas_n),
+        .sdram_we_n(sdram_we_n),
+        .sdram_ba(sdram_ba),
+        .sdram_a(sdram_a),
+        .sdram_dqm(sdram_dqm),
+        .sdram_dq(sdram_dq)
     );
 
     wire fb_valid;
