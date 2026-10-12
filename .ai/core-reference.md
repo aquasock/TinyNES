@@ -132,6 +132,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | What is stored in the FPGA's own configuration flash, and who put it there? | DEV | DEV-007 |
 | Does this project run AE350 RISC-V code, and how does it get there? | DEV | DEV-004 |
 | Which clock drives the AE350 A25 core, how fast can it run, and how fast may its buses run? | DEV | DEV-008 |
+| How does a top-edge PLL output reach the global clock network? | DEV | DEV-009 |
 | Is there a core with no emulator for TinyDesk to sit on? | DEV | DEV-005 |
 | Which FPGA pins are the JTAG programmer's? | BRD | BRD-001 |
 | Why does the SD card fail to mount? | BRD | BRD-002 |
@@ -278,6 +279,7 @@ DEV-005: "The menu core is the console138k design with nestang's NES machine not
 DEV-006: "The FPGA is not empty at power-up: with no tangload it is already running a core that answers core ID 0 on the UART and shows a TangCore splash on HDMI, so it configures itself from storage of its own; boot.tdsh replaces it within seconds, and every boot reloads this project's core (tangload, fpga, nesload for a cartridge)"
 DEV-007: "The FPGA's 16 MB XTX configuration flash (JEDEC 0b 40 18) holds one image at offset 0, 1,084,246 B, a compressed GW5AST-138 bitstream matching no TangCore 0.9 core; TangCore's installer and firmware never write that flash, so it is most likely the factory splash core"
 DEV-008: "The A25 core runs at PLL_R[0] CLKOUT1's frequency whatever net drives CORE_CLK; it measured 750.0000 MHz against the 50 MHz oscillator in an open-flow build with a 75 MHz bus; Gowin's manual keeps AHB and APB synchronous and below 200 MHz"
+DEV-009: "PLL_R[0] CLKOUT0 reaches the global clock network through TRPLL0CLK0 at the centre mux; entering at (54,93) SPINE8 or SPINE10 (TOP bridge inputs) clocks the AE350 buses, entering at (54,88) SPINE16 (BOTTOM bridge input) leaves them dead"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
 BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
@@ -515,6 +517,19 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "Tang-Phosphor .ai/core-reference.md record 'AE350 core clock is PLL_R[0] CLKOUT1', src/ae350/ae350_subsystem.sv and tools/ae350_clock_probe.py; Tang-PSX .ai/core-reference.md AE350-007 (https://github.com/aquasock/Tang-PSX)"
     - "This project's fpga/ae350_uart/ae350_uart.sv (cpu_pll ODIV1_SEL 1, ROM words csrr mcycle and sw to 0xe8000004, ref_count_bus) and tools/check_ae350_uart.py --clock"
   verification: "Measured on this board on 2026-10-12 (core-log entry 3) over three SRAM loads of the open-flow trace image, each 0.899 s interval reading 750.0000 MHz. The CLKOUT1 behaviour and the 200 MHz bus rule are carried from Tang-Phosphor's records and were not re-measured here."
+
+- record_id: DEV-009
+  kind: DEVICE
+  topic_id: DEV
+  title: "Top-edge PLL entry onto the GW5AST-138 global clock network"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "On the GW5AST-138, PLL_R[0] CLKOUT0 drives the clock-plane wire TRPLL0CLK0, which the centre clock mux can take onto a spine in cell (54,93) (SPINE8 to SPINE13, the TOP bridge inputs) or cell (54,88) (SPINE16 to SPINE21, the BOTTOM bridge inputs); the TOP bridge outputs feed spine muxes in both the row-27 and row-81 bridge cells. An open-flow AE350 image whose bus clock entered at (54,88) SPINE16 and left through CBRIDGEOUT_BOTTOM0 into (27,96) SPINE25 and (81,87) SPINE1 loaded with DONE and was silent; the same image with only those three muxes changed to (54,93) SPINE10 and CBRIDGEOUT_TOP2 ran, and a design whose PLL output entered at (54,93) SPINE8 through CBRIDGEOUT_TOP0 also ran. Gowin IDE 1.9.11.03 builds take PLL_R[0] CLKOUT0 in at (54,93) SPINE8; one earlier vendor build used (54,88) SPINE20."
+  consequence: "Route a top-edge PLL's output onto the global network through the (54,93) TOP bridge inputs. The aquasock Apicula fork's GW5AST-138C chipdb carries no top-PLL entry into the BOTTOM spines, which only SPINE16 has been measured to require; restore the others only with a hardware measurement."
+  sources:
+    - "aquasock/apicula epic/gw5ast138c apycula/chipdb.py fse_clock_pips_138 (centre clock mux table 38)"
+    - "Gowin IDE 1.9.11.03 bitstreams of the TinyNES AE350 gate and of a PLL-to-UART test design, decoded with Apicula"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 5) with agent-run SRAM loads in one-wire mode: the bit-patched image ran on two loads while the unpatched image stayed silent, and 16-seed open-flow builds with the fork's restricted chipdb passed as trace and normal images."
 
 - record_id: BRD-001
   kind: BOARD

@@ -131,3 +131,33 @@ Make nextpnr route `PLL_R[0]` `CLKOUT0` onto the global clock network for every 
 - User Test: N/A
 
 ---
+
+## 5 COMMIT Unreleased 2026-10-12T10:05:09-07:00
+
+#### Coming From:
+
+Unreleased 4f93827
+
+#### Purpose:
+
+Route the AE350 bus clock from `PLL_R[0]` `CLKOUT0` over the global clock network for every sink so that the normal image runs on hardware and hold failures stop depending on the placement seed.
+
+#### Outcome:
+
+The aquasock forks on `epic/gw5ast138c` carry the fix: Apicula `f20633a` links `PLL_R[0]` `CLKOUT0` to the clock-plane wire `TRPLL0CLK0` (change C) and drops the centre-mux entries from top-edge PLL wires into the BOTTOM-half spines, and nextpnr `5796d407` lets the global router take a PLL output through such a wire as its first hop. With C alone, the sweep was clean but every image was silent on hardware, including with PLL attribute 211 set to 2 (B), because nextpnr took `bus_clk` in at `(54,88) SPINE16` and out through `CBRIDGEOUT_BOTTOM0`. A PLL-to-UART test design built with both flows printed `PLL OK` from the open flow's `(54,93) SPINE8` entry and went silent with that bridge mux cleared. Repacking the silent AE350 trace image with only the entry and the `(27,96)` and `(81,87)` bridge muxes moved to `(54,93) SPINE10` and `CBRIDGEOUT_TOP2` made it report `ADDR=1 ROM=1 AHB=1` on two loads while the unpatched image stayed silent, which reference record DEV-009 records. With the restricted chipdb regenerated and nextpnr rebuilt, `tools/sweep.py` over normal and trace with seeds 1 to 16 was 32 of 32 clean with no hold violations and one dedicated-routing miss per run, `bus_clk` Fmax was 162.39 to 193.84 MHz in normal and 127.16 to 174.16 MHz in trace, and every seed entered at `(54,93)`. Trace seeds 1 and 2 reported `ADDR=1 ROM=1 AHB=1` at 750 MHz and normal seeds 1 and 2 printed `TinyNES AE350 OK`, the first open-flow pass of the milestone. B was then reverted, and the seed-2 repacks without it passed again: trace SHA-256 `d77e89e74a10047c9e3f72f3c135f9d804e135f10d00780c44e423e4e6af8fe5` and normal SHA-256 `f32a72cd0a4bcd19abe84017af0304cbc0e554acfb5bacb884ff91b6a3c0ee55`. These were agent-run SRAM loads in one-wire mode with the user's board, and the user approved the revised plan and the results. The core-syntax audit passed.
+
+#### Next Steps:
+
+Replace the bit-4 and select status check in the AE350 gate with a full `EXTS_HADDR` and `EXTS_HWDATA` decode, and confirm `TinyNES AE350 OK` on hardware from an unseeded normal build.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
