@@ -2,8 +2,9 @@
 // TinyNES AE350 system: the A25 boots C firmware from a block-RAM ROM on the
 // ROM port (ahb_boot_rom), keeps its data and stack in block RAM on the RAM
 // port at 0x60000000 (ahb_ram), has the dock's 32 MiB SDRAM on J9 at
-// 0x40000000 on the same port (ahb_sdram), and prints on the FPGA UART at
-// 115200 8N1 through registers in the EXTS window (exts_uart).
+// 0x40000000 on the same port (ahb_sdram), and sends and receives on the
+// FPGA UART at 2,000,000 baud 8N1 through registers in the EXTS window
+// (exts_uart).
 //
 // If the CPU has written nothing to the UART 2^NOBOOT_BITS bus clocks after
 // reset (about 1.8 s), fabric reports instead, about once a second until the
@@ -14,7 +15,7 @@
 //          RAML=<address> ST=<state> S1=<address> SL=<address>   (one line)
 module ae350_soc_top #(
     parameter INIT_FILE = "build/firmware/boot/boot.hex",
-    parameter integer UART_DIV = 651, // 75 MHz / 115200
+    parameter integer UART_DIV2 = 75, // 2 * 75 MHz / 2,000,000 baud
     parameter integer NOBOOT_BITS = 27,
     parameter integer SDRAM_INIT_CYCLES = 15000, // 200 us at 75 MHz
     // Diagnostics: CPU_HOLD 1 holds the A25 in reset; CPU_TX_DROP 1 lets it
@@ -24,6 +25,7 @@ module ae350_soc_top #(
 ) (
     input  wire        sys_clk,
     output wire        uart_tx,
+    input  wire        uart_rx,
 
     output wire        sdram_clk,
     output wire        sdram_cs_n,
@@ -207,7 +209,7 @@ module ae350_soc_top #(
     wire fb_ready;
     wire cpu_owns;
 
-    exts_uart #(.UART_DIV(UART_DIV), .DROP_CPU_TX(CPU_TX_DROP)) regs (
+    exts_uart #(.UART_DIV2(UART_DIV2), .DROP_CPU_TX(CPU_TX_DROP)) regs (
         .clk(bus_clk),
         .resetn(resetn),
         .haddr(exts_addr),
@@ -222,7 +224,8 @@ module ae350_soc_top #(
         .fb_data(fb_data),
         .fb_ready(fb_ready),
         .cpu_owns(cpu_owns),
-        .tx(uart_tx)
+        .tx(uart_tx),
+        .rx(uart_rx)
     );
 
     AE350_SOC cpu (

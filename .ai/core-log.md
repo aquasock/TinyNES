@@ -281,3 +281,59 @@ The next cycle should propose a C and C++ runtime and program loader for the AE3
 - User Test: PASS
 
 ---
+
+## 9 COMMIT Unreleased 2026-10-12T13:41:29-07:00
+
+#### Coming From:
+
+Unreleased 86e3207
+
+#### Purpose:
+
+Give the AE350 a way to receive programs over the UART and a C and C++ runtime to run them from the SDRAM, as the base the headless Nestopia benchmark will be built on.
+
+#### Outcome:
+
+`fpga/ae350_soc/exts_uart.sv` gained a receiver on V14 with the pull-up on, and the UART now runs at 2,000,000 baud 8N1 both ways: each bit lasts 37 or 38 bus clocks in turn, the receiver samples at bit centres and drops a start bit that is gone by then, and received bytes go into a 512-byte block RAM buffer read from a new register at `0xe8000010`, with the status register now reporting a waiting byte and sticky overrun and missing-stop-bit flags that a write clears. `tests/ae350_soc_tb.sv` gained a receiver test covering byte order, senders 3 and 5 percent fast and slow, reads while bytes arrive, a glitch, a missing stop bit, a 513-byte overrun and the buffer pointers wrapping; every deliberate receiver fault was caught except one that cannot change behaviour, and both testbench modes passed. The firmware was split: `firmware/include/tinynes.h` holds the register map and the load protocol, `firmware/common/` the memory tests and UART output shared by the ROM and loaded programs, and `firmware/boot/` the boot ROM, which now runs only quick memory tests, the full SDRAM test having moved to a loaded program, and then waits for a program, which `firmware/boot/load.c` receives in 8 KiB blocks with CRC-32 checks, NAK reasons and timeouts, checks again after reading the whole image back from the SDRAM, and starts with `fence.i` and both caches on. `firmware/rt/` is the runtime for loaded programs, with newlib and libstdc++, exceptions and RTTI, a heap over the rest of the SDRAM and the stack in the block RAM; on exit or a trap it reports and restarts the boot ROM. `firmware/apps/rt_test/` checks the runtime and carries the full SDRAM test and its speed measurements. `tools/load_ae350.py` sends an ELF file's segments, resends NAKed blocks and follows the program's output to its exit, and `tools/check_ae350_uart.py` gained `--baud`. `tests/test_loader_host.py` runs the ROM's real `load.c` on the PC against `load_ae350.py` through a pseudo-terminal, with lost, corrupted and overflowed bytes, bad headers, addresses outside the SDRAM, a bad read-back and a sender that stops; all six tests passed, and four bugs planted in `load.c` one at a time were each caught. The default-seed image, SHA-256 `4daa055507ed2a32e79801c8bf941fef252a02651500fbe88c2afd947dc5b899`, has bus Fmax 146.09 MHz, and `tools/sweep.py` over seeds 1 to 16 was 16 of 16 clean with no hold violations, bus Fmax 120.45 to 153.28 MHz, median 136.845 MHz, lower than entry 8's but still above 75 MHz. The agent's first SRAM load used openFPGALoader v0.13.1 from `/usr/bin`, which had not finished after more than three minutes and was stopped; oss-cad-suite's v1.1.1 then loaded the image in one-wire mode. The ROM printed `TinyNES AE350 C OK UNC=0491d418 CAC=001f696a`, `TinyNES SDRAM OK 32M` and `TinyNES LOAD` once a second, and `check_ae350_uart.py --baud 2000000` passed on the last. `load_ae350.py` loaded the 138,072-byte `rt_test` image in 0.76 s, 182.2 KB/s, with no block resent, and it printed `TinyNES RT OK MISA=4094312d HEAP=32576K` and `TinyNES SDRAM OK 32576K MISS=370 RD=61604 WR=34071 FULL=2989` and exited with 0; a second load straight after gave the same lines, so the restart back to the ROM works. The misa value is recorded as DEV-012, showing a double-precision FPU the soft-float firmware does not use; PSX-003 is now verified, as the system runs on V22 and moved every byte over V14 and U15; TOOL-018 records the runtime's libraries; DEV-011 follows the moved files. The README documents the receiver, the boot ROM's new report, the load protocol and tool, the runtime, `rt_test` and the host test, and `.gitignore` now ignores Python caches. The user accepted the result. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should propose a headless Nestopia benchmark for user approval: Nestopia's libretro core fetched as a separate dependency under its GPL-2.0-or-later terms rather than copied into this repository, built with the runtime, fed a test ROM and timed per frame on the A25, with whether to use the FPU decided in that plan.
+
+#### Files Modified:
+
+- .ai/core-reference.md
+- .gitignore
+- README.md
+- firmware/apps/rt_test/Makefile
+- firmware/apps/rt_test/main.cpp
+- firmware/boot/Makefile
+- firmware/boot/load.c
+- firmware/boot/load.h
+- firmware/boot/main.c
+- firmware/boot/tinynes.h
+- firmware/common/memtest.c
+- firmware/common/memtest.h
+- firmware/common/uart.c
+- firmware/common/uart.h
+- firmware/include/tinynes.h
+- firmware/rt/crt0.S
+- firmware/rt/link.ld
+- firmware/rt/rt.mk
+- firmware/rt/syscalls.c
+- fpga/ae350_soc/ae350_soc.cst
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/exts_uart.sv
+- tests/ae350_soc_tb.sv
+- tests/host_loader.c
+- tests/test_loader_host.py
+- tools/check_ae350_uart.py
+- tools/load_ae350.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

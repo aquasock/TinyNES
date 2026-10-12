@@ -20,16 +20,17 @@ SIZE      := $(CROSS)size
 ARCHFLAGS := -march=rv32imac_zicsr_zifencei -mabi=ilp32
 CFLAGS    := $(ARCHFLAGS) -Os -g -std=gnu11 -ffreestanding -fno-builtin \
              -fno-tree-loop-distribute-patterns -ffunction-sections \
-             -fdata-sections -Wall -Wextra -Werror
+             -fdata-sections -Wall -Wextra -Werror -I../include -I../common
 LDFLAGS   := -nostdlib -nostartfiles -T link.ld -Wl,--gc-sections \
              -Wl,-Map,$(BUILD)/boot.map
 
 ROM_BYTES := 32768
-SOURCES   := crt0.S main.c
+SOURCES   := crt0.S main.c load.c ../common/memtest.c ../common/uart.c
 
 all: $(BUILD)/boot.hex
 
-$(BUILD)/boot.elf: $(SOURCES) tinynes.h link.ld Makefile
+$(BUILD)/boot.elf: $(SOURCES) load.h ../include/tinynes.h ../common/memtest.h \
+                   ../common/uart.h link.ld Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SOURCES) -lgcc
 	$(SIZE) $@

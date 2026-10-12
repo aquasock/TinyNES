@@ -107,10 +107,23 @@ alter BL616 firmware or the FPGA's configuration flash.
 | ROM | `0x80000000` | 32 KiB block-RAM boot ROM (`ahb_boot_rom.sv`) holding the firmware image |
 | RAM (64-bit) | `0x60000000` | 64 KiB block RAM (`ahb_ram.sv`) holding the firmware's data and stack |
 | RAM (64-bit) | `0x40000000` | 32 MiB SDRAM on the dock's J9 module (`ahb_sdram.sv`); a data access to any address on this port outside the two RAMs gets an AHB ERROR, and an instruction fetch reads zero |
-| EXTS (uncached) | `0xe8000000` | UART data `+0x00`, UART status `+0x04`, ID `0x544e3031` ("TN01") `+0x08`, scratch `+0x0c` (`exts_uart.sv`) |
+| EXTS (uncached) | `0xe8000000` | UART data `+0x00`, UART status `+0x04`, ID `0x544e3031` ("TN01") `+0x08`, scratch `+0x0c`, UART receive `+0x10` (`exts_uart.sv`) |
 
 The clocks are the same as in the UART gate: the core runs at 750 MHz and the
-buses at 75 MHz. The UART is the same FPGA UART at 115200 8N1.
+buses at 75 MHz. The UART is the same FPGA UART, transmitting on U15 and
+receiving on V14, but at 2,000,000 baud 8N1; in one-wire mode it is
+`/dev/ttyUSB1`. The receiver samples each bit at its centre, 37 or 38 bus
+clocks apart, and keeps up to 512 received bytes in a block RAM buffer.
+Reading `+0x10` takes the oldest byte, returned as `0x100` plus the byte, or
+0 when the buffer is empty. The status register's bits are:
+
+| Bit | Meaning |
+|---|---|
+| 0 | The transmitter can take a byte |
+| 1 | The transmitter is idle: the last byte has left the pin |
+| 2 | A received byte is waiting |
+| 3 | A byte arrived to a full buffer and was lost; stays set until 1 is written to it |
+| 4 | A byte had no stop bit; stays set until 1 is written to it |
 
 Both RAMs are cacheable. The SDRAM is the module Sipeed fits to the Tang
 Console 138K: two Winbond W9825G6KH-6 on J9, driven as one 32 MiB x16 device
@@ -130,22 +143,21 @@ an illegal instruction, so a fetch that is really executed still traps.
 It checks the EXTS registers. Then it tests the block RAM and the SDRAM with
 the A25 caches off and again with them on; each cached pass writes back and
 invalidates the D-cache, so the data crosses the bus as cache-line bursts.
-The SDRAM tests cover byte and halfword lanes, every address line, and a
-pattern and its inverse over all 32 MiB. After that it reports once a second:
+The SDRAM tests here are quick: byte and halfword lanes, cached and not, and
+every address line. The full SDRAM test is a loaded program (below). Then it
+waits for a program on the UART, reporting once a second:
 
 ```text
 TinyNES AE350 boot ROM
 TinyNES AE350 C OK UNC=<cycles> CAC=<cycles>
-TinyNES SDRAM OK 32M MISS=<cycles> RD=<KB/s> WR=<KB/s> FULL=<ms>
+TinyNES SDRAM OK 32M
+TinyNES LOAD
 ```
 
 `UNC` and `CAC` are the core cycles each block RAM test took, in hex. On the
-board they are `UNC=03f15308 CAC=001e33f4`: the cached test is about 33
-times faster. The SDRAM line is in decimal. `MISS` is the core cycles per
-cache line read from the SDRAM, `RD` and `WR` the rates reading and writing
-1 MiB with the caches on, and `FULL` the time the cached 32 MiB test took.
-On the board they are `MISS=370 RD=61607 WR=34072 FULL=3044`. A failed check
-or a trap prints a line starting with `BAD`. If the CPU has written nothing to
+board they are `UNC=0491d418 CAC=001f696a`: the cached test is about 37
+times faster. A failed check or a trap prints a line starting with `BAD`, and
+the ROM then loads nothing. If the CPU has written nothing to
 the UART about 1.8 s after reset, the fabric reports instead, once a second
 until the CPU writes:
 
@@ -175,9 +187,9 @@ openFPGALoader -b tangmega138k build/ae350_soc_drop/ae350_soc.fs
 ```
 
 The firmware is built with xPack GNU RISC-V Embedded GCC 15.2.0-1. The
-Makefile looks in `~/tools/xpack-riscv-none-elf-gcc-15.2.0-1`; set `RISCV_BIN`
-or `CROSS` to use another installation. It links only `libgcc`, with no C
-library. The build script compiles the firmware into
+Makefiles look in `~/tools/xpack-riscv-none-elf-gcc-15.2.0-1`; set `RISCV_BIN`
+or `CROSS` to use another installation. The boot ROM links only `libgcc`,
+with no C library. The build script compiles it into
 `build/firmware/boot/boot.hex`, which Yosys loads into the ROM, then builds
 the bitstream `build/ae350_soc/ae350_soc.fs`:
 
@@ -187,9 +199,11 @@ bash tools/build_ae350_soc.sh
 
 The testbench drives each AHB port directly. `TEST=0` covers the ROM, the RAM's
 byte lanes, ERROR responses and zero-reading fetches, the EXTS registers, the
-CPU UART, and the SDRAM controller against `tests/sdram_model.sv`, a
-W9825G6KH-6 model that checks command order and timing. `TEST=1`
-covers the `NOBOOT` report and the CPU taking the UART over:
+CPU UART, the UART receiver (byte order, senders 5% fast and slow, glitches,
+missing stop bits, overrun and the status bits), and the SDRAM controller
+against `tests/sdram_model.sv`, a W9825G6KH-6 model that checks command
+order and timing. `TEST=1` covers the `NOBOOT` report and the CPU taking the
+UART over:
 
 ```sh
 mkdir -p build/ae350_soc_tb
@@ -208,8 +222,96 @@ On hardware, load it the same way as the UART gate. The checker fails on
 ```sh
 source ~/oss-cad-suite/environment
 openFPGALoader -b tangmega138k build/ae350_soc/ae350_soc.fs
-python3 tools/check_ae350_uart.py --port /dev/ttyUSB1 --expect 'TinyNES AE350 C OK'
-python3 tools/check_ae350_uart.py --port /dev/ttyUSB1 --expect 'TinyNES SDRAM OK 32M'
+python3 tools/check_ae350_uart.py --port /dev/ttyUSB1 --baud 2000000 --expect 'TinyNES LOAD'
+```
+
+### Loading and running programs
+
+Programs run from the SDRAM. `tools/load_ae350.py` takes an ELF file, sends
+its loadable segments to the boot ROM as one image, then shows the program's
+output until it exits:
+
+```sh
+python3 tools/load_ae350.py build/firmware/apps/rt_test/rt_test.elf \
+  --expect 'TinyNES RT OK' --expect 'TinyNES SDRAM OK'
+```
+
+It fails on a `BAD` or `NOBOOT` line, a non-zero exit, or a missing
+`--expect` line, and prints `PASS` otherwise. `--port`, `--baud`,
+`--timeout`, `--run-timeout` and `--retries` change its defaults.
+
+The protocol, defined in `firmware/include/tinynes.h` and implemented in
+`firmware/boot/load.c`, is little-endian:
+
+- The host sends a 24-byte header: the magic `TNL1` (`0x314c4e54`), the load
+  address, the length, the entry address, the image's CRC-32 and the
+  header's own CRC-32.
+- Then the image in 8 KiB blocks, the last one shorter if need be, each
+  followed by its CRC-32.
+- The ROM answers the header and each block with ACK (`0x06`), or with NAK
+  (`0x15`) and a reason letter: `T` a byte took over 100 ms, `H` header CRC,
+  `A` the image is not inside the SDRAM, `C` block CRC, `O` the receive
+  buffer overflowed, `I` the image read back from the SDRAM after writing
+  back the D-cache does not match. A NAKed block is sent again, up to five
+  times. A NAKed header or image ends the load: the ROM goes back to
+  waiting, and `load_ae350.py` reports the failure.
+- After the final ACK the ROM prints `TinyNES RUN <entry>`, waits until that
+  line has been sent, runs `fence.i` and jumps to the entry with both caches
+  on. If no block arrives for 2 s the ROM gives up and reports again.
+
+On the board the 138,072-byte `rt_test` image loads in 0.76 s, 182 KB/s.
+
+### Runtime
+
+`firmware/rt/` lets programs use C and C++ with newlib and libstdc++,
+including exceptions, RTTI and static constructors. A program's Makefile
+names its sources and includes `rt.mk`:
+
+```make
+APP     := rt_test
+SOURCES := main.cpp ../../common/memtest.c
+
+include ../../rt/rt.mk
+```
+
+`make -C firmware/apps/<name>` builds `build/firmware/apps/<name>/<name>.elf`.
+The program occupies the bottom of the SDRAM. The heap runs from its end to
+the top of the SDRAM, and the stack is the top of the 64 KiB block RAM.
+`stdout` and `stderr` go to the UART, with `\n` sent as `\r\n`.
+Returning from `main` or calling `exit` prints `TinyNES EXIT <code>`, and a
+trap prints `BAD TRAP C=<mcause> P=<mepc> V=<mtval>`. Either way the program
+writes back the D-cache and restarts the boot ROM, which tests the memory
+again and waits for the next program.
+
+`firmware/apps/rt_test/` checks the runtime and finishes the SDRAM testing:
+
+```text
+TinyNES RT OK MISA=<misa> HEAP=<KiB>K
+TinyNES SDRAM OK <KiB>K MISS=<cycles> RD=<KB/s> WR=<KB/s> FULL=<ms>
+```
+
+`MISA` is the A25's `misa` register: `4094312d` on the board, an RV32 core
+with I, M, A, F, D and C, and so with a double-precision FPU, plus N, S, U
+and X. `HEAP` is the largest block `malloc` gives; on the board it is
+32,576 KiB. The SDRAM line tests that block with a pattern and its inverse,
+caches on. `MISS` is the core cycles per cache line read from the SDRAM,
+`RD` and `WR` the rates reading and writing 1 MiB with the caches on, and
+`FULL` the time the pattern test took. On the board they are
+`MISS=370 RD=61604 WR=34071 FULL=2989`.
+
+The programs are compiled for `rv32imac` with soft float, matching the
+compiler's default libraries; the FPU is not used yet.
+
+`tests/test_loader_host.py` runs the ROM's real `load.c` on the PC against
+`tools/load_ae350.py`, through a pseudo-terminal, with a 32 MiB buffer mapped
+at `0x40000000`. It checks a clean load byte for byte, and that dropped,
+corrupted and overflowed bytes, bad headers, addresses outside the SDRAM, an
+image that reads back wrong, and a sender that stops are each handled. It
+needs `gcc` and `pyserial`, and `rt_test` built first:
+
+```sh
+make -C firmware/apps/rt_test
+python3 -m unittest tests/test_loader_host.py
 ```
 
 ## Build sweeps

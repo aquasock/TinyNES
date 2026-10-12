@@ -25,6 +25,9 @@ PAIR = re.compile(rb"CYC=([0-9a-f]{8}) REF=([0-9a-f]{8})$")
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", default="/dev/ttyUSB1")
+    parser.add_argument("--baud", type=int, default=115200,
+                        help="115200 for the ae350_uart gate, 2000000 for "
+                             "the ae350_soc boot ROM")
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--expect", default="TinyNES AE350 OK")
     parser.add_argument("--clock", type=int, default=0, metavar="N",
@@ -33,7 +36,7 @@ def main():
 
     link = serial.Serial()
     link.port = args.port
-    link.baudrate = 115200
+    link.baudrate = args.baud
     link.timeout = 0.25
     link.dtr = False
     link.rts = False

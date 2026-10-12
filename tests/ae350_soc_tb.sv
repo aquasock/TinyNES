@@ -144,15 +144,19 @@ module ODDR #(
 endmodule
 
 module ae350_soc_tb #(
-    // 0: every port, register and UART path. 1: the NOBOOT report and the
-    // CPU taking the UART over from it.
+    // 0: every port, register and UART path, the receiver included. 1: the
+    // NOBOOT report and the CPU taking the UART over from it.
     parameter integer TEST = 0
 );
     localparam integer NOBOOT_BITS = 15;
+    localparam integer UART_DIV2 = 75;
+    localparam integer RX_DEPTH = 512;
+    localparam real BIT_NS = 500.0; // 2,000,000 baud
     // The bus clock is 75 MHz, as on the board, so the SDRAM model's
     // timing checks hold the controller to the real nanoseconds.
     reg clk = 1'b0;
     wire tx;
+    reg rx = 1'b1;
     always #6.667 clk = ~clk;
 
     wire sdram_clk;
@@ -168,6 +172,7 @@ module ae350_soc_tb #(
     ae350_soc_top #(.NOBOOT_BITS(NOBOOT_BITS), .SDRAM_INIT_CYCLES(100)) dut (
         .sys_clk(clk),
         .uart_tx(tx),
+        .uart_rx(rx),
         .sdram_clk(sdram_clk),
         .sdram_cs_n(sdram_cs_n),
         .sdram_ras_n(sdram_ras_n),
@@ -240,18 +245,24 @@ module ae350_soc_tb #(
     reg [31:0] image [0:8191];
     initial $readmemh("build/firmware/boot/boot.hex", image);
 
+    // Bit n of a frame (0 the start bit, 9 the stop bit) is sampled at its
+    // middle, (2n + 1) * UART_DIV2 / 4 clocks after the start edge, which
+    // checks the alternating 37 and 38 clock bits average out.
     task automatic receive_byte(input [7:0] expected);
         reg [7:0] value;
         integer bit_index;
+        integer elapsed;
         begin
             wait (tx == 1'b0);
-            repeat (325) @(posedge clk);
+            elapsed = UART_DIV2 / 4;
+            repeat (elapsed) @(posedge clk);
             if (tx !== 1'b0) $fatal(1, "missing UART start bit");
             for (bit_index = 0; bit_index < 8; bit_index = bit_index + 1) begin
-                repeat (651) @(posedge clk);
+                repeat ((2 * bit_index + 3) * UART_DIV2 / 4 - elapsed) @(posedge clk);
+                elapsed = (2 * bit_index + 3) * UART_DIV2 / 4;
                 value[bit_index] = tx;
             end
-            repeat (651) @(posedge clk);
+            repeat (19 * UART_DIV2 / 4 - elapsed) @(posedge clk);
             if (tx !== 1'b1) $fatal(1, "missing UART stop bit");
             if (value !== expected)
                 $fatal(1, "UART byte mismatch: got %02x, expected %02x", value, expected);
@@ -297,6 +308,25 @@ module ae350_soc_tb #(
             receive_hex(el);
             receive_byte(8'h0d);
             receive_byte(8'h0a);
+        end
+    endtask
+
+    // Drive one 8N1 frame on the receive pin, asynchronously to the bus
+    // clock, with each bit bit_ns long. stop 0 sends a low stop bit.
+    task automatic send_byte(input [7:0] value, input stop, input real bit_ns);
+        integer bit_index;
+        begin
+            rx = 1'b0;
+            #(bit_ns);
+            for (bit_index = 0; bit_index < 8; bit_index = bit_index + 1) begin
+                rx = value[bit_index];
+                #(bit_ns);
+            end
+            rx = stop;
+            #(bit_ns);
+            rx = 1'b1;
+            if (!stop)
+                #(bit_ns);
         end
     endtask
 
@@ -515,8 +545,8 @@ module ae350_soc_tb #(
                 ext_m.push(32'he800000c, 1'b0, 3'd2, 0, 1'b0);
             end
             ext_m.push(32'he8000000, 1'b0, 3'd2, 0, 1'b0); // 66
-            ext_m.push(32'he8000004, 1'b1, 3'd2, 32'd1, 1'b0);
-            ext_m.push(32'he8000010, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8000008, 1'b1, 3'd2, 32'd1, 1'b0);
+            ext_m.push(32'he8000010, 1'b1, 3'd2, 0, 1'b0);
             ext_m.push(32'he9000008, 1'b0, 3'd2, 0, 1'b0);
             ext_m.push(32'he800000c, 1'b0, 3'd2, 0, 1'b0); // 70
             ext_m.run();
@@ -532,6 +562,157 @@ module ae350_soc_tb #(
             if (dut.cpu_owns !== 1'b0 || tx !== 1'b1)
                 $fatal(1, "register accesses moved the UART");
             $display("PASS: EXTS ID, status, scratch walking one and ERROR decode");
+        end
+    endtask
+
+    task automatic read_status(input [31:0] expected);
+        begin
+            ext_m.clear();
+            ext_m.push(32'he8000004, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.run();
+            ext_m.expect_ok(0, expected);
+        end
+    endtask
+
+    task automatic clear_status(input [31:0] bits);
+        begin
+            ext_m.clear();
+            ext_m.push(32'he8000004, 1'b1, 3'd2, bits, 1'b0);
+            ext_m.run();
+            ext_m.expect_write_ok(0);
+        end
+    endtask
+
+    function [7:0] fill_byte(input integer index);
+        fill_byte = index * 7 + 3;
+    endfunction
+
+    // Read count bytes back to back from the receive register; the first
+    // `waiting` of them must be fill_byte(first + n) with bit 8 set, the rest
+    // zero.
+    task automatic read_rx(input integer first, input integer count,
+                           input integer waiting);
+        integer index;
+        integer batch;
+        integer done;
+        begin
+            done = 0;
+            while (done < count) begin
+                batch = (count - done > 128) ? 128 : count - done;
+                ext_m.clear();
+                for (index = 0; index < batch; index = index + 1)
+                    ext_m.push(32'he8000010, 1'b0, 3'd2, 0, 1'b0);
+                ext_m.run();
+                for (index = 0; index < batch; index = index + 1)
+                    if (done + index < waiting)
+                        ext_m.expect_ok(index, {23'd0, 1'b1, fill_byte(first + done + index)});
+                    else
+                        ext_m.expect_ok(index, 32'd0);
+                done = done + batch;
+            end
+        end
+    endtask
+
+    // Read back to back while one byte arrives: exactly one read returns it,
+    // the reads before and after return zero.
+    task automatic poll_rx(input [7:0] expected);
+        integer index;
+        integer seen;
+        integer batches;
+        begin
+            seen = 0;
+            for (batches = 0; batches < 3; batches = batches + 1) begin
+                ext_m.clear();
+                for (index = 0; index < 128; index = index + 1)
+                    ext_m.push(32'he8000010, 1'b0, 3'd2, 0, 1'b0);
+                ext_m.run();
+                for (index = 0; index < 128; index = index + 1)
+                    if (ext_m.r_data[index] !== 32'd0) begin
+                        if (seen || ext_m.r_data[index] !== {23'd0, 1'b1, expected})
+                            $fatal(1, "polled receive read %0d got %x", index,
+                                   ext_m.r_data[index]);
+                        seen = 1;
+                    end
+            end
+            if (!seen)
+                $fatal(1, "polled receive never saw %02x", expected);
+        end
+    endtask
+
+    task test_uart_rx;
+        integer index;
+        begin
+            read_status(32'h3);
+            read_rx(0, 1, 0);
+            for (index = 0; index < 3; index = index + 1)
+                send_byte(fill_byte(index), 1'b1, BIT_NS);
+            #(BIT_NS);
+            read_status(32'h7);
+            read_rx(0, 4, 3);
+            read_status(32'h3);
+            $display("PASS: UART receive order, status and empty reads");
+
+            // 3% fast and slow senders, the A25 reading as bytes arrive.
+            fork
+                begin
+                    send_byte(fill_byte(3), 1'b1, BIT_NS * 0.97);
+                    send_byte(fill_byte(4), 1'b1, BIT_NS * 1.03);
+                    send_byte(fill_byte(5), 1'b1, BIT_NS * 0.97);
+                end
+                begin
+                    #(BIT_NS * 11);
+                    read_rx(3, 1, 1);
+                end
+            join
+            #(BIT_NS);
+            read_rx(4, 3, 2);
+            // At 5% the stop bit is sampled within a few clocks of its edge,
+            // so this only passes if the bit times average 37.5 clocks.
+            send_byte(8'h55, 1'b1, BIT_NS * 1.05);
+            send_byte(8'h2a, 1'b1, BIT_NS * 0.95);
+            #(BIT_NS);
+            read_status(32'h7);
+            ext_m.clear();
+            ext_m.push(32'he8000010, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8000010, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.run();
+            ext_m.expect_ok(0, 32'h155);
+            ext_m.expect_ok(1, 32'h12a);
+            for (index = 6; index < 10; index = index + 1)
+                fork
+                    send_byte(fill_byte(index), 1'b1, BIT_NS);
+                    poll_rx(fill_byte(index));
+                join
+            $display("PASS: UART receive at +-5%% baud, read while receiving");
+
+            // A low pulse shorter than half a bit is not a start bit.
+            rx = 1'b0;
+            #(BIT_NS * 0.4);
+            rx = 1'b1;
+            #(BIT_NS * 12);
+            read_status(32'h3);
+            send_byte(8'h81, 1'b0, BIT_NS);
+            #(BIT_NS);
+            read_status(32'h13);
+            read_rx(0, 1, 0);
+            clear_status(32'h10);
+            read_status(32'h3);
+            $display("PASS: UART glitch ignored, missing stop bit flagged and cleared");
+
+            for (index = 0; index <= RX_DEPTH; index = index + 1)
+                send_byte(fill_byte(index), 1'b1, BIT_NS);
+            #(BIT_NS);
+            read_status(32'hf);
+            read_rx(0, RX_DEPTH + 1, RX_DEPTH);
+            clear_status(32'h8);
+            read_status(32'h3);
+            // The buffer pointers wrapped; it still works.
+            send_byte(fill_byte(9), 1'b1, BIT_NS);
+            #(BIT_NS);
+            read_rx(9, 2, 1);
+            if (tx !== 1'b1)
+                $fatal(1, "receiving moved the UART transmitter");
+            $display("PASS: UART receive buffer holds %0d bytes, flags the next, wraps", RX_DEPTH);
         end
     endtask
 
@@ -576,6 +757,7 @@ module ae350_soc_tb #(
             test_ram();
             test_sdram();
             test_registers();
+            test_uart_rx();
             // The second write waits for the first byte to leave the holding
             // register; the rest wait in turn while the line is sent.
             fork

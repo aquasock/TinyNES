@@ -1,0 +1,111 @@
+/* SPDX-License-Identifier: MIT
+ *
+ * Registers the fabric decodes in the AE350's uncached EXTS window
+ * (fpga/ae350_soc/exts_uart.sv), the memory map, the A25 cache controls and
+ * the boot ROM's UART load protocol. Shared by the boot ROM and the runtime.
+ */
+#ifndef TINYNES_H
+#define TINYNES_H
+
+#include <stdint.h>
+
+#ifdef __riscv
+#define TN_REG(offset) (*(volatile uint32_t *)(0xe8000000u + (offset)))
+#else
+/* Host builds of firmware code (tests/test_loader_host.py) model the
+ * registers, the cache controls and the cycle counter themselves. */
+volatile uint32_t *tn_host_reg(uint32_t offset);
+#define TN_REG(offset) (*tn_host_reg(offset))
+#endif
+
+#define TN_UART_DATA    TN_REG(0x00) /* write: byte to transmit */
+#define TN_UART_STATUS  TN_REG(0x04) /* read; write 1s to clear bits 3, 4 */
+#define TN_ID           TN_REG(0x08) /* read: TN_ID_VALUE */
+#define TN_SCRATCH      TN_REG(0x0c) /* read and write */
+#define TN_UART_RX      TN_REG(0x10) /* read: pops the oldest received byte */
+
+#define TN_UART_TX_READY   0x01u /* the transmit holding register is free */
+#define TN_UART_TX_IDLE    0x02u /* and the last byte has left the pin */
+#define TN_UART_RX_WAITING 0x04u /* a received byte is waiting */
+#define TN_UART_RX_OVERRUN 0x08u /* a byte arrived to a full buffer; sticky */
+#define TN_UART_RX_FRAME   0x10u /* a byte had no stop bit; sticky */
+#define TN_UART_RX_VALID   0x100u /* TN_UART_RX bits 7:0 hold a byte */
+#define TN_ID_VALUE        0x544e3031u /* "TN01" */
+
+#define TN_UART_BAUD 2000000u
+#define TN_CORE_HZ   750000000u
+
+/* The boot ROM at the reset vector and the fabric block RAM. */
+#define TN_ROM_BASE   0x80000000u
+#define TN_BRAM_BASE  0x60000000u
+#define TN_BRAM_BYTES (64u << 10)
+
+/* The dock's SDRAM on the RAM port (fpga/ae350_soc/ahb_sdram.sv). */
+#define TN_SDRAM_BASE  0x40000000u
+#define TN_SDRAM_BYTES (32u << 20)
+
+/* mcache_ctl bit 0 enables the L1 I-cache, bit 1 the L1 D-cache;
+ * mcctlcommand 6 writes back and invalidates the whole L1 D-cache. */
+#define CSR_MCACHE_CTL    0x7ca
+#define CSR_MCCTLCOMMAND  0x7cc
+#define MCCTL_L1D_WBINVAL_ALL 6u
+
+/* The boot ROM loads a program into the SDRAM over the UART (all words
+ * little-endian, CRCs IEEE CRC-32 as zlib.crc32):
+ *
+ *   header: TN_LOAD_MAGIC, load address, length, entry, CRC of the image,
+ *           CRC of the first 20 header bytes
+ *   then the image in TN_LOAD_BLOCK_BYTES blocks (the last may be shorter),
+ *   each followed by its CRC.
+ *
+ * The ROM answers the header, each block and the whole image with
+ * TN_LOAD_ACK, or TN_LOAD_NAK and a reason letter; a NAKed block is sent
+ * again. After the last ACK it prints "TinyNES RUN <entry>" and jumps. */
+#define TN_LOAD_MAGIC        0x314c4e54u /* "TNL1" */
+#define TN_LOAD_HEADER_BYTES 24u
+#define TN_LOAD_BLOCK_BYTES  8192u
+#define TN_LOAD_ACK          0x06u
+#define TN_LOAD_NAK          0x15u
+#define TN_LOAD_TIMEOUT      'T' /* a byte took over 100 ms */
+#define TN_LOAD_HEADER_CRC   'H'
+#define TN_LOAD_ADDRESS      'A' /* the image is not inside the SDRAM */
+#define TN_LOAD_BLOCK_CRC    'C'
+#define TN_LOAD_OVERRUN      'O' /* the receive buffer overflowed */
+#define TN_LOAD_IMAGE_CRC    'I' /* the image read back from the SDRAM */
+
+#ifdef __riscv
+#define CSR_STR(x) #x
+#define CSR_SET(csr, value) \
+	__asm__ volatile("csrs " CSR_STR(csr) ", %0" :: "r"(value) : "memory")
+#define CSR_WRITE(csr, value) \
+	__asm__ volatile("csrw " CSR_STR(csr) ", %0" :: "r"(value) : "memory")
+
+static inline void tn_dcache_wbinval(void)
+{
+	CSR_WRITE(CSR_MCCTLCOMMAND, MCCTL_L1D_WBINVAL_ALL);
+}
+
+static inline uint32_t tn_cycles(void)
+{
+	uint32_t value;
+	__asm__ volatile("csrr %0, mcycle" : "=r"(value));
+	return value;
+}
+
+static inline uint64_t tn_cycles64(void)
+{
+	uint32_t high, low, again;
+	do {
+		__asm__ volatile("csrr %0, mcycleh" : "=r"(high));
+		__asm__ volatile("csrr %0, mcycle" : "=r"(low));
+		__asm__ volatile("csrr %0, mcycleh" : "=r"(again));
+	} while (high != again);
+	return (uint64_t)high << 32 | low;
+}
+#else
+void tn_dcache_wbinval(void);
+uint32_t tn_cycles(void);
+uint64_t tn_cycles64(void);
+#endif
+
+#endif

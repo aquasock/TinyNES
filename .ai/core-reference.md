@@ -135,6 +135,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | How does a top-edge PLL output reach the global clock network? | DEV | DEV-009 |
 | What does the A25 fetch on its RAM port outside the RAM, and why must those fetches not get ERROR? | DEV | DEV-010 |
 | Which addresses does the AE350's RAM port carry, and are they cached? | DEV | DEV-011 |
+| Which extensions does the A25 implement, and does it have an FPU? | DEV | DEV-012 |
 | Is there a core with no emulator for TinyDesk to sit on? | DEV | DEV-005 |
 | Which FPGA pins are the JTAG programmer's? | BRD | BRD-001 |
 | Why does the SD card fail to mount? | BRD | BRD-002 |
@@ -286,6 +287,7 @@ DEV-008: "The A25 core runs at PLL_R[0] CLKOUT1's frequency whatever net drives 
 DEV-009: "PLL_R[0] CLKOUT0 reaches the global clock network through TRPLL0CLK0 at the centre mux; entering at (54,93) SPINE8 or SPINE10 (TOP bridge inputs) clocks the AE350 buses, entering at (54,88) SPINE16 (BOTTOM bridge input) leaves them dead"
 DEV-010: "The A25 fetches down mispredicted paths to address 0 on the RAM port (HPROT[0] 0, 32-byte WRAP4 line fills with the I-cache on); with both caches on, one ERROR on such a fill stops the core, so ahb_ram answers fetches outside its block RAM and SDRAM windows with zero and OKAY"
 DEV-011: "The AE350 RAM port (DDR_H*) carries 0x40000000 to at least 0x7fffffff, cacheable: TinyNES runs block RAM at 0x60000000 and SDRAM at 0x40000000 there with both caches on, and Tang-PSX ran DDR3 up to 0x7fffffff"
+DEV-012: "The A25's misa reads 0x4094312d: RV32 IMAFDC plus N, S, U and X, so it has a single- and double-precision FPU, which TinyNES's soft-float rv32imac/ilp32 firmware does not use"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
 BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
@@ -382,7 +384,7 @@ PROV-003: "colibri is CERN's vendor-independent, fully verified, open-source VHD
 PROV-005: "TinyTang is MIT with thirteen Apache-2.0 files: nand2mario's JTAG programmer, and ten Phosphor transport files and two host tests written by this project's author in Tang-Control; it descends from nand2mario's TangCore firmware-bl616 through Tang-Control, a fork of it, and copies no other TangCore source; THIRD_PARTY.md must keep saying the UART protocol was read from GPL-3.0 nestang as a specification, not copied"
 PSX-001: "This board is GW5AST-138 revision C (package mark 2518CA0N), while the console138k core image it loads is built for revision B and works anyway"
 PSX-002: "GW5AST-138: 138,240 LUTs, 139,095 registers, 340 BSRAM blocks of 18 Kbit, about 765 KB"
-PSX-003: "50 MHz oscillator on FPGA pin V22; the BL616 control UART reaches the FPGA on V14 (FPGA RX) and U15 (FPGA TX), LVCMOS33 - the other end of the link PROT-003 describes from the BL616 side"
+PSX-003: "50 MHz oscillator on FPGA pin V22; the BL616 control UART reaches the FPGA on V14 (FPGA RX) and U15 (FPGA TX), LVCMOS33 - the other end of the link PROT-003 describes from the BL616 side; all three confirmed on this board by the AE350 system at 2 Mbaud"
 PSX-004: "Module connector U1201, 8-pin JST SH: 1 5V0 via diode (~4.4 V), 2 TMS T13, 3 TDO U13, 4 TCK V12, 5 TDI R13, 6 RX V14, 7 TX U15, 8 GND; the JTAG nets are shared with the BL616, so an external adapter must be released during a tangload, pins 6 and 7 stay unconnected, and pin 1 must not reach a 3.3 V adapter"
 PSX-005: "Dock SDRAM is Winbond W9825G6KH-6, 32 MB x16 at 166 MHz, on connectors J9 and J10 (on this board, J9 only: BRD-010), separate from the SOM's 1 GiB x32 DDR3; neither is the BL616's memory, which is 320 KB of on-chip OCRAM (BL6-002)"
 PSX-006: "A loaded core is indicated by active_core, the low byte of its CORE_ID (0x01 nestang, 0x50 Phosphor, 0x51 Gate 1), not by core_running, which reads no while a core answers; uploads are refused while a core runs; the link is 2 Mbaud with a 5 Mbaud fast mode and needs an iosys clock at least 8x the baud"
@@ -418,7 +420,7 @@ TOOL-014: "A third debug path: a Raspberry Pi Pico 2 CMSIS-DAP probe (2e8a:000c)
 TOOL-015: "With FF_FS_REENTRANT 1 the SDK's FatFS R0.15 takes a FreeRTOS mutex (xSemaphoreTake with FF_FS_TIMEOUT ticks) on entry to every file call and gives it on exit, and FreeRTOS forbids API calls inside taskENTER_CRITICAL, so no f_* call may run inside a critical section; the JTAG programmer's did and failed tangload under TinyDesk"
 TOOL-016: "Linked out of the SDK under their own licences: FreeRTOS V10.4.6 (MIT, (C) 2021 Amazon.com), CherryUSB (Apache-2.0), FatFs R0.15 w/patch3 (ChaN), and the Bluetooth stack: the Zephyr-derived host (Apache-2.0; Intel, Nordic, Wind River, Oticon, Chettimada), TinyCrypt (BSD-3-Clause, Intel 2017), micro-ecc (BSD-2-Clause, Kenneth MacKay 2014) and ctr_prng (BSD-2-Clause, Chris Morrison 2016), whose binary-form notices are reproduced in LICENSES/, plus the binary-only RivieraWaves-based controller and PHY libraries under the SDK's Apache-2.0 alone; LVGL, TJpgDec, mbedTLS, littlefs and the codecs are not linked"
 TOOL-017: "Open-flow HDMI works: the apicula fork at 1c2b6cb+ writes the OSER10 aux half, HWL, lane-0 FCLKSEL0/3 and ODDR LSROMUX_0 like Gowin, and at 93761f4+ its io2hclk map splits each long side at the block midpoint as the vendor does, so the build adds no fuses; the clock network was never the fault"
-TOOL-018: "The AE350 firmware is built with xPack GNU RISC-V Embedded GCC 15.2.0-1 (riscv-none-elf-gcc 15.2.0), configured --with-arch=rv32imac --with-abi=ilp32, so -march=rv32imac_zicsr_zifencei -mabi=ilp32 links its default multilib's libgcc.a; firmware/boot/Makefile finds it in ~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin"
+TOOL-018: "The AE350 firmware is built with xPack GNU RISC-V Embedded GCC 15.2.0-1 (riscv-none-elf-gcc 15.2.0), configured --with-arch=rv32imac --with-abi=ilp32, so -march=rv32imac_zicsr_zifencei -mabi=ilp32 selects its default multilib: the boot ROM (firmware/boot/Makefile) links libgcc alone, and loaded programs (firmware/rt/rt.mk) link newlib 4.5.0's libc and libm, libstdc++ and libsupc++ with the runtime's own crt0 and syscalls; the compiler is found in ~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin"
 ```
 
 ---
@@ -558,11 +560,24 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   status: VERIFIED
   verified_date: 2026-10-12
   statement: "The A25 sends data accesses and instruction fetches for 0x40000000 and 0x60000000, and in Tang-PSX up to 0x7fffffff, out on the 64-bit RAM AHB port (DDR_H*), with the full 32-bit address on DDR_HADDR, and caches them once mcache_ctl enables the caches: the D-cache fills and writes back 32-byte lines there as WRAP4 bursts of doublewords. Wrong-path fetches to address 0 also come out on this port (DEV-010)."
-  consequence: "The fabric decodes the RAM port itself and can put several memories on it: TinyNES places 64 KiB of block RAM at 0x60000000 and the dock's 32 MiB SDRAM at 0x40000000, both cacheable, and Tang-PSX put 1 GiB of DDR3 at 0x40000000. Anything a fabric master writes there must be invalidated in the D-cache before the CPU reads it, and anything the CPU writes must be written back first (MCCTL command 6 in firmware/boot/tinynes.h)."
+  consequence: "The fabric decodes the RAM port itself and can put several memories on it: TinyNES places 64 KiB of block RAM at 0x60000000 and the dock's 32 MiB SDRAM at 0x40000000, both cacheable, and Tang-PSX put 1 GiB of DDR3 at 0x40000000. Anything a fabric master writes there must be invalidated in the D-cache before the CPU reads it, and anything the CPU writes must be written back first (tn_dcache_wbinval, MCCTL command 6, in firmware/include/tinynes.h)."
   sources:
-    - "This project's fpga/ae350_soc/ahb_ram.sv (BASE, SDRAM_BASE) and firmware/boot/main.c (test_words with the caches on over both windows)"
+    - "This project's fpga/ae350_soc/ahb_ram.sv (BASE, SDRAM_BASE), firmware/boot/main.c (the cached block RAM and SDRAM tests) and firmware/common/memtest.c (tn_test_words)"
     - "Tang-PSX 61974ca, .ai/core-reference.md AE350-002 and AE350-003 (RAM port at 0x40000000, cacheable) and .ai/core-log.md entry 44 (L2 bypass range 0x7fe00000-0x7fffffff on DDR3 behind the RAM port)"
-  verification: "Measured on this board on 2026-10-12 (core-log entry 8): the image placing block RAM at 0x60000000 and SDRAM at 0x40000000 passed every RAM test with the caches off and on and printed a cached block RAM time matching entry 7's (CAC=001e33f4 against 001e33e1). Whether the port also carries 0x00000000 to 0x3fffffff as memory, rather than only the stray fetches of DEV-010, was not tested; Gowin's manual was not read for the port's decode."
+  verification: "Measured on this board on 2026-10-12 (core-log entry 8): the image placing block RAM at 0x60000000 and SDRAM at 0x40000000 passed every RAM test with the caches off and on and printed a cached block RAM time matching entry 7's (CAC=001e33f4 against 001e33e1). Whether the port also carries 0x00000000 to 0x3fffffff as memory, rather than only the stray fetches of DEV-010, was not tested; Gowin's manual was not read for the port's decode. Revised 2026-10-12 (core-log entry 9): the firmware's register header and memory tests moved to firmware/include/tinynes.h and firmware/common/memtest.c; a program loaded into the SDRAM and run from it with both caches on, after fence.i, executed correctly, so instruction fetches through the I-cache from 0x40000000 work too."
+
+- record_id: DEV-012
+  kind: DEVICE
+  topic_id: DEV
+  title: "The A25's misa reads 0x4094312d: RV32 IMAFDC with N, S, U and X"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "Read in machine mode on this board's A25, misa is 0x4094312d. Decoded by the RISC-V privileged specification's encoding, MXL (bits 31:30) is 1, a 32-bit core, and the extension bits set are A (0), C (2), D (3), F (5), I (8), M (12), N (13), S (18), U (20) and X (23): integer, multiply and divide, atomics, compressed instructions, single- and double-precision floating point, user-level interrupts, supervisor and user modes, and non-standard extensions."
+  consequence: "The A25 has a hardware FPU for single and double precision. TinyNES's firmware does not use it: the boot ROM and the runtime compile for rv32imac with the soft-float ilp32 ABI, which matches the compiler's default libraries (TOOL-018), and nothing sets mstatus.FS. Using the FPU needs mstatus.FS made non-zero before the first floating-point instruction, and either the toolchain's rv32imafdc/ilp32d multilib for the whole program or hard-float code that keeps to the soft-float calling convention. X stands for the Andes extensions; which of them this A25 implements was not read."
+  sources:
+    - "This project's firmware/apps/rt_test/main.cpp (csrr misa, printed as MISA=)"
+    - "The RISC-V Instruction Set Manual, Volume II: Privileged Architecture, the misa register's MXL field and extension bit assignments"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 9): rt_test, loaded by the agent in one-wire mode, printed TinyNES RT OK MISA=4094312d on two runs. No floating-point instruction has been executed to confirm the FPU works."
 
 - record_id: BRD-001
   kind: BOARD
@@ -1844,15 +1859,15 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   kind: BOARD
   topic_id: PSX
   title: "The FPGA end of the core UART link, and the board's 50 MHz clock"
-  status: SOURCED
-  verified_date: 2026-10-03
+  status: VERIFIED
+  verified_date: 2026-10-12
   statement: "A 50 MHz oscillator drives FPGA pin V22 at LVCMOS33. The BL616 control UART reaches the FPGA on V14 (FPGA receive) and U15 (FPGA transmit), also LVCMOS33."
   consequence: "This is the far end of the link PROT-003 describes from the BL616 side, TX GPIO 28 and RX GPIO 27 at 2 Mbaud. When the link goes silent either end can be at fault, and these are the pins to probe on the FPGA side; the 50 MHz clock is the reference the Tang-Control-derived transports time themselves against."
   sources:
     - "Tang-PSX, .ai/core-reference.md record BRD-003, harvested as that project is archived"
     - "litex-boards commit e4307929c38a, litex_boards/platforms/sipeed_tang_console.py (clk50, serial)"
     - "Sipeed TangMega-138K-example commit 06e7d8b, ddr3_1v4_hs.cst (clk, uart_tx, uart_rx)"
-  verification: "Read from Tang-PSX's reference. Not probed here; this project's evidence is indirect, in that its own transport over these pins works."
+  verification: "Read from Tang-PSX's reference. Not probed here; this project's evidence is indirect, in that its own transport over these pins works. Revised 2026-10-12 (core-log entry 9): confirmed on this board in one-wire mode by TinyNES's AE350 system, whose only clock input is V22, whose UART transmits on U15 and receives on V14 (with the pull-up on), and which received 138,072-byte images from /dev/ttyUSB1 at 2,000,000 baud with every CRC correct while transmitting on U15 at the same rate; the pins were not probed."
 
 - record_id: PSX-004
   kind: BOARD
@@ -2343,16 +2358,16 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - record_id: TOOL-018
   kind: TOOLCHAIN
   topic_id: TOOL
-  title: "The AE350 firmware compiler is xPack GNU RISC-V Embedded GCC 15.2.0-1, whose default multilib is rv32imac/ilp32"
+  title: "The AE350 firmware compiler is xPack GNU RISC-V Embedded GCC 15.2.0-1, whose default multilib is rv32imac/ilp32 with newlib 4.5.0 and libstdc++"
   status: VERIFIED
   verified_date: 2026-10-12
-  statement: "xPack GNU RISC-V Embedded GCC 15.2.0-1 is release v15.2.0-1 of xpack-dev-tools/riscv-none-elf-gcc-xpack; its Linux x64 archive, xpack-riscv-none-elf-gcc-15.2.0-1-linux-x64.tar.gz, has SHA-256 aaaa8060c914851a3e5ee1ba82cc3d6f80972f90638a05c6e823a37557a33758. riscv-none-elf-gcc -v reports GCC 15.2.0 configured --with-arch=rv32imac --with-abi=ilp32, so the default multilib '.' is rv32imac/ilp32, and -print-multi-directory with -march=rv32imac_zicsr_zifencei -mabi=ilp32 selects it; readelf -A on that libgcc.a reports Tag_RISCV_arch rv32i2p1_m2p0_a2p1_c2p0_zmmul1p0_zaamo1p0_zalrsc1p0_zca1p0. --print-multi-lib lists rv32e, rv32i and rv64i variants with m, a, c, f and d, including rv32imafc and rv32imafdc with ilp32f and ilp32d."
-  consequence: "firmware/boot/Makefile uses the compiler from ~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin unless RISCV_BIN or CROSS names another, compiles with -march=rv32imac_zicsr_zifencei -mabi=ilp32 -ffreestanding -fno-tree-loop-distribute-patterns, and links with -nostdlib against libgcc alone, so no newlib code enters the boot ROM. zicsr and zifencei are named because GCC 12 and later accept csrr, csrw and fence.i only with them; -fno-tree-loop-distribute-patterns stops GCC turning the C test's fill and compare loops into memcpy and memset calls that a -nostdlib image cannot resolve; crt0.S copies .data and clears .bss in assembly."
+  statement: "xPack GNU RISC-V Embedded GCC 15.2.0-1 is release v15.2.0-1 of xpack-dev-tools/riscv-none-elf-gcc-xpack; its Linux x64 archive, xpack-riscv-none-elf-gcc-15.2.0-1-linux-x64.tar.gz, has SHA-256 aaaa8060c914851a3e5ee1ba82cc3d6f80972f90638a05c6e823a37557a33758. riscv-none-elf-gcc -v reports GCC 15.2.0 configured --with-arch=rv32imac --with-abi=ilp32, so the default multilib '.' is rv32imac/ilp32, and -print-multi-directory with -march=rv32imac_zicsr_zifencei -mabi=ilp32 selects it; readelf -A on that libgcc.a reports Tag_RISCV_arch rv32i2p1_m2p0_a2p1_c2p0_zmmul1p0_zaamo1p0_zalrsc1p0_zca1p0. --print-multi-lib lists rv32e, rv32i and rv64i variants with m, a, c, f and d, including rv32imafc and rv32imafdc with ilp32f and ilp32d. The default multilib also carries crti.o, crtn.o, crtbegin.o and crtend.o, newlib's libc.a and libm.a (_NEWLIB_VERSION 4.5.0) with libgloss.a, and GCC's libstdc++.a and libsupc++.a."
+  consequence: "firmware/boot/Makefile uses the compiler from ~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin unless RISCV_BIN or CROSS names another, compiles with -march=rv32imac_zicsr_zifencei -mabi=ilp32 -ffreestanding -fno-tree-loop-distribute-patterns, and links with -nostdlib against libgcc alone, so no newlib code enters the boot ROM. zicsr and zifencei are named because GCC 12 and later accept csrr, csrw and fence.i only with them; -fno-tree-loop-distribute-patterns stops GCC turning the C test's fill and compare loops into memcpy and memset calls that a -nostdlib image cannot resolve; crt0.S copies .data and clears .bss in assembly. Programs loaded into the SDRAM use firmware/rt/rt.mk instead, with the same compiler and architecture: it links -nostdlib -static with crti, the runtime's own crt0.S and syscalls.c in place of libgloss, crtbegin, the program, then libstdc++, libsupc++, libm, libc and libgcc as a group, crtend and crtn. With -Wl,--orphan-handling=error the linker rejects its own .rela sections, so firmware/rt/link.ld places them and asserts them empty, and -Wl,--no-warn-rwx-segments silences the warning for the single read-write-execute segment. The A25 has an FPU (DEV-012) that this soft-float ABI does not use."
   sources:
     - "https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/tag/v15.2.0-1: xpack-riscv-none-elf-gcc-15.2.0-1-linux-x64.tar.gz"
-    - "riscv-none-elf-gcc -v, --print-multi-lib, -print-multi-directory and -print-libgcc-file-name from that installation; riscv-none-elf-readelf -A on lib/gcc/riscv-none-elf/15.2.0/libgcc.a"
-    - "This project's firmware/boot/Makefile and build/firmware/boot/boot.map (LOAD of that libgcc.a)"
-  verification: "Installed and checked on 2026-10-12 (core-log entry 7): the archive hash matched, the compiler built firmware/boot into a 32 KiB boot.hex, and the open-flow ae350_soc netlist's boot ROM matched all 8192 words of it in gate-level simulation against the Gowin primitive models. The firmware it built ran on the AE350 on 2026-10-12 (core-log entry 7), testing the RAM with the caches off and on and printing TinyNES AE350 C OK."
+    - "riscv-none-elf-gcc -v, --print-multi-lib, -print-multi-directory, -print-libgcc-file-name and -print-file-name from that installation; riscv-none-elf-readelf -A on lib/gcc/riscv-none-elf/15.2.0/libgcc.a; riscv-none-elf/include/_newlib_version.h"
+    - "This project's firmware/boot/Makefile and build/firmware/boot/boot.map (LOAD of that libgcc.a); firmware/rt/rt.mk, firmware/rt/link.ld and build/firmware/apps/rt_test/rt_test.map (LOAD of libc.a and libstdc++.a)"
+  verification: "Installed and checked on 2026-10-12 (core-log entry 7): the archive hash matched, the compiler built firmware/boot into a 32 KiB boot.hex, and the open-flow ae350_soc netlist's boot ROM matched all 8192 words of it in gate-level simulation against the Gowin primitive models. The firmware it built ran on the AE350 on 2026-10-12 (core-log entry 7), testing the RAM with the caches off and on and printing TinyNES AE350 C OK. Revised 2026-10-12 (core-log entry 9): the runtime's libraries are recorded; rt_test, built with rt.mk, ran on the board using static constructors, standard containers, exceptions, RTTI, printf and libm, and printed TinyNES RT OK."
 ```
 
 ---
