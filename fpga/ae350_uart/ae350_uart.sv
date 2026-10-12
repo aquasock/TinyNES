@@ -13,13 +13,14 @@ module ae350_uart #(
 
     // The AE350's dedicated clock input is PLL_R[0] CLKOUT1 on this part.
     // 50 MHz * 15 = 750 MHz VCO; CLKOUT0 / 10 = 75 MHz AHB bus.
+    // CLKOUT1 / 10 = 75 MHz core while open-flow bring-up is unproven.
     PLL #(
         .FCLKIN("50"),
         .IDIV_SEL(1),
         .FBDIV_SEL(1),
         .MDIV_SEL(15),
         .ODIV0_SEL(10),
-        .ODIV1_SEL(1),
+        .ODIV1_SEL(10),
         .CLKOUT0_EN("TRUE"),
         .CLKOUT1_EN("TRUE")
     ) cpu_pll (
