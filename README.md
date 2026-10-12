@@ -90,20 +90,120 @@ consecutive pairs:
 python3 tools/check_ae350_uart.py --expect 'ADDR=1 ROM=1 AHB=1' --clock 4 --timeout 10
 ```
 
-The AE350 bus clocks currently reach the hard core through general fabric
-routing, so a placement can fail nextpnr's hold check or run silent on
-hardware. `TINY_NES_SEED=N` passes a placement seed to nextpnr.
+The 75 MHz bus clock enters the global clock network from `PLL_R[0]`
+`CLKOUT0`, and the build fails unless the core clock takes the dedicated
+`AE350_CORE_CLK_PLLR0` hop and the bus meets 75 MHz. `TINY_NES_SEED=N` passes
+a placement seed to nextpnr.
 
 The load is volatile. The host check needs Python `pyserial`. It does not
 alter BL616 firmware or the FPGA's configuration flash.
+
+## AE350 system: boot ROM, RAM and C firmware
+
+`fpga/ae350_soc/` gives the A25 a small system to run C code in:
+
+| AHB port | Address | What the fabric puts there |
+|---|---|---|
+| ROM | `0x80000000` | 32 KiB block-RAM boot ROM (`ahb_boot_rom.sv`) holding the firmware image |
+| RAM (64-bit) | `0x40000000` | 64 KiB block RAM (`ahb_ram.sv`); a data access to any other address on this port gets an AHB ERROR, and an instruction fetch reads zero |
+| EXTS (uncached) | `0xe8000000` | UART data `+0x00`, UART status `+0x04`, ID `0x544e3031` ("TN01") `+0x08`, scratch `+0x0c` (`exts_uart.sv`) |
+
+The clocks are the same as in the UART gate: the core runs at 750 MHz and the
+buses at 75 MHz. The UART is the same FPGA UART at 115200 8N1.
+
+The A25 fetches instructions down mispredicted paths, and some of those
+fetches go to address 0, which lands on the RAM port. With both caches on, a
+line fill that gets ERROR there stops the core for good. So the RAM port
+answers an instruction fetch outside its window with zero and OKAY; zero is
+an illegal instruction, so a fetch that is really executed still traps.
+
+`firmware/boot/` is the boot program, in C with a short assembly start-up.
+It checks the EXTS registers. Then it tests the RAM with the A25 caches off
+and again with them on; the cached pass writes back and invalidates the
+D-cache, so the data crosses the bus as cache-line bursts. After that it
+reports once a second:
+
+```text
+TinyNES AE350 boot ROM
+TinyNES AE350 C OK UNC=<cycles> CAC=<cycles>
+```
+
+`UNC` and `CAC` are the core cycles each RAM test took, in hex. On the board
+they are `UNC=03bc52c0 CAC=001e33e1`: the cached test is about 32 times
+faster. A failed check
+or a trap prints a line starting with `BAD`. If the CPU has written nothing to
+the UART about 1.8 s after reset, the fabric reports instead, once a second
+until the CPU writes:
+
+```text
+NOBOOT ROM=<count> LAST=<address> RAM=<count> EXT=<count> RAML=<address> ST=<state> S1=<address> SL=<address>
+```
+
+The counts are the transfers each port has accepted. `LAST` and `RAML` are
+the addresses of the last ROM and RAM transfers. `S1` and `SL` are the
+addresses of the first and last stray RAM transfers, those outside the RAM
+window. `ST` holds, from the top byte down:
+
+- the last stray transfer's `HPROT[0]` (0 for an instruction fetch),
+  `HBURST`, `HWRITE` and `HSIZE`;
+- the live `HREADY` of the ROM and RAM ports, the RAM port's `HRESP` and the
+  EXTS `HREADY`, then the live RAM and ROM `HTRANS`;
+- in the low 16 bits, the number of stray RAM transfers.
+
+Two diagnostic builds force the report. `TINY_NES_SOC_DIAG=1` holds the A25
+in reset (`build/ae350_soc_hold/`), which checks the fabric alone.
+`TINY_NES_SOC_DIAG=2` lets the A25 run but drops its UART bytes
+(`build/ae350_soc_drop/`), so the report shows how far the firmware got:
+
+```sh
+TINY_NES_SOC_DIAG=2 bash tools/build_ae350_soc.sh
+openFPGALoader -b tangmega138k build/ae350_soc_drop/ae350_soc.fs
+```
+
+The firmware is built with xPack GNU RISC-V Embedded GCC 15.2.0-1. The
+Makefile looks in `~/tools/xpack-riscv-none-elf-gcc-15.2.0-1`; set `RISCV_BIN`
+or `CROSS` to use another installation. It links only `libgcc`, with no C
+library. The build script compiles the firmware into
+`build/firmware/boot/boot.hex`, which Yosys loads into the ROM, then builds
+the bitstream `build/ae350_soc/ae350_soc.fs`:
+
+```sh
+bash tools/build_ae350_soc.sh
+```
+
+The testbench drives each AHB port directly. `TEST=0` covers the ROM, the RAM's
+byte lanes, ERROR responses and zero-reading fetches, the EXTS registers and
+the CPU UART. `TEST=1`
+covers the `NOBOOT` report and the CPU taking the UART over:
+
+```sh
+mkdir -p build/ae350_soc_tb
+for t in 0 1; do
+  iverilog -g2012 -s ae350_soc_tb -Pae350_soc_tb.TEST=$t \
+    -o build/ae350_soc_tb/tb$t \
+    ~/oss-cad-suite/share/yosys/gowin/cells_xtra_gw5a.v \
+    fpga/ae350_soc/*.sv tests/ae350_soc_tb.sv
+  vvp build/ae350_soc_tb/tb$t
+done
+```
+
+On hardware, load it the same way as the UART gate. The checker fails on
+`BAD`, `NOBOOT` or `AHB=E` lines and prints the line that passed:
+
+```sh
+source ~/oss-cad-suite/environment
+openFPGALoader -b tangmega138k build/ae350_soc/ae350_soc.fs
+python3 tools/check_ae350_uart.py --port /dev/ttyUSB1 --expect 'TinyNES AE350 C OK'
+```
 
 ## Build sweeps
 
 `tools/sweep.py` builds design variants over many nextpnr seeds in parallel
 and tabulates them. It never loads the board. A design is described by a JSON
-file in `tools/designs/` (sources, top, constraints, device, target frequency
-and named variants as parameter overrides). Each variant is synthesised once,
-then placed and routed once per seed:
+file in `tools/designs/`: sources, top, constraints, device, target frequency,
+named variants as parameter overrides, and optional `prebuild` commands such
+as the firmware build. Each variant is synthesised once, then placed and
+routed once per seed:
 
 ```sh
 python3 tools/sweep.py ae350_uart --variants normal,trace --seeds 1-16 --jobs 16 --pack clean

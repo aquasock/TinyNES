@@ -194,3 +194,49 @@ The AE350 UART gate is complete, so the next cycle should propose the next TinyN
 - User Test: PASS
 
 ---
+
+## 7 COMMIT Unreleased 2026-10-12T12:02:53-07:00
+
+#### Coming From:
+
+Unreleased 9efedb5
+
+#### Purpose:
+
+Give the AE350 a boot ROM, RAM and fabric registers so that C firmware built with an installed RISC-V toolchain runs on the A25 and tests its RAM with the caches off and on, as the first step from the UART gate toward running Nestopia.
+
+#### Outcome:
+
+xPack GNU RISC-V Embedded GCC 15.2.0-1 is installed in `~/tools` and recorded as TOOL-018. `firmware/boot/` builds a 32 KiB boot image with `-nostdlib` and libgcc alone. `fpga/ae350_soc/` puts it in a block-RAM boot ROM on the ROM port at `0x80000000`, a 64 KiB block RAM on the RAM port at `0x40000000`, and UART, ID and scratch registers in the EXTS window. The firmware checks the registers, tests the RAM with the caches off and then on, and prints `TinyNES AE350 C OK UNC=<cycles> CAC=<cycles>`. If the CPU writes nothing, the fabric prints a `NOBOOT` report of the port counts instead. The testbench `tests/ae350_soc_tb.sv` and gate-level checks of the boot ROM and RAM against the Gowin primitive models passed. `tools/build_ae350_soc.sh` builds the image, and `tools/sweep.py` gained a `prebuild` step and `tools/designs/ae350_soc.json`. The first image was silent on hardware. A `CPU_HOLD` diagnostic (`TINY_NES_SOC_DIAG=1`) showed the fabric and UART working. A `CPU_TX_DROP` diagnostic (`TINY_NES_SOC_DIAG=2`) showed the firmware passing every uncached test and then stopping straight after it set `mcache_ctl` to 3 and ran `fence.i`. The `NOBOOT` report gained the last RAM address, a port state word, and the first and last addresses of RAM-port transfers outside the RAM window. Varying only the cache bits showed that the A25 makes instruction fetches to address 0 on the RAM port, which it does not execute: single reads with the caches off and 32-byte WRAP4 line fills with the I-cache on. They got ERROR without trapping when one cache or neither was on, but with both caches on the core stopped for good after one at `0x18`. `ahb_ram.sv` now answers an instruction fetch outside its window with zero and OKAY and keeps ERROR for data accesses there, which reference record DEV-010 records. The cause of the fetches themselves is unknown. With the fix, the default-seed image, SHA-256 `e74ab2eec341b01dcf06de060c395e9fa697670cb796b33e1cf9b369a4cbecd9` with bus Fmax 201.65 MHz, printed `TinyNES AE350 C OK UNC=03bc52c0 CAC=001e33e1`, so the cached test ran about 32 times faster, and `tools/check_ae350_uart.py` passed. The drop diagnostic of the fixed design showed four such fetches answered with the CPU running on. `tools/sweep.py` over seeds 1 to 16 was 16 of 16 clean with no hold violations, with bus Fmax 144.8 to 218.53 MHz, median 199.07 MHz. The README describes the system, the stray-fetch rule, the extended `NOBOOT` report and both diagnostic builds, and corrects the bus clock paragraph that entry 6 flagged. Reference records TOOL-017 and BRD-008 were revised. These were agent-run SRAM loads in one-wire mode on the user's board, and the user accepted the result. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should propose the next step toward running Nestopia for user approval, most likely a larger RAM behind the RAM port and a C runtime able to host the emulator core, and any new RAM-port slave must answer stray instruction fetches as DEV-010 requires.
+
+#### Files Modified:
+
+- README.md
+- firmware/boot/Makefile
+- firmware/boot/crt0.S
+- firmware/boot/link.ld
+- firmware/boot/main.c
+- firmware/boot/tinynes.h
+- fpga/ae350_soc/ae350_soc.cst
+- fpga/ae350_soc/ae350_soc.sdc
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/ahb_boot_rom.sv
+- fpga/ae350_soc/ahb_ram.sv
+- fpga/ae350_soc/exts_uart.sv
+- tests/ae350_soc_tb.sv
+- tools/build_ae350_soc.sh
+- tools/check_ae350_uart.py
+- tools/designs/ae350_soc.json
+- tools/sweep.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

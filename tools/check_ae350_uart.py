@@ -3,7 +3,9 @@
 """Verify the AE350-started UART report in one-wire debug mode.
 
 A gate line starting with BAD, or a trace line with AHB=E, reports the first
-AHB write whose address or data did not match, and fails the check at once.
+AHB write whose address or data did not match, and fails the check at once. So
+does a line starting with NOBOOT, which the SoC prints when its CPU never wrote
+to the UART, and a firmware line starting with BAD.
 
 With --clock N, also read N+1 trace reports and derive the A25 core clock from
 consecutive mcycle (CYC) and 50 MHz board-oscillator (REF) pairs.
@@ -46,13 +48,13 @@ def main():
             *lines, rest = received.split(b"\r\n")
             received = bytearray(rest[-4096:])
             for line in lines:
-                if line.startswith(b"BAD ") or b" AHB=E " in line:
+                if line.startswith((b"BAD ", b"NOBOOT ")) or b" AHB=E " in line:
                     print(f"FAIL: AE350 bus check {line.decode('ascii', 'replace')}")
                     return 1
                 if not line.startswith(args.expect.encode("ascii")):
                     continue
                 if not matched:
-                    print(f"PASS: {args.expect} received")
+                    print(f"PASS: {line.decode('ascii', 'replace')}")
                     matched = True
                 found = PAIR.search(line)
                 if args.clock and found:

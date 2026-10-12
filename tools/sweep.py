@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MIT
 """Build design variants over many nextpnr seeds in parallel and tabulate them.
 
-Each variant is synthesised once, then placed and routed once per seed. Every
+A design's optional "prebuild" commands (argv lists, run from the repository
+root) run once first, for example to build firmware that synthesis reads. Each
+variant is then synthesised once, then placed and routed once per seed. Every
 run records its exit status, clock Fmax, hold violations, resource use,
 placement wirelength, dedicated clock-routing misses, clock route length, run
 time and peak memory. Packing is optional and runs in a smaller pool because
@@ -232,6 +234,13 @@ def main():
     (out / "sweep.json").write_text(json.dumps({
         "design": str(design_path), "variants": names, "seeds": seeds,
         "nextpnr_args": extra, "pack": args.pack, "argv": sys.argv}, indent=1) + "\n")
+
+    for index, command in enumerate(design.get("prebuild", [])):
+        log = out / f"prebuild{index}.log"
+        rc, seconds, _ = tools.run(command, log)
+        if rc != 0:
+            raise SystemExit(f"prebuild {shlex.join(command)} failed; see {log}")
+        print(f"prebuild {shlex.join(command)} in {seconds:.1f} s", flush=True)
 
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         synth = dict(zip(names, pool.map(

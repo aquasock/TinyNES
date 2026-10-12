@@ -1,0 +1,8 @@
+IO_LOC "sys_clk" V22;
+IO_PORT "sys_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+IO_LOC "uart_tx" U15;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33;
+
+// The AE350 has a dedicated core-clock connection at this PLL site.
+INS_LOC "cpu_pll" PLL_R[0];

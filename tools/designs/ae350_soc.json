@@ -1,0 +1,20 @@
+{
+    "top": "ae350_soc_top",
+    "prebuild": [["make", "-s", "-C", "firmware/boot"]],
+    "sources": [
+        "fpga/ae350_soc/ahb_boot_rom.sv",
+        "fpga/ae350_soc/ahb_ram.sv",
+        "fpga/ae350_soc/exts_uart.sv",
+        "fpga/ae350_soc/ae350_soc.sv"
+    ],
+    "lib_sources": ["{suite}/share/yosys/gowin/cells_xtra_gw5a.v"],
+    "synth_family": "gw5a",
+    "family": "GW5AST-138C",
+    "device": "GW5AST-LV138PG484AC1/I0",
+    "freq": 75,
+    "cst": "fpga/ae350_soc/ae350_soc.cst",
+    "sdc": "fpga/ae350_soc/ae350_soc.sdc",
+    "variants": {
+        "normal": {}
+    }
+}
