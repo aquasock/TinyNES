@@ -1,1 +1,86 @@
 # TinyNES
+
+TinyNES is an open-source NES project for the Tang Console 138K. Its planned
+emulator runs on the FPGA's hard AE350 RISC-V CPU. FPGA logic will handle board
+I/O and the memory and display paths. The emulator candidate is the
+[Nestopia libretro core](https://github.com/libretro/nestopia); it is not part
+of this repository yet.
+
+## First hardware gate: AE350 UART
+
+The first image proves only that an AE350 program starts, reaches the fabric
+AHB bus, and sets a status word. The fabric then sends `TinyNES AE350 OK` over
+the board's FPGA UART (U15) at 115200 8N1 about once per second. The program is
+four RV32I words in `fpga/ae350_uart/ae350_uart.sv`. It has no DDR3, NES
+emulator, video, audio, or BL616 dependency.
+
+The present open device database leaves four AE350 output bits unmapped. This
+diagnostic uses a mapped write-data bit and the AHB select signal, so its
+status check avoids those gaps. This is a toolchain mapping limitation, not an
+AE350 hardware limit.
+
+The build uses Yosys, a GW5AST-138C-capable nextpnr-himbaechel, and Apicula's
+open-source bitstream packer. It does not invoke Gowin EDA or use generated
+vendor IP. The available GW5AST-138C device database was generated from vendor
+device data; this remains a provenance limitation of the current open flow.
+
+```sh
+bash tools/build_ae350_uart.sh
+iverilog -g2012 -s ae350_uart_tb -o build/ae350_uart/uart_tb \
+  ~/oss-cad-suite/share/yosys/gowin/cells_xtra_gw5a.v \
+  fpga/ae350_uart/ae350_uart.sv tests/ae350_uart_tb.sv
+vvp build/ae350_uart/uart_tb
+```
+
+If the hardware report is silent, build the isolated UART diagnostic. It sends
+`UART DIAGNOSTIC!` from fabric logic after PLL lock without waiting for an AE350
+write. A received diagnostic line therefore narrows the fault to the CPU or
+its AHB path; silence still needs a check of the clock, output pin, and host
+connection.
+
+```sh
+TINY_NES_UART_DIAG=1 bash tools/build_ae350_uart.sh
+iverilog -g2012 -s ae350_uart_tb -Pae350_uart_tb.FORCE_UART=1 \
+  -o build/ae350_uart_diag/uart_tb \
+  ~/oss-cad-suite/share/yosys/gowin/cells_xtra_gw5a.v \
+  fpga/ae350_uart/ae350_uart.sv tests/ae350_uart_tb.sv
+vvp build/ae350_uart_diag/uart_tb
+```
+
+The script defaults to the locally installed oss-cad-suite, nextpnr and Apicula
+fork. Override `OSS_CAD_SUITE`, `NEXTPNR_HIMBAECHEL`, `APICULA_FORK` or `PYDEPS`
+if they are elsewhere. The output is `build/ae350_uart/ae350_uart.fs`.
+
+For a hardware check, cold boot the board in one-wire debug mode, then SRAM
+load the image with the open-source loader and read the FT2232 UART:
+
+```sh
+source ~/oss-cad-suite/environment
+openFPGALoader -b tangmega138k build/ae350_uart/ae350_uart.fs
+python3 tools/check_ae350_uart.py --port /dev/ttyUSB1
+```
+
+For the isolated diagnostic, load `build/ae350_uart_diag/ae350_uart.fs` and
+probe with:
+
+```sh
+python3 tools/check_ae350_uart.py --port /dev/ttyUSB1 --expect 'UART DIAGNOSTIC!'
+```
+
+If the isolated UART works but the normal image is silent, build the AE350
+trace image with `TINY_NES_UART_DIAG=2 bash tools/build_ae350_uart.sh`. It
+reports `ADDR=1` once the reset-vector address appears on the ROM bus,
+`ROM=1` once an active ROM transfer appears, and `AHB=1` once the expected
+status write is captured. Each field stays set once seen. The image is
+`build/ae350_uart_trace/ae350_uart.fs`.
+
+The load is volatile. The host check needs Python `pyserial`. It does not
+alter BL616 firmware or the FPGA's configuration flash.
+
+## References and licensing
+
+The board pin and AE350 clock facts come from the project reference library
+and the Tang-PSX/Tang-Phosphor hardware reports cited there. The RTL here is
+original MIT-licensed code. CERN's colibri and its SystemVerilog port are
+design practice references; their modules are not included. Nestopia carries
+GPL-2.0-or-later terms and will receive its own attribution when incorporated.
