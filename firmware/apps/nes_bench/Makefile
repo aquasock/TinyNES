@@ -1,57 +1,40 @@
 # SPDX-License-Identifier: MIT
 #
-# Headless NES emulator benchmark. CORE=nestopia (the default) or
-# CORE=fceumm picks the libretro core, fetched by tools/fetch_nestopia.sh or
-# tools/fetch_fceumm.sh; a cartridge image is built in:
+# Headless NES emulator benchmark: the libretro FCEUmm core, fetched by
+# tools/fetch_fceumm.sh, with a cartridge image built in.
 #
-#   make ROM=<file.nes>         AE350 program, build/firmware/apps/nes_bench/<core>/
+#   make ROM=<file.nes>         AE350 program, build/firmware/apps/nes_bench/
 #   make ROM=<file.nes> host    the same program for this PC, in host/ there
 #
-# FRAMES=<n> and INPUT="<script>" replace the defaults in main.cpp. The
-# programs contain the core and are GPL-2.0 (COPYING or Copying in its
-# third_party/ directory); with the cartridge image built in they are for
-# local use only.
+# FRAMES=<n> and INPUT="<script>" replace the defaults in main.cpp.
+# MCACHE=<mask> sets those mcache_ctl bits for the run (AE350 only), and
+# OPT=<flags> replaces -O2 (rt.mk); give such builds their own BUILD=<dir>.
+# The programs contain the core and are GPL-2.0 (third_party/fceumm/Copying);
+# with the cartridge image built in they are for local use only.
 
 APP     := nes_bench
 SOURCES := main.cpp rom.S
-CORE    ?= nestopia
-BUILD   ?= $(abspath ../../..)/build/firmware/apps/$(APP)/$(CORE)
 
-ifeq ($(CORE),nestopia)
-NST_DIR := $(abspath ../../../third_party/nestopia)
-ifeq ($(wildcard $(NST_DIR)/libretro/Makefile.common),)
-$(error Nestopia not found in $(NST_DIR): run tools/fetch_nestopia.sh)
-endif
-CORE_DIR := $(NST_DIR)
-include $(NST_DIR)/libretro/Makefile.common
-
-# Upstream's flags for a GCC build (libretro/Makefile), with gnu++11 in
-# place of c++98; both build.
-LIB_SOURCES  := $(SOURCES_CXX) $(SOURCES_C)
-LIB_CPPFLAGS := -D__LIBRETRO__ -DNST_NO_ZLIB -DNDEBUG $(INCFLAGS)
-LIB_CFLAGS   := -std=gnu99
-LIB_CXXFLAGS := -std=gnu++11 -fno-rtti
-else ifeq ($(CORE),fceumm)
 FCEU_DIR := $(abspath ../../../third_party/fceumm)
 ifeq ($(wildcard $(FCEU_DIR)/Makefile.common),)
 $(error FCEUmm not found in $(FCEU_DIR): run tools/fetch_fceumm.sh)
 endif
 # Upstream's unix build (Makefile.libretro) without the NTSC filter and
-# HD texture packs, which run only when their options are chosen.
+# HD texture packs, which run only when their options are chosen, and with
+# RGB565 frames: half the SDRAM writes of upstream's XRGB8888, which
+# WANT_32BPP=1 restores.
 CORE_DIR    := $(FCEU_DIR)/src
-WANT_32BPP  := 1
+WANT_32BPP  ?= 0
 HAVE_NTSC   := 0
 HAVE_HDPACK := 0
 include $(FCEU_DIR)/Makefile.common
 
 LIB_SOURCES  := $(SOURCES_C)
 LIB_CPPFLAGS := $(COREDEFINES) -DNDEBUG $(INCFLAGS)
-else
-$(error CORE must be nestopia or fceumm)
-endif
 
-APP_DEFS := -DNES_CORE='"$(CORE)"' $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
-            $(if $(INPUT),-DNES_INPUT='"$(INPUT)"')
+APP_DEFS := $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
+            $(if $(INPUT),-DNES_INPUT='"$(INPUT)"') \
+            $(if $(MCACHE),-DNES_MCACHE=$(MCACHE))
 CPPFLAGS += -I$(LIBRETRO_COMM_DIR)/include $(APP_DEFS)
 
 include ../../rt/rt.mk
@@ -83,7 +66,6 @@ $(call host_object,$(1)): $(1) $(MAKEFILE_LIST)
 	@mkdir -p $$(dir $$@)
 	$(2) -c -o $$@ $(1)
 endef
-$(foreach s,$(filter %.cpp,$(LIB_SOURCES)),$(eval $(call host_compile,$(s),$$(HOST_CXX) -MMD -MP $$(LIB_CPPFLAGS) -O2 $$(LIB_CXXFLAGS))))
 $(foreach s,$(filter %.c,$(LIB_SOURCES)),$(eval $(call host_compile,$(s),$$(HOST_CC) -MMD -MP $$(LIB_CPPFLAGS) -O2 $$(LIB_CFLAGS))))
 $(eval $(call host_compile,main.cpp,$$(HOST_CXX) -MMD -MP $$(CPPFLAGS) -O2 -std=gnu++20 -Wall -Wextra -Werror))
 $(eval $(call host_compile,rom.S,$$(HOST_CC) $$(APP_DEFS) -DNES_ROM_FILE='"$$(BUILD)/rom.nes"'))

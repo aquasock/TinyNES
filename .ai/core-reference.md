@@ -270,10 +270,11 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Does this project carry the licences and notices it owes? | PROV | PROV-005 |
 | What licence is this project under, and what is the exception? | PROV | PROV-005 |
 | Where is colibri, and what are its terms? | PROV | PROV-003 |
-| Where does Nestopia come from, and what are its terms? | PROV | PROV-006 |
+| Where did Nestopia come from, and what are its terms? | PROV | PROV-006 |
 | Where does FCEUmm come from, and what are its terms? | PROV | PROV-007 |
-| How fast does an NES emulator run on the A25, and is it correct? | EMU | EMU-001, EMU-002 |
-| Which NES core is faster on the A25? | EMU | EMU-002 |
+| How fast does an NES emulator run on the A25, and is it correct? | EMU | EMU-001, EMU-002, EMU-003 |
+| Which NES core is faster on the A25, and why was Nestopia dropped? | EMU | EMU-002 |
+| Where does FCEUmm's frame time go on the A25, and what made it faster? | EMU | EMU-003 |
 | Which silicon revision is this board, and which revision is the core image? | PSX | PSX-001 |
 | How much logic and block RAM does the device have? | PSX | PSX-002 |
 | Which FPGA pins carry the core UART, and where is the board's clock? | PSX | PSX-003 |
@@ -300,7 +301,7 @@ DEV-010: "The A25 fetches down mispredicted paths to address 0 on the RAM port (
 DEV-011: "The AE350 RAM port (DDR_H*) carries 0x40000000 to at least 0x7fffffff, cacheable: TinyNES runs block RAM at 0x60000000 and SDRAM at 0x40000000 there with both caches on, and Tang-PSX ran DDR3 up to 0x7fffffff"
 DEV-012: "The A25's misa reads 0x4094312d: RV32 IMAFDC plus N, S, U and X, so it has a single- and double-precision FPU, which TinyNES's soft-float rv32imac/ilp32 firmware does not use"
 DEV-013: "The A25's micm_cfg and mdcm_cfg read 0x00439ada: the L1 I-cache and D-cache are each 32 KiB, 4-way, with 32-byte lines"
-DEV-014: "U-Boot names Andes mcache_ctl bits 9 and 10 as I- and D-cache prefetch enables; TinyNES sets only bits 0 and 1, and whether the A25 implements them is untested"
+DEV-014: "U-Boot names Andes mcache_ctl bits 9 and 10 as I- and D-cache prefetch enables and bit 13 as D-cache write-around; on this A25 they read back 0 when set, so only the cache enables, bits 0 and 1, exist of those tried"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
 BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
@@ -395,7 +396,7 @@ PHOS-013: "Lessons from the discarded resident gapless player experiment: detect
 PROV-001: "Lineage as the user states it: nand2mario's TangCore is the origin for Tang-Phosphor and Tang-PSX; Tang-Control is a fork of the same repo for peek/poke and the 1-wire and 2-wire debug arrangements; the family also uses a DDR3 IP block, TinyDesk, and CERN's colibri as a reference; the remembered memory module turned out to be nand2mario's JTAG bit-bang programmer, and Tang-PSX is being archived rather than deleted"
 PROV-003: "colibri is CERN's vendor-independent, fully verified, open-source VHDL common library at gitlab.cern.ch/colibri/colibri, with an unofficial SystemVerilog port at github.com/kavierim/colibri-sv pinned to upstream 3fa78412; read the port when working in SystemVerilog since it ships an AGENTS.md and targets Verilator and free tooling, but treat the original as the authority; licensed CERN-OHL-W-2.0 (weakly reciprocal), not MIT, with no code copied here"
 PROV-005: "TinyTang is MIT with thirteen Apache-2.0 files: nand2mario's JTAG programmer, and ten Phosphor transport files and two host tests written by this project's author in Tang-Control; it descends from nand2mario's TangCore firmware-bl616 through Tang-Control, a fork of it, and copies no other TangCore source; THIRD_PARTY.md must keep saying the UART protocol was read from GPL-3.0 nestang as a specification, not copied"
-PROV-006: "libretro Nestopia is GPL-2.0-or-later (Freij, Nestopia UE, Carmichael and others); tools/fetch_nestopia.sh fetches commit 135dfa6 into git-ignored third_party/nestopia, and programs linked with it stay in build/"
+PROV-006: "libretro Nestopia is GPL-2.0-or-later (Freij, Nestopia UE, Carmichael and others); TinyNES measured commit 135dfa6, never vendored, and stopped fetching it when FCEUmm was chosen"
 PROV-007: "libretro FCEUmm is GPL-2.0 (mostly or-later, with a few BSD or unmarked files); tools/fetch_fceumm.sh fetches commit ac0d00a into git-ignored third_party/fceumm, and programs linked with it stay in build/"
 PSX-001: "This board is GW5AST-138 revision C (package mark 2518CA0N), while the console138k core image it loads is built for revision B and works anyway"
 PSX-002: "GW5AST-138: 138,240 LUTs, 139,095 registers, 340 BSRAM blocks of 18 Kbit, about 765 KB"
@@ -438,7 +439,8 @@ TOOL-017: "Open-flow HDMI works: the apicula fork at 1c2b6cb+ writes the OSER10 
 TOOL-018: "The AE350 firmware is built with xPack GNU RISC-V Embedded GCC 15.2.0-1 (riscv-none-elf-gcc 15.2.0), configured --with-arch=rv32imac --with-abi=ilp32, so -march=rv32imac_zicsr_zifencei -mabi=ilp32 selects its default multilib: the boot ROM (firmware/boot/Makefile) links libgcc alone, and loaded programs (firmware/rt/rt.mk) link newlib 4.5.0's libc and libm, libstdc++ and libsupc++ with the runtime's own crt0 and syscalls; the compiler is found in ~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin"
 TOOL-019: "newlib 4.5.0's <sys/dirent.h> is an #error, so firmware/rt/include/sys/dirent.h stands in and syscalls.c's opendir, readdir, closedir and _stat always fail; rt.mk builds third-party LIB_SOURCES with their own flags"
 EMU-001: "libretro Nestopia 135dfa6 runs Castlevania on the A25 with checksums matching a PC build, at 23.16 ms a frame against 16.64 ms: 71.8 percent of full speed, with a 0.78 s start"
-EMU-002: "libretro FCEUmm ac0d00a runs Castlevania on the A25 with checksums matching a PC build, at 19.07 ms a frame: 87.2 percent of full speed and 1.2 times Nestopia (1.8 times on the PC)"
+EMU-002: "libretro FCEUmm ac0d00a runs Castlevania on the A25 with checksums matching a PC build, at 19.07 ms a frame: 87.2 percent of full speed and 1.2 times Nestopia (1.8 times on the PC); it is the core TinyNES keeps"
+EMU-003: "8.23 ms of FCEUmm's 19.14 ms XRGB8888 frame on the A25 is the 8-bit to XRGB8888 conversion; RGB565 cuts it to 5.01 ms and the frame to 15.85 ms, 104.9 percent; -O3 is slower and the prefetch and write-around bits do not exist"
 ```
 
 ---
@@ -614,15 +616,15 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - record_id: DEV-014
   kind: DEVICE
   topic_id: DEV
-  title: "Andes mcache_ctl has I- and D-cache prefetch enables in bits 9 and 10, which TinyNES does not set"
-  status: SOURCED
+  title: "Andes mcache_ctl names prefetch and write-around bits that the A25 here does not implement"
+  status: VERIFIED
   verified_date: 2026-10-12
-  statement: "U-Boot's Andes CSR header names these mcache_ctl (CSR 0x7ca) bits: IC_EN 0, DC_EN 1, IC_ECCEN 3, DC_ECCEN 5, CCTL_SUEN 8, IC_PREFETCH_EN 9, DC_PREFETCH_EN 10, DC_WAROUND_EN 13, L2C_WAROUND_EN 15, TLB_ECCEN 18, DC_COHEN 19 and DC_COHSTA 20."
-  consequence: "firmware/boot/main.c and firmware/rt/crt0.S set only bits 0 and 1, so if the A25 implements the prefetch bits they are off. Turning them on is an untested lever on the SDRAM miss cost behind EMU-001's frame times."
+  statement: "U-Boot's Andes CSR header names these mcache_ctl (CSR 0x7ca) bits: IC_EN 0, DC_EN 1, IC_ECCEN 3, DC_ECCEN 5, CCTL_SUEN 8, IC_PREFETCH_EN 9, DC_PREFETCH_EN 10, DC_WAROUND_EN 13, L2C_WAROUND_EN 15, TLB_ECCEN 18, DC_COHEN 19 and DC_COHSTA 20. On the A25 of this board, with crt0.S's bits 0 and 1 set, csrs of 0x600 (bits 9 and 10) or of 0x2000 (bit 13) leaves mcache_ctl reading 0x00000003."
+  consequence: "Bits 9, 10 and 13 are not writable here, so there is no hardware prefetch or write-around to turn on, and the frame times of EMU-003 did not change with them beyond run-to-run noise. firmware/boot/main.c and firmware/rt/crt0.S set only bits 0 and 1; nes_bench's MCACHE=<mask> build option sets more and prints the readback as MCTL=."
   sources:
     - "u-boot/u-boot master, arch/riscv/include/asm/arch-andes/csr.h: MCACHE_CTL_* bit definitions"
-    - "This project's firmware/boot/main.c (CSR_SET(CSR_MCACHE_CTL, 3u)) and firmware/rt/crt0.S (csrs 0x7ca)"
-  verification: "Read from U-Boot's header on 2026-10-12 (core-log entry 10). Whether the A25 on this board implements bits 9 and 10, and what they change, has not been tested."
+    - "This project's firmware/boot/main.c (CSR_SET(CSR_MCACHE_CTL, 3u)), firmware/rt/crt0.S (csrs 0x7ca) and firmware/apps/nes_bench/main.cpp (NES_MCACHE, MCTL=)"
+  verification: "Read from U-Boot's header on 2026-10-12 (core-log entry 10). Revised 2026-10-12 (core-log entry 12): tested on the board, one run each of nes_bench built with MCACHE=0x600 and MCACHE=0x2000; both printed MCTL=00000003. Bits 3, 5, 8, 15 and 18 to 20 were not tried."
 
 - record_id: BRD-001
   kind: BOARD
@@ -1877,15 +1879,15 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - record_id: PROV-006
   kind: EXTERNAL
   topic_id: PROV
-  title: "libretro Nestopia is GPL-2.0-or-later and is fetched at a pinned commit, never vendored"
+  title: "libretro Nestopia is GPL-2.0-or-later; TinyNES measured it at a pinned commit, never vendored, and no longer fetches it"
   status: VERIFIED
   verified_date: 2026-10-12
-  statement: "libretro/nestopia's COPYING is the GNU GPL version 2, and its source headers (for example source/core/NstCpu.cpp) allow 'any later version'. Its README credits Martin Freij (2003-2008), the Nestopia UE contributors (2008-2018), Rupert Carmichael (2020-2026) and Shay Green (2006-2007) among others. Commit 135dfa6dfda5e7603d61e751b9ddd0cc42546bc3 of 2026-10-11 is the head of master that TinyNES uses."
-  consequence: "tools/fetch_nestopia.sh clones that commit into third_party/nestopia/, which .gitignore excludes, and fails if HEAD differs or the tree has local changes, so TinyNES (MIT) carries no Nestopia source. Any program linked with it, such as nes_bench.elf and its PC build, is GPL-2.0-or-later and stays in build/; with a cartridge image built in it is for local use only, and the image itself is the user's and never committed. README.md's licensing section names the copyright holders and these terms."
+  statement: "libretro/nestopia's COPYING is the GNU GPL version 2, and its source headers (for example source/core/NstCpu.cpp) allow 'any later version'. Its README credits Martin Freij (2003-2008), the Nestopia UE contributors (2008-2018), Rupert Carmichael (2020-2026) and Shay Green (2006-2007) among others. Commit 135dfa6dfda5e7603d61e751b9ddd0cc42546bc3 of 2026-10-11 is the head of master that TinyNES measured."
+  consequence: "Until TinyNES chose FCEUmm (EMU-002), tools/fetch_nestopia.sh cloned that commit into third_party/nestopia/, which .gitignore excludes, and failed if HEAD differed or the tree had local changes, so TinyNES (MIT) has never carried Nestopia source. Programs linked with it were GPL-2.0-or-later and stayed in build/. The script and nes_bench's CORE=nestopia were removed in core-log entry 12; both are in git at commit a9c21fa, and README.md's results table keeps the Nestopia measurement."
   sources:
     - "https://github.com/libretro/nestopia commit 135dfa6dfda5e7603d61e751b9ddd0cc42546bc3: COPYING, README, source/core/NstCpu.cpp header"
-    - "This project's tools/fetch_nestopia.sh, .gitignore (/third_party/) and README.md (Nestopia benchmark; References and licensing)"
-  verification: "Read from the fetched tree on 2026-10-12 (core-log entry 10); fetch_nestopia.sh reported the pinned commit and a clean tree."
+    - "This project's git history at a9c21fa: tools/fetch_nestopia.sh, firmware/apps/nes_bench/Makefile; .gitignore (/third_party/)"
+  verification: "Read from the fetched tree on 2026-10-12 (core-log entry 10); fetch_nestopia.sh reported the pinned commit and a clean tree. Revised 2026-10-12 (core-log entry 12): Nestopia dropped and its fetch script removed."
 
 - record_id: PROV-007
   kind: EXTERNAL
@@ -2447,12 +2449,12 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   status: VERIFIED
   verified_date: 2026-10-12
   statement: "In xPack GNU RISC-V Embedded GCC 15.2.0-1, riscv-none-elf/include/dirent.h includes <sys/dirent.h>, whose generic version is '#error \"<dirent.h> not supported\"'; newlib's dirent.h then declares opendir, readdir, closedir and others on a DIR type it does not define, and uses ssize_t. libretro-common's vfs/vfs_implementation.c includes <dirent.h> on every non-Windows, non-Vita target."
-  consequence: "firmware/rt/include/sys/dirent.h, ahead of newlib's on rt.mk's include path, defines DIR as an incomplete struct and struct dirent with d_name, after <sys/types.h>; firmware/rt/syscalls.c gives opendir (ENOENT), readdir and closedir (EBADF), which always fail, as _open does, and _stat, which fails with ENOENT for the libretro-common path checks that FCEUmm keeps (EMU-002). rt.mk also builds LIB_SOURCES, third-party code, with ARCHFLAGS, -O2, -g, section splitting, CPPFLAGS, LIB_CPPFLAGS and LIB_CFLAGS or LIB_CXXFLAGS, without the TinyNES -Wall -Wextra -Werror and language flags, and links EXTRA_OBJECTS. With these, the libretro Nestopia core (PROV-006) and libretro-common compile with upstream's GCC flags and link with no undefined symbols; the stat, rename and fstat members of libc that Nestopia's file layer pulls in are discarded by --gc-sections, but FCEUmm's call to stat survives and needs _stat."
+  consequence: "firmware/rt/include/sys/dirent.h, ahead of newlib's on rt.mk's include path, defines DIR as an incomplete struct and struct dirent with d_name, after <sys/types.h>; firmware/rt/syscalls.c gives opendir (ENOENT), readdir and closedir (EBADF), which always fail, as _open does, and _stat, which fails with ENOENT for the libretro-common path checks that FCEUmm keeps (EMU-002). rt.mk also builds LIB_SOURCES, third-party code, with ARCHFLAGS, OPT (-O2 unless make OPT= replaces it), -g, section splitting, CPPFLAGS, LIB_CPPFLAGS and LIB_CFLAGS or LIB_CXXFLAGS, without the TinyNES -Wall -Wextra -Werror and language flags, and links EXTRA_OBJECTS. With these, the libretro Nestopia core (PROV-006) and libretro-common compile with upstream's GCC flags and link with no undefined symbols; the stat, rename and fstat members of libc that Nestopia's file layer pulls in are discarded by --gc-sections, but FCEUmm's call to stat survives and needs _stat."
   sources:
     - "~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/riscv-none-elf/include/dirent.h and include/sys/dirent.h"
     - "libretro/nestopia 135dfa6, libretro/libretro-common/vfs/vfs_implementation.c includes"
-    - "This project's firmware/rt/include/sys/dirent.h, firmware/rt/syscalls.c, firmware/rt/rt.mk, firmware/apps/nes_bench/Makefile and build/firmware/apps/nes_bench/<core>/nes_bench.map"
-  verification: "Built on 2026-10-12 (core-log entry 10): without the stand-in, vfs_implementation.c failed on the #error, then on ssize_t; with it, nes_bench linked and ran on the board. Nestopia's C++ built with both -std=gnu++11 and upstream's -std=c++98; only the gnu++11 build was run. Revised 2026-10-12 (core-log entry 11): FCEUmm's link stopped on newlib's _stat_r needing _stat, which the runtime now provides, and the FCEUmm program then ran on the board."
+    - "This project's firmware/rt/include/sys/dirent.h, firmware/rt/syscalls.c, firmware/rt/rt.mk, firmware/apps/nes_bench/Makefile and build/firmware/apps/nes_bench/nes_bench.map"
+  verification: "Built on 2026-10-12 (core-log entry 10): without the stand-in, vfs_implementation.c failed on the #error, then on ssize_t; with it, nes_bench linked and ran on the board. Nestopia's C++ built with both -std=gnu++11 and upstream's -std=c++98; only the gnu++11 build was run. Revised 2026-10-12 (core-log entry 11): FCEUmm's link stopped on newlib's _stat_r needing _stat, which the runtime now provides, and the FCEUmm program then ran on the board. Revised 2026-10-12 (core-log entry 12): rt.mk's -O2 became the OPT setting; Nestopia is no longer built (PROV-006), so the evidence for its link is that entry and entry 10."
 
 - record_id: EMU-001
   kind: EXTERNAL
@@ -2461,24 +2463,37 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   status: VERIFIED
   verified_date: 2026-10-12
   statement: "firmware/apps/nes_bench, built with rt.mk (soft-float rv32imac, -O2, Nestopia with -std=gnu++11 -fno-rtti), ran Castlevania (USA) (Rev A), 131,088 bytes with CRC-32 856114c8, for 1,800 frames with its default controller script and RAM power-on state 0x00. On the A25 at 750 MHz, with code and data in the SDRAM, both caches on and the stack in block RAM, the program was 3,586,108 bytes and loaded in 19.44 s; retro_init and retro_load_game took 780,965 us; retro_run averaged 23,164 us (minimum 14,360, maximum 25,279) against the core's 60.0988 Hz frame period of 16,639 us, so 1,717 frames ran over and the speed was 71.8 percent. All 15 interval lines and the final line of VIDEO and AUDIO CRC-32s matched the PC build of the same harness, which averaged about 361 us a frame and gave identical checksums on two runs."
-  consequence: "The A25 emulates the same frames and samples as a PC, so the libretro core, the runtime and the soft-float build are correct for this game; it needs about 1.4 times the speed for 60 frames a second. Untested levers are the cache prefetch bits (DEV-014), -O3 and other compiler options, the FPU (DEV-012), and placing hot code or data in the 64 KiB block RAM; the 32 KiB caches (DEV-013) cannot hold the core's code. The 0.78 s start includes parsing nst_db_xml, the 997,437-byte XML cartridge database that libretro.cpp compiles in from nstdatabase.hpp; it was not timed on its own. Another core, such as FCEUX, would be measured the same way."
+  consequence: "The A25 emulates the same frames and samples as a PC, so the libretro core, the runtime and the soft-float build are correct for this game; it needs about 1.4 times the speed for 60 frames a second. Untested levers are the cache prefetch bits (DEV-014), -O3 and other compiler options, the FPU (DEV-012), and placing hot code or data in the 64 KiB block RAM; the 32 KiB caches (DEV-013) cannot hold the core's code. The 0.78 s start includes parsing nst_db_xml, the 997,437-byte XML cartridge database that libretro.cpp compiles in from nstdatabase.hpp; it was not timed on its own. Another core, such as FCEUX, would be measured the same way. FCEUmm was (EMU-002), and Nestopia was dropped for it in core-log entry 12; the levers above were then tried on FCEUmm only (EMU-003)."
   sources:
-    - "This project's firmware/apps/nes_bench/main.cpp and Makefile, tools/fetch_nestopia.sh, tools/load_ae350.py"
+    - "This project's firmware/apps/nes_bench/main.cpp and Makefile and tools/fetch_nestopia.sh at commit a9c21fa (CORE=nestopia), tools/load_ae350.py"
     - "libretro/nestopia 135dfa6 (PROV-006), libretro/libretro.cpp retro_load_game and retro_run, libretro/nstdatabase.hpp nst_db_xml"
-  verification: "Measured on this board on 2026-10-12 (core-log entry 10): one run, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, printed the figures above and TinyNES EXIT 0; the user accepted the result. Frame times on other games or with other scripts were not measured."
+  verification: "Measured on this board on 2026-10-12 (core-log entry 10): one run, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, printed the figures above and TinyNES EXIT 0; the user accepted the result. Frame times on other games or with other scripts were not measured. Revised 2026-10-12 (core-log entry 12): Nestopia dropped; the build that measured it is in git at a9c21fa."
 
 - record_id: EMU-002
   kind: EXTERNAL
   topic_id: EMU
-  title: "libretro FCEUmm ac0d00a runs Castlevania correctly on the A25 at 87.2 percent of full speed, 1.2 times Nestopia"
+  title: "libretro FCEUmm ac0d00a runs Castlevania correctly on the A25 at 87.2 percent of full speed, 1.2 times Nestopia, and is the core TinyNES keeps"
   status: VERIFIED
   verified_date: 2026-10-12
   statement: "firmware/apps/nes_bench built with CORE=fceumm (soft-float rv32imac, -O2, upstream's unix defines with WANT_32BPP and without the NTSC filter and HD packs, fceumm_ramstate 'fill $00') ran the same Castlevania image and 1,800-frame script as EMU-001. On the A25 the program was 1,665,796 bytes and loaded in 9.07 s; retro_init and retro_load_game took 102,431 us; retro_run averaged 19,070 us (minimum 12,344, maximum 20,123) against 16,639 us, so 1,715 frames ran over and the speed was 87.2 percent. All 16 checksum lines matched the PC build, which averaged 197 us a frame against Nestopia's 362 us there and gave identical checksums on two runs. FCEUmm loads content from memory only through RETRO_ENVIRONMENT_GET_GAME_INFO_EXT and otherwise opens info->path, so the harness answers that call with the built-in image; Nestopia does not ask for it, and its checksums were unchanged."
-  consequence: "FCEUmm is the faster of the two cores tried: 1.21 times Nestopia on the A25 and 1.84 times on the PC. The smaller gain on the A25, where its 0.80 MB of code is a third of Nestopia's but still far beyond the 32 KiB I-cache (DEV-013), suggests SDRAM misses rather than instruction count dominate there, though that has not been measured. It needs about 1.15 times its speed for 60 frames a second; the untested levers are those of EMU-001. Its link needed _stat (TOOL-019)."
+  consequence: "FCEUmm is the faster of the two cores tried: 1.21 times Nestopia on the A25 and 1.84 times on the PC, with less than half Nestopia's program size, load time and start time. The user chose it on these figures in core-log entry 12 and Nestopia was dropped (PROV-006). The smaller gain on the A25 comes largely from a cost both cores pay: converting and writing each frame to the SDRAM, 8.23 ms of FCEUmm's frame (EMU-003). nes_bench is now FCEUmm only, with no CORE= option. Its link needed _stat (TOOL-019)."
   sources:
     - "This project's firmware/apps/nes_bench/main.cpp and Makefile, tools/fetch_fceumm.sh, tools/load_ae350.py"
     - "libretro/libretro-fceumm ac0d00a (PROV-007): Makefile.common, Makefile.libretro (unix), src/drivers/libretro/libretro.c retro_load_game, src/fceu.c FCEUI_LoadGame and option_ramstate"
-  verification: "Measured on this board on 2026-10-12 (core-log entry 11): one run, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, printed the figures above and TinyNES EXIT 0; the user accepted the result."
+  verification: "Measured on this board on 2026-10-12 (core-log entry 11): one run, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, printed the figures above and TinyNES EXIT 0; the user accepted the result. Revised 2026-10-12 (core-log entry 12): chosen over Nestopia; a rerun of the same XRGB8888 build with the entry-12 harness averaged 19,143 us (86.9 percent) with the same checksums."
+
+- record_id: EMU-003
+  kind: EXTERNAL
+  topic_id: EMU
+  title: "Most of FCEUmm's extra frame time on the A25 is writing the frame to the SDRAM; RGB565 output brings it to 104.9 percent of full speed"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "nes_bench times BLIT, the span from FCEUmm's RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER request, which it refuses, to the video callback: retro_run_blit's per-pixel palette lookup from the 8-bit XBuf into the output frame. With EMU-002's Castlevania image and script on the A25, one run each: XRGB8888 at -O2 averaged 19,143 us a frame with BLIT 8,231 us (86.9 percent, 1,715 frames over); with mcache_ctl bits 0x600 set, 19,091 us and BLIT 8,230 (87.1 percent); with 0x2000, 19,203 and 8,231 (86.6 percent); at -O3, 19,404 and 8,252 (85.7 percent), the program 95,256 bytes larger. RGB565 (WANT_32BPP=0, which FCEUmm builds with FRONTEND_SUPPORTS_RGB565) at -O2 averaged 15,851 us (minimum 9,092, maximum 17,055) with BLIT 5,013 us: 104.9 percent, 607 frames over the 16,639 us period; no frame before 600 exceeded 15,186 us, the 600 to 720 interval peaked at 16,965 us, and the 120-frame averages of the walk right from 720 to 1,680 were 16,555 to 16,683 us. Every run's 16 checksum lines matched the PC build of the same program; the PC build averaged about 200 us a frame with BLIT 16 us in either format."
+  consequence: "BLIT is 43 percent of the XRGB8888 frame on the A25 against 8 percent on the PC: the 245,760-byte frame is written through the 32 KiB write-back D-cache (DEV-013) to the SDRAM, and halving it to 122,880 bytes saves 3.2 ms. Emulation without BLIT is about 10.9 ms a frame. nes_bench now builds RGB565 by default (WANT_32BPP=1 restores XRGB8888), stays at -O2 (OPT= selects others), and the prefetch and write-around bits do not exist (DEV-014). The walk right still runs at the limit, so steady 60 frames a second needs BLIT smaller still; a display path that reads the 8-bit picture and applies the palette in FPGA logic would remove it, which is not built. The harness's environment switch strips RETRO_ENVIRONMENT_EXPERIMENTAL from cmd, so its labels must too: before this change GET_INPUT_BITMASKS was never answered and FCEUmm read the pad bit by bit, with the same checksums."
+  sources:
+    - "This project's firmware/apps/nes_bench/main.cpp (environment, video_refresh, BLIT, NES_MCACHE), Makefile (WANT_32BPP, MCACHE), firmware/rt/rt.mk (OPT)"
+    - "libretro/libretro-fceumm ac0d00a (PROV-007): Makefile.common WANT_32BPP, src/drivers/libretro/libretro.c retro_run_blit and retro_run"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 12): five runs, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, each printing TinyNES EXIT 0 and the figures above; the RGB565 frames dumped on the PC at 600 and 1,800 show the gate and the castle hall in correct colours; the user accepted the result. Only one run per build, so differences under about 0.3 percent are within noise."
 ```
 
 ---

@@ -2,11 +2,11 @@
 
 TinyNES is an open-source NES project for the Tang Console 138K. Its planned
 emulator runs on the FPGA's hard AE350 RISC-V CPU. FPGA logic will handle board
-I/O and the memory and display paths. The emulators tried so far are the
-libretro [Nestopia](https://github.com/libretro/nestopia) and
-[FCEUmm](https://github.com/libretro/libretro-fceumm) cores, each fetched at a
-pinned commit for a headless benchmark; their source is not part of this
-repository.
+I/O and the memory and display paths. The emulator is the libretro
+[FCEUmm](https://github.com/libretro/libretro-fceumm) core, fetched at a
+pinned commit for a headless benchmark; its source is not part of this
+repository. libretro [Nestopia](https://github.com/libretro/nestopia) was
+measured the same way and dropped as the slower of the two on the A25.
 
 ## First hardware gate: AE350 UART
 
@@ -307,7 +307,8 @@ compiler's default libraries; the FPU is not used yet.
 There are no files or directories: `open`, `stat` and `opendir` fail with
 `ENOENT`. `firmware/rt/include/sys/dirent.h` stands in for newlib's, which
 refuses to build, so that `<dirent.h>` compiles. A program can also build third-party
-code with its own flags: `LIB_SOURCES` are compiled with `ARCHFLAGS`, `-O2`,
+code with its own flags: `LIB_SOURCES` are compiled with `ARCHFLAGS`, `OPT`
+(`-O2` unless `make OPT=<flags>` replaces it, as it does for all code),
 `LIB_CPPFLAGS` and `LIB_CFLAGS` or `LIB_CXXFLAGS` instead of the TinyNES
 warning and language flags, and `EXTRA_OBJECTS` are linked in.
 
@@ -325,73 +326,83 @@ python3 -m unittest tests/test_loader_host.py
 
 ### NES emulator benchmark
 
-`firmware/apps/nes_bench/` runs a libretro NES core with no video, sound or
-controller, on a cartridge image built into the program, and times each
-`retro_run` against the NES frame period. `CORE=` picks the core:
-
-| `CORE` | Core | Commit | Fetched by |
-|---|---|---|---|
-| `nestopia` (default) | [libretro Nestopia](https://github.com/libretro/nestopia) | `135dfa6dfda5e7603d61e751b9ddd0cc42546bc3` | `tools/fetch_nestopia.sh` |
-| `fceumm` | [libretro FCEUmm](https://github.com/libretro/libretro-fceumm) | `ac0d00a7fc01166f84c7bac01d1084ebfd2b865e` | `tools/fetch_fceumm.sh` |
-
-Neither core is in this repository: each script clones its pinned commit into
-`third_party/`, which git ignores, and checks that it is unmodified. The
-Makefile includes the core's own `Makefile.common` and builds its sources
-with upstream's flags for a GCC build. Nestopia uses `-std=gnu++11` in place
-of `-std=c++98`; both compile with GCC 15, and the measurements below are of
-the `gnu++11` build. FCEUmm is built as for unix but without the NTSC filter
-and HD texture packs, which run only when their options are chosen. The
-cartridge image is the user's own and is never committed:
+`firmware/apps/nes_bench/` runs the libretro FCEUmm core with no video, sound
+or controller, on a cartridge image built into the program, and times each
+`retro_run` against the NES frame period. `tools/fetch_fceumm.sh` clones
+commit `ac0d00a7fc01166f84c7bac01d1084ebfd2b865e` into `third_party/`, which
+git ignores, and checks that it is unmodified. The Makefile includes the
+core's own `Makefile.common` and builds it as upstream does for unix, but
+without the NTSC filter and HD texture packs, which run only when their
+options are chosen, and with RGB565 frames in place of XRGB8888, which halve
+the frame's SDRAM writes; `WANT_32BPP=1` restores XRGB8888. The cartridge
+image is the user's own and is never committed:
 
 ```sh
-tools/fetch_nestopia.sh; tools/fetch_fceumm.sh
-make -C firmware/apps/nes_bench CORE=<core> ROM=<file.nes>        # AE350 program
-make -C firmware/apps/nes_bench CORE=<core> ROM=<file.nes> host   # the same for the PC
-python3 tools/load_ae350.py build/firmware/apps/nes_bench/<core>/nes_bench.elf --run-timeout 600
-build/firmware/apps/nes_bench/<core>/host/nes_bench
+tools/fetch_fceumm.sh
+make -C firmware/apps/nes_bench ROM=<file.nes>          # AE350 program
+make -C firmware/apps/nes_bench ROM=<file.nes> host     # the same for the PC
+python3 tools/load_ae350.py build/firmware/apps/nes_bench/nes_bench.elf --run-timeout 600
+build/firmware/apps/nes_bench/host/nes_bench
 ```
 
 The programs contain the core and the cartridge image, so they are GPL builds
-for local use only and stay in `build/`.
+for local use only and stay in `build/`. `MCACHE=<mask>` builds a program
+that sets those `mcache_ctl` bits for its run, and `OPT=<flags>` replaces
+`-O2` (an `rt.mk` setting); such builds want their own `BUILD=<dir>`.
 
 The harness answers the libretro environment with no system or save files,
-XRGB8888 pixels and RAM filled with `0x00` at power-on, so every run is the
-same. It describes the built-in image through `GET_GAME_INFO_EXT`, as
-RetroArch does, because FCEUmm otherwise reads the game from its path. It
-plays a controller script, by default 1,800 frames of Castlevania: Start at
-frame 120, then walking right through the first stage from frame 720 with
-whips and jumps. `FRAMES=<n>` and `INPUT="<first>+<frames>=<button> ..."`
-replace them at build time. On the PC, `NES_DUMP=<dir>` saves the checked
-frames as PPM images. It prints:
+the pixel format the core asks for (RGB565 or XRGB8888) and RAM filled with
+`0x00` at power-on, so every run is the same. It describes the built-in image
+through `GET_GAME_INFO_EXT`, as RetroArch does, because FCEUmm otherwise
+reads the game from its path. It plays a controller script, by default 1,800
+frames of Castlevania: Start at frame 120, then walking right through the
+first stage from frame 720 with whips and jumps. `FRAMES=<n>` and
+`INPUT="<first>+<frames>=<button> ..."` replace them at build time. On the
+PC, `NES_DUMP=<dir>` saves the checked frames as PPM images. It prints:
 
 ```text
-TinyNES NES CORE=<core> ROM=<bytes> CRC=<crc32> START=<us>
-TinyNES NES CACHE MICM=<micm_cfg> MDCM=<mdcm_cfg> I=<bytes>/<ways>/<line> D=<bytes>/<ways>/<line>
-TinyNES NES F=<frame> AVG=<us> MAX=<us> VIDEO=<crc> AUDIO=<crc>
-TinyNES NES FRAMES=<n> AVG=<us> MIN=<us> MAX=<us> OVER=<n> SPEED=<x.y>%
+TinyNES NES CORE=fceumm ROM=<bytes> CRC=<crc32> START=<us>
+TinyNES NES CACHE MICM=<micm_cfg> MDCM=<mdcm_cfg> I=<bytes>/<ways>/<line> D=<bytes>/<ways>/<line> MCTL=<mcache_ctl>
+TinyNES NES F=<frame> AVG=<us> MAX=<us> BLIT=<us> VIDEO=<crc> AUDIO=<crc>
+TinyNES NES FRAMES=<n> AVG=<us> MIN=<us> MAX=<us> BLIT=<us> OVER=<n> SPEED=<x.y>%
 TinyNES NES VIDEO=<crc> AUDIO=<crc>
 ```
 
-`START` is `retro_init` and `retro_load_game`; for Nestopia it includes
-parsing the 1 MB cartridge database built into the core. `CACHE` (AE350
-only) decodes the A25's cache configuration registers. An `F=` line covers
-the 120 frames before it. `VIDEO` is a CRC-32 of every 60th frame and `AUDIO`
-of every frame's samples, both taken outside the timed calls. `OVER` counts
-frames slower than the NES frame period and `SPEED` is that period over the
-average frame time. Matching `VIDEO` and `AUDIO` on the board and the PC show
-the A25 emulates the same frames; the two cores' checksums differ from each
-other.
+`START` is `retro_init` and `retro_load_game`. `CACHE` (AE350 only) decodes
+the A25's cache configuration registers and reads back `mcache_ctl`. An `F=`
+line covers the 120 frames before it. `BLIT` is the part of the frame
+average that the core spends turning its 8-bit picture into the output
+frame, timed from its request for a frontend framebuffer, which the harness
+refuses, to its video callback. `VIDEO` is a CRC-32 of every 60th frame and
+`AUDIO` of every frame's samples, both taken outside the timed calls; the
+core emulates and mixes the sound (32 kHz, its default low quality) inside
+`retro_run`, but nothing plays it. `OVER` counts frames slower than the NES
+frame period and `SPEED` is that period over the average frame time.
+Matching `VIDEO` and `AUDIO` on the board and the PC show the A25 emulates
+the same frames.
 
 Results with Castlevania (USA) (Rev A) on the board, against a 16.64 ms
-frame period, with 32 KiB 4-way caches of 32-byte lines:
+frame period, with 32 KiB 4-way caches of 32-byte lines; every run's 16
+checksum lines match the PC build of the same program:
 
-| Core | Bytes loaded | Load time | `START` | Frame average (range) | Slow frames | `SPEED` | PC frame average |
-|---|---|---|---|---|---|---|---|
-| Nestopia | 3,586,108 | 19.4 s | 0.78 s | 23.16 ms (14.36 to 25.28) | 1,717 | 71.8% | 0.36 ms |
-| FCEUmm | 1,665,796 | 9.1 s | 0.10 s | 19.07 ms (12.34 to 20.12) | 1,715 | 87.2% | 0.20 ms |
+| Build | Frame average (range) | `BLIT` | Slow frames | `SPEED` |
+|---|---|---|---|---|
+| Nestopia `135dfa6`, XRGB8888 | 23.16 ms (14.36 to 25.28) | not timed | 1,717 | 71.8% |
+| FCEUmm, XRGB8888 | 19.14 ms (12.36 to 20.41) | 8.23 ms | 1,715 | 86.9% |
+| FCEUmm, XRGB8888, `MCACHE=0x600` | 19.09 ms (12.34 to 20.14) | 8.23 ms | 1,715 | 87.1% |
+| FCEUmm, XRGB8888, `MCACHE=0x2000` | 19.20 ms (12.36 to 20.50) | 8.23 ms | 1,718 | 86.6% |
+| FCEUmm, XRGB8888, `OPT=-O3` | 19.40 ms (12.44 to 20.47) | 8.25 ms | 1,715 | 85.7% |
+| FCEUmm, RGB565 (default) | 15.85 ms (9.09 to 17.06) | 5.01 ms | 607 | 104.9% |
 
-For both cores all 16 checksum lines match the PC build. FCEUmm is 1.8 times
-as fast as Nestopia on the PC but only 1.2 times on the A25.
+On the PC the core takes about 0.20 ms a frame, of which `BLIT` is 0.016 ms;
+on the A25, writing the frame to the SDRAM is most of `BLIT`, and the rest of
+the frame is about 10.9 ms. `mcache_ctl` reads back `0x3` with the prefetch
+(`0x600`) or write-around (`0x2000`) bits set, so the A25 here does not have
+them. With RGB565 the stage's walk right, from frame 720, runs at about
+16.6 ms a frame, at the limit. The Nestopia row is the program of commit
+`a9c21fa` built with `CORE=nestopia` (and `tools/fetch_nestopia.sh`, since
+removed), before `BLIT` was timed; on the PC it was 1.8 times as slow as
+FCEUmm.
 
 ## Build sweeps
 
@@ -422,14 +433,12 @@ and the Tang-PSX/Tang-Phosphor hardware reports cited there. The RTL here is
 original MIT-licensed code. CERN's colibri and its SystemVerilog port are
 design practice references; their modules are not included.
 
-Nestopia is copyright Martin Freij, the Nestopia UE contributors, Rupert
-Carmichael and others, under GPL-2.0-or-later. FCEUmm descends from BERO's
+FCEUmm descends from BERO's
 FCE and Xodnizel's FCE Ultra, with code by CaH4e3 and the others in its
 `Authors` file; it is distributed under GPL-2.0 (its `Copying`), most of its
 files allow any later version, and a few carry other notices, such as
 `boards/pic16c5x.c` under BSD-3-Clause. The libretro ports and
-libretro-common are maintained by the libretro team. TinyNES fetches both
-cores with `tools/fetch_nestopia.sh` and `tools/fetch_fceumm.sh` and does not
-distribute them. The `nes_bench` harness is MIT-licensed, but programs built
-with a core are GPL and cartridge images belong to their owners; neither is
+libretro-common are maintained by the libretro team. TinyNES fetches the
+core with `tools/fetch_fceumm.sh` and does not distribute it. The `nes_bench`
+harness is MIT-licensed, but programs built with the core are GPL and cartridge images belong to their owners; neither is
 committed.

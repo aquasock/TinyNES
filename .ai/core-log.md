@@ -411,3 +411,38 @@ The next cycle should ask the user whether to drop Nestopia now that FCEUmm is t
 - User Test: PASS
 
 ---
+
+## 12 COMMIT Unreleased 2026-10-12T14:36:54-07:00
+
+#### Coming From:
+
+Unreleased a9c21fa
+
+#### Purpose:
+
+Keep FCEUmm as the only core, as the user decided, and try a first round of speed-ups on it, measuring where its frame time goes on the A25.
+
+#### Outcome:
+
+The user asked whether one run could settle the choice of core; the figures of entries 10 and 11 already favoured FCEUmm on frame time, start, load time and program size, and the user chose it without another run. `tools/fetch_nestopia.sh` and `nes_bench`'s `CORE=` option are removed; the Nestopia build remains in git at `a9c21fa`. `firmware/rt/rt.mk` gained an `OPT` setting, `-O2` by default, for all code it builds. The harness now times `BLIT`, the span from FCEUmm's request for a frontend framebuffer, which it refuses, to its video callback, which is the core's per-pixel palette conversion; `MCACHE=<mask>` builds set those `mcache_ctl` bits for the run and every AE350 run prints `mcache_ctl` back as `MCTL=`. The first PC run showed `BLIT=0` because the environment switch strips `RETRO_ENVIRONMENT_EXPERIMENTAL` from the command while the labels kept it, which had also left `GET_INPUT_BITMASKS` unanswered since entry 10; both labels now strip it, and the checksums were unchanged. The agent loaded the ae350_soc image of entry 9 in one-wire mode for four XRGB8888 runs of the 1,800-frame Castlevania script: `-O2` averaged 19,143 microseconds with `BLIT=8231` (86.9 percent), the prefetch bits `0x600` 19,091 (87.1 percent), the write-around bit `0x2000` 19,203 (86.6 percent) and `-O3` 19,404 (85.7 percent), with `BLIT` unchanged in each; both cache-bit builds printed `MCTL=00000003`, so those bits do not exist on this A25. Converting the frame was 43 percent of the A25's frame time against 8 percent on the PC. On the user's approval the core is now built with `WANT_32BPP=0`, so it asks for RGB565 and writes half as many bytes; the harness accepts either format and checksums and dumps it. On the PC two runs gave the same checksums and the dumped frames showed correct colours. On the board the RGB565 program averaged 15,851 microseconds with `BLIT=5013`, minimum 9,092, maximum 17,055 and 607 frames over: `SPEED=104.9%`, with all 16 checksum lines matching the PC build; the walk right from frame 720 averages about 16.6 milliseconds, at the limit. The user asked whether the test includes sound: the core emulates and mixes it at 32 kHz inside the timed call, and only playback is absent. The README's benchmark section now describes FCEUmm alone, with the new options, report fields and a results table that keeps the Nestopia row. DEV-014 is now verified as a negative result, EMU-003 records this round, and EMU-001, EMU-002, PROV-006 and TOOL-019 are revised. `.ai/core.md` still describes TinyNES as a port of Nestopia; it was not edited, and the user was told. The user accepted the result. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should propose to the user how to remove the remaining 5 milliseconds of frame conversion, which keeps the walk right at the frame limit: the measured route is a display path in which FPGA logic reads FCEUmm's 8-bit picture and applies the palette, and smaller levers to measure first are the FPU, block-RAM placement of hot code or data, and the profile of the emulation itself.
+
+#### Files Modified:
+
+- .ai/core-reference.md
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+- firmware/rt/rt.mk
+- tools/fetch_nestopia.sh (removed)
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

@@ -4,12 +4,13 @@
 # RTTI on) with newlib and libstdc++, linked to run from the SDRAM after the
 # boot ROM loads them (tools/load_ae350.py). An app Makefile sets APP and
 # SOURCES (.c, .cpp, .S, relative to its directory) and includes this file.
-# LIB_SOURCES are third-party .c and .cpp files, built with ARCHFLAGS, -O2,
+# LIB_SOURCES are third-party .c and .cpp files, built with ARCHFLAGS, OPT,
 # CPPFLAGS and LIB_CPPFLAGS plus LIB_CFLAGS or LIB_CXXFLAGS in place of the
 # TinyNES warning and language flags. EXTRA_OBJECTS are linked in as well.
 #
 #   make                  build $(BUILD)/$(APP).elf
 #   make BUILD=<dir>      choose the output directory
+#   make OPT=<flags>      optimise with <flags> in place of -O2
 
 RT_DIR    := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ROOT      := $(abspath $(RT_DIR)/../..)
@@ -21,9 +22,10 @@ CC        := $(CROSS)gcc
 CXX       := $(CROSS)g++
 SIZE      := $(CROSS)size
 
+OPT       ?= -O2
 ARCHFLAGS := -march=rv32imac_zicsr_zifencei -mabi=ilp32
 CPPFLAGS  += -I$(RT_DIR)/include -I$(ROOT)/firmware/include -I$(ROOT)/firmware/common -MMD -MP
-COMMON    := $(ARCHFLAGS) -O2 -g -ffunction-sections -fdata-sections \
+COMMON    := $(ARCHFLAGS) $(OPT) -g -ffunction-sections -fdata-sections \
              -Wall -Wextra -Werror
 CFLAGS    += $(COMMON) -std=gnu11
 CXXFLAGS  += $(COMMON) -std=gnu++20
@@ -44,7 +46,7 @@ RT_OBJECTS := $(call objects,$(notdir $(RT_SOURCES)))
 APP_OBJECTS := $(call objects,$(SOURCES))
 lib_object  = $(patsubst $(ROOT)/%,$(BUILD)/lib/%.o,$(abspath $(1)))
 LIB_OBJECTS := $(foreach s,$(LIB_SOURCES),$(call lib_object,$(s)))
-LIB_COMMON  := $(ARCHFLAGS) -O2 -g -ffunction-sections -fdata-sections
+LIB_COMMON  := $(ARCHFLAGS) $(OPT) -g -ffunction-sections -fdata-sections
 
 all: $(BUILD)/$(APP).elf
 

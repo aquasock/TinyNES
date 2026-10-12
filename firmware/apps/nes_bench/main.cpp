@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// nes_bench: runs a libretro NES core (Nestopia or FCEUmm, chosen when it
-// is built) headless on a cartridge image built into the program, with a scripted controller, and times each
+// nes_bench: runs the libretro FCEUmm core headless on a cartridge image
+// built into the program, with a scripted controller, and times each
 // retro_run against the NES frame period. Video and sound are not shown:
 // checksums of them, taken outside the timed calls, are reported so that
 // the AE350 run can be checked against the same program built for the PC.
@@ -9,12 +9,18 @@
 // Report lines (identical in form on both builds):
 //   TinyNES NES CORE=<core> ROM=<bytes> CRC=<crc32> START=<us>
 //   TinyNES NES CACHE MICM=<csr> MDCM=<csr> I=<bytes>/<ways>/<line>
-//       D=<bytes>/<ways>/<line>                        (AE350 only)
-//   TinyNES NES F=<frame> AVG=<us> MAX=<us> VIDEO=<crc> AUDIO=<crc>
-//   TinyNES NES FRAMES=<n> AVG=<us> MIN=<us> MAX=<us> OVER=<n> SPEED=<x.y>%
+//       D=<bytes>/<ways>/<line> MCTL=<csr>             (AE350 only)
+//   TinyNES NES F=<frame> AVG=<us> MAX=<us> BLIT=<us> VIDEO=<crc>
+//       AUDIO=<crc>
+//   TinyNES NES FRAMES=<n> AVG=<us> MIN=<us> MAX=<us> BLIT=<us> OVER=<n>
+//       SPEED=<x.y>%
 //   TinyNES NES VIDEO=<crc> AUDIO=<crc>
 //
-// The F= lines cover the frames since the last one. VIDEO folds in every
+// The F= lines cover the frames since the last one. BLIT is the part of
+// AVG that the core spends turning its 8-bit picture into the RGB565 or
+// XRGB8888 frame it asked for: from its request for a frontend
+// framebuffer, which is refused, to its video callback. MCTL is mcache_ctl, read back after the bits of
+// NES_MCACHE (if built with MCACHE=<mask>) are set. VIDEO folds in every
 // CHECK-th frame, AUDIO every frame. OVER counts frames slower than the
 // NES frame period, SPEED is that period over the average frame time.
 // On the PC, NES_DUMP=<dir> in the environment also saves the CHECK frames
@@ -34,9 +40,7 @@
 #include <ctime>
 #endif
 
-#ifndef NES_CORE
-#define NES_CORE "?"
-#endif
+#define NES_CORE "fceumm"
 #ifndef NES_FRAMES
 #define NES_FRAMES 1800
 #endif
@@ -98,11 +102,12 @@ uint32_t crc_update(uint32_t crc, const void *data, size_t len)
 // The core's video and audio buffers outlive retro_run, so the callbacks
 // only note where they are.
 const void *frame_data;
-unsigned frame_width, frame_height;
+unsigned frame_width, frame_height, frame_bytes = 4;
 size_t frame_pitch;
 const int16_t *audio_data;
 size_t audio_frames;
 uint16_t pad;
+uint64_t blit_start, blit_time;
 
 struct Press {
 	unsigned first, count;
@@ -185,8 +190,8 @@ void log_cb(enum retro_log_level level, const char *fmt, ...)
 	va_end(ap);
 }
 
-// The image as RetroArch describes it to cores that ask, such as FCEUmm,
-// which otherwise reads the game from its path.
+// The image as RetroArch describes it to cores that ask. FCEUmm reads the
+// game from its path otherwise.
 retro_game_info_ext game_ext = {
 	"/rom.nes", nullptr, nullptr, "/", "rom", "nes", nullptr,
 	nullptr, 0, false, false,
@@ -199,8 +204,16 @@ bool environment(unsigned cmd, void *data)
 		static_cast<retro_log_callback *>(data)->log = log_cb;
 		return true;
 	case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
-		return *static_cast<const retro_pixel_format *>(data) ==
-		       RETRO_PIXEL_FORMAT_XRGB8888;
+		switch (*static_cast<const retro_pixel_format *>(data)) {
+		case RETRO_PIXEL_FORMAT_XRGB8888:
+			frame_bytes = 4;
+			return true;
+		case RETRO_PIXEL_FORMAT_RGB565:
+			frame_bytes = 2;
+			return true;
+		default:
+			return false;
+		}
 	// No files: everything the core looks for there fails to open.
 	case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
 	case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
@@ -210,9 +223,7 @@ bool environment(unsigned cmd, void *data)
 		retro_variable *var = static_cast<retro_variable *>(data);
 		var->value = nullptr;
 		// The same power-on RAM every run, for repeatable checksums.
-		if (!strcmp(var->key, "nestopia_ram_power_state"))
-			var->value = "0x00";
-		else if (!strcmp(var->key, "fceumm_ramstate"))
+		if (!strcmp(var->key, "fceumm_ramstate"))
 			var->value = "fill $00";
 		return var->value != nullptr;
 	}
@@ -222,8 +233,12 @@ bool environment(unsigned cmd, void *data)
 	case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
 		*static_cast<bool *>(data) = false;
 		return true;
-	case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
+	case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS & ~RETRO_ENVIRONMENT_EXPERIMENTAL:
 		return true;
+	case RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER &
+	    ~RETRO_ENVIRONMENT_EXPERIMENTAL:
+		blit_start = ticks();
+		return false;
 	default:
 		return false;
 	}
@@ -236,6 +251,8 @@ void video_refresh(const void *data, unsigned width, unsigned height,
 	frame_width = width;
 	frame_height = height;
 	frame_pitch = pitch;
+	if (blit_start)
+		blit_time = ticks() - blit_start;
 }
 
 void audio_sample(int16_t, int16_t) {}
@@ -268,11 +285,23 @@ void dump_frame(const char *dir, unsigned frame)
 		return;
 	fprintf(out, "P6 %u %u 255\n", frame_width, frame_height);
 	for (unsigned y = 0; y < frame_height; y++) {
-		const uint32_t *row = reinterpret_cast<const uint32_t *>(
-			static_cast<const uint8_t *>(frame_data) + y * frame_pitch);
+		const uint8_t *row =
+			static_cast<const uint8_t *>(frame_data) + y * frame_pitch;
 		for (unsigned x = 0; x < frame_width; x++) {
-			const uint8_t rgb[3] = {(uint8_t)(row[x] >> 16),
-						(uint8_t)(row[x] >> 8), (uint8_t)row[x]};
+			uint8_t rgb[3];
+			if (frame_bytes == 4) {
+				uint32_t p;
+				memcpy(&p, row + x * 4, 4);
+				rgb[0] = (uint8_t)(p >> 16);
+				rgb[1] = (uint8_t)(p >> 8);
+				rgb[2] = (uint8_t)p;
+			} else {
+				uint16_t p;
+				memcpy(&p, row + x * 2, 2);
+				rgb[0] = (uint8_t)((p >> 11) * 255 / 31);
+				rgb[1] = (uint8_t)((p >> 5 & 63) * 255 / 63);
+				rgb[2] = (uint8_t)((p & 31) * 255 / 31);
+			}
 			fwrite(rgb, 1, 3, out);
 		}
 	}
@@ -313,6 +342,10 @@ int main()
 	retro_set_input_poll(input_poll);
 	retro_set_input_state(input_state);
 
+#if defined(__riscv) && defined(NES_MCACHE)
+	__asm__ volatile("csrs 0x7ca, %0" : : "r"((uint32_t)NES_MCACHE));
+#endif
+
 	uint64_t start = ticks();
 	retro_init();
 	retro_game_info game = {"/rom.nes", nes_rom, rom_size, nullptr};
@@ -342,7 +375,9 @@ int main()
 	       (unsigned long)mdcm);
 	print_cache("I", micm);
 	print_cache("D", mdcm);
-	printf("\n");
+	uint32_t mctl;
+	__asm__ volatile("csrr %0, 0x7ca" : "=r"(mctl));
+	printf(" MCTL=%08lx\n", (unsigned long)mctl);
 #endif
 
 #ifndef __riscv
@@ -350,12 +385,14 @@ int main()
 #endif
 	uint32_t video_crc = 0, audio_crc = 0;
 	uint64_t total = 0, low = UINT64_MAX, high = 0, part = 0, part_high = 0;
+	uint64_t blit_total = 0, part_blit = 0;
 	unsigned over = 0, part_frames = 0;
 
 	for (unsigned f = 0; f < frames; f++) {
 		pad = pad_for(f);
 		frame_data = nullptr;
 		audio_frames = 0;
+		blit_start = blit_time = 0;
 
 		uint64_t t = ticks();
 		retro_run();
@@ -363,6 +400,8 @@ int main()
 
 		total += t;
 		part += t;
+		blit_total += blit_time;
+		part_blit += blit_time;
 		part_frames++;
 		if (t < low)
 			low = t;
@@ -379,33 +418,38 @@ int main()
 			const uint8_t *row = static_cast<const uint8_t *>(frame_data);
 			for (unsigned y = 0; y < frame_height; y++, row += frame_pitch)
 				video_crc = crc_update(video_crc, row,
-						       frame_width * sizeof(uint32_t));
+						       frame_width * frame_bytes);
 #ifndef __riscv
 			if (dump)
 				dump_frame(dump, f + 1);
 #endif
 		}
 		if ((f + 1) % NES_REPORT == 0 || f + 1 == frames) {
-			printf("TinyNES NES F=%u AVG=%llu MAX=%llu VIDEO=%08lx "
-			       "AUDIO=%08lx\n", f + 1,
+			printf("TinyNES NES F=%u AVG=%llu MAX=%llu BLIT=%llu "
+			       "VIDEO=%08lx AUDIO=%08lx\n", f + 1,
 			       (unsigned long long)to_us(part / part_frames),
 			       (unsigned long long)to_us(part_high),
+			       (unsigned long long)to_us(part_blit / part_frames),
 			       (unsigned long)video_crc, (unsigned long)audio_crc);
-			part = part_high = 0;
+			part = part_high = part_blit = 0;
 			part_frames = 0;
 		}
 	}
 
 	const uint64_t avg = total / frames;
 	const unsigned speed = (unsigned)(budget * 1000u / avg);
-	printf("TinyNES NES FRAMES=%u AVG=%llu MIN=%llu MAX=%llu OVER=%u "
-	       "SPEED=%u.%u%%\n", frames, (unsigned long long)to_us(avg),
+	printf("TinyNES NES FRAMES=%u AVG=%llu MIN=%llu MAX=%llu BLIT=%llu "
+	       "OVER=%u SPEED=%u.%u%%\n", frames, (unsigned long long)to_us(avg),
 	       (unsigned long long)to_us(low), (unsigned long long)to_us(high),
-	       over, speed / 10, speed % 10);
+	       (unsigned long long)to_us(blit_total / frames), over,
+	       speed / 10, speed % 10);
 	printf("TinyNES NES VIDEO=%08lx AUDIO=%08lx\n", (unsigned long)video_crc,
 	       (unsigned long)audio_crc);
 
 	retro_unload_game();
 	retro_deinit();
+#if defined(__riscv) && defined(NES_MCACHE)
+	__asm__ volatile("csrc 0x7ca, %0" : : "r"((uint32_t)NES_MCACHE));
+#endif
 	return 0;
 }
