@@ -376,3 +376,38 @@ The next cycle should discuss with the user whether FCEUX, which the user sugges
 - User Test: PASS
 
 ---
+
+## 11 COMMIT Unreleased 2026-10-12T14:15:04-07:00
+
+#### Coming From:
+
+Unreleased cf3d25e
+
+#### Purpose:
+
+Measure the libretro FCEUmm core with the same harness, game and script as Nestopia, to decide which core TinyNES should carry forward.
+
+#### Outcome:
+
+`tools/fetch_fceumm.sh` clones libretro/libretro-fceumm at commit `ac0d00a7fc01166f84c7bac01d1084ebfd2b865e`, the head of master on 2026-10-11, into the git-ignored `third_party/fceumm/` with the same checks as the Nestopia script; its `Copying` is GPL version 2, most of its files allow any later version, and a few carry a BSD notice or none. `firmware/apps/nes_bench/Makefile` gained `CORE=nestopia`, the default, or `CORE=fceumm`, each built in its own directory under `build/firmware/apps/nes_bench/`; FCEUmm is built from its own `Makefile.common` with upstream's unix defines and `-O2 -DNDEBUG`, without the NTSC filter and HD texture packs, and compiled with no warnings at GCC 15's default language standard. The harness now prints the core's name, answers `fceumm_ramstate` with `fill $00` to match Nestopia's power-on RAM, and answers `RETRO_ENVIRONMENT_GET_GAME_INFO_EXT` with the built-in image, because FCEUmm's first PC run failed opening `rom.nes` as a file; Nestopia does not ask for it, and its PC checksums were unchanged. The board link then stopped on newlib's `_stat_r` needing `_stat`, which `firmware/rt/syscalls.c` now provides, failing with `ENOENT` like its other file calls. On the PC FCEUmm averaged 197 microseconds a frame against Nestopia's 362, started in 0.8 milliseconds, gave identical checksums on two runs, and its frame dumps showed the same script reaching the castle hall. The board program had 801,172 bytes of code and 864,624 of data against Nestopia's 2,553,691 and 1,032,588. The agent loaded the ae350_soc image of entry 9 in one-wire mode; a UART check run without `--expect "TinyNES LOAD"` reported FAIL, and the same check with it passed after the run. `load_ae350.py` sent 1,665,796 bytes in 9.07 s, and the program printed `START=102431`, `FRAMES=1800 AVG=19070 MIN=12344 MAX=20123 OVER=1715 SPEED=87.2%` and exited with 0, with all 16 checksum lines matching the PC build. FCEUmm is therefore 1.21 times as fast as Nestopia on the A25 against 1.84 times on the PC, and needs about 1.15 times more for full speed. The README's benchmark section now covers both cores, with a results table and FCEUmm's attribution and terms. PROV-007 records FCEUmm's terms and pinned commit, EMU-002 its result, and TOOL-019 the new `_stat`. The user accepted the result. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should ask the user whether to drop Nestopia now that FCEUmm is the faster core, and then propose the speed-ups for FCEUmm in an order the user approves: the cache prefetch bits, compiler options, the FPU, and placing hot code or data in the block RAM, measuring each with the same harness.
+
+#### Files Modified:
+
+- .ai/core-reference.md
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+- firmware/rt/syscalls.c
+- tools/fetch_fceumm.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

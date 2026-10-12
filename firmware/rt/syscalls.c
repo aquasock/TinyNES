@@ -3,8 +3,9 @@
  * The newlib system calls for runtime programs: standard output and error go
  * to the UART (\n sent as \r\n), standard input reads it, the heap runs from
  * _end to the top of the SDRAM, time is the core cycle counter. There are no
- * files or directories. _exit and traps report on the UART and restart the boot ROM, which
- * waits for the next program.
+ * files or directories: opening, stat and directory calls fail. _exit and
+ * traps report on the UART and restart the boot ROM, which waits for the
+ * next program.
  */
 #include <dirent.h>
 #include <errno.h>
@@ -34,6 +35,7 @@ int _kill(int pid, int sig);
 int _lseek(int fd, int offset, int whence);
 int _open(const char *name, int flags, int mode);
 int _read(int fd, char *buf, int len);
+int _stat(const char *name, struct stat *st);
 void *_sbrk(ptrdiff_t increment);
 int _write(int fd, const char *buf, int len);
 void _exit(int code) __attribute__((noreturn));
@@ -121,6 +123,14 @@ int _open(const char *name, int flags, int mode)
 	(void)name;
 	(void)flags;
 	(void)mode;
+	errno = ENOENT;
+	return -1;
+}
+
+int _stat(const char *name, struct stat *st)
+{
+	(void)name;
+	(void)st;
 	errno = ENOENT;
 	return -1;
 }

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 //
-// nes_bench: runs the libretro Nestopia core headless on a cartridge image
-// built into the program, with a scripted controller, and times each
+// nes_bench: runs a libretro NES core (Nestopia or FCEUmm, chosen when it
+// is built) headless on a cartridge image built into the program, with a scripted controller, and times each
 // retro_run against the NES frame period. Video and sound are not shown:
 // checksums of them, taken outside the timed calls, are reported so that
 // the AE350 run can be checked against the same program built for the PC.
 //
 // Report lines (identical in form on both builds):
-//   TinyNES NES ROM=<bytes> CRC=<crc32> START=<us>
+//   TinyNES NES CORE=<core> ROM=<bytes> CRC=<crc32> START=<us>
 //   TinyNES NES CACHE MICM=<csr> MDCM=<csr> I=<bytes>/<ways>/<line>
 //       D=<bytes>/<ways>/<line>                        (AE350 only)
 //   TinyNES NES F=<frame> AVG=<us> MAX=<us> VIDEO=<crc> AUDIO=<crc>
@@ -34,6 +34,9 @@
 #include <ctime>
 #endif
 
+#ifndef NES_CORE
+#define NES_CORE "?"
+#endif
 #ifndef NES_FRAMES
 #define NES_FRAMES 1800
 #endif
@@ -176,11 +179,18 @@ void log_cb(enum retro_log_level level, const char *fmt, ...)
 	static const char *const names[] = {"DEBUG", "INFO", "WARN", "ERROR"};
 	va_list ap;
 
-	printf("NST %s ", (unsigned)level < 4 ? names[level] : "?");
+	printf("%s %s ", NES_CORE, (unsigned)level < 4 ? names[level] : "?");
 	va_start(ap, fmt);
 	vprintf(fmt, ap);
 	va_end(ap);
 }
+
+// The image as RetroArch describes it to cores that ask, such as FCEUmm,
+// which otherwise reads the game from its path.
+retro_game_info_ext game_ext = {
+	"/rom.nes", nullptr, nullptr, "/", "rom", "nes", nullptr,
+	nullptr, 0, false, false,
+};
 
 bool environment(unsigned cmd, void *data)
 {
@@ -202,8 +212,13 @@ bool environment(unsigned cmd, void *data)
 		// The same power-on RAM every run, for repeatable checksums.
 		if (!strcmp(var->key, "nestopia_ram_power_state"))
 			var->value = "0x00";
+		else if (!strcmp(var->key, "fceumm_ramstate"))
+			var->value = "fill $00";
 		return var->value != nullptr;
 	}
+	case RETRO_ENVIRONMENT_GET_GAME_INFO_EXT:
+		*static_cast<const retro_game_info_ext **>(data) = &game_ext;
+		return true;
 	case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
 		*static_cast<bool *>(data) = false;
 		return true;
@@ -300,7 +315,9 @@ int main()
 
 	uint64_t start = ticks();
 	retro_init();
-	retro_game_info game = {"rom.nes", nes_rom, rom_size, nullptr};
+	retro_game_info game = {"/rom.nes", nes_rom, rom_size, nullptr};
+	game_ext.data = nes_rom;
+	game_ext.size = rom_size;
 	bool loaded = retro_load_game(&game);
 	start = ticks() - start;
 	if (!loaded) {
@@ -313,7 +330,8 @@ int main()
 	// The NES frame period, from the core's own frame rate.
 	const uint64_t budget = (uint64_t)((double)tick_hz / av.timing.fps);
 
-	printf("TinyNES NES ROM=%u CRC=%08lx START=%llu\n", (unsigned)rom_size,
+	printf("TinyNES NES CORE=%s ROM=%u CRC=%08lx START=%llu\n", NES_CORE,
+	       (unsigned)rom_size,
 	       (unsigned long)crc_update(0, nes_rom, rom_size),
 	       (unsigned long long)to_us(start));
 #ifdef __riscv

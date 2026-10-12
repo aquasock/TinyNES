@@ -271,7 +271,9 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | What licence is this project under, and what is the exception? | PROV | PROV-005 |
 | Where is colibri, and what are its terms? | PROV | PROV-003 |
 | Where does Nestopia come from, and what are its terms? | PROV | PROV-006 |
-| How fast does an NES emulator run on the A25, and is it correct? | EMU | EMU-001 |
+| Where does FCEUmm come from, and what are its terms? | PROV | PROV-007 |
+| How fast does an NES emulator run on the A25, and is it correct? | EMU | EMU-001, EMU-002 |
+| Which NES core is faster on the A25? | EMU | EMU-002 |
 | Which silicon revision is this board, and which revision is the core image? | PSX | PSX-001 |
 | How much logic and block RAM does the device have? | PSX | PSX-002 |
 | Which FPGA pins carry the core UART, and where is the board's clock? | PSX | PSX-003 |
@@ -394,6 +396,7 @@ PROV-001: "Lineage as the user states it: nand2mario's TangCore is the origin fo
 PROV-003: "colibri is CERN's vendor-independent, fully verified, open-source VHDL common library at gitlab.cern.ch/colibri/colibri, with an unofficial SystemVerilog port at github.com/kavierim/colibri-sv pinned to upstream 3fa78412; read the port when working in SystemVerilog since it ships an AGENTS.md and targets Verilator and free tooling, but treat the original as the authority; licensed CERN-OHL-W-2.0 (weakly reciprocal), not MIT, with no code copied here"
 PROV-005: "TinyTang is MIT with thirteen Apache-2.0 files: nand2mario's JTAG programmer, and ten Phosphor transport files and two host tests written by this project's author in Tang-Control; it descends from nand2mario's TangCore firmware-bl616 through Tang-Control, a fork of it, and copies no other TangCore source; THIRD_PARTY.md must keep saying the UART protocol was read from GPL-3.0 nestang as a specification, not copied"
 PROV-006: "libretro Nestopia is GPL-2.0-or-later (Freij, Nestopia UE, Carmichael and others); tools/fetch_nestopia.sh fetches commit 135dfa6 into git-ignored third_party/nestopia, and programs linked with it stay in build/"
+PROV-007: "libretro FCEUmm is GPL-2.0 (mostly or-later, with a few BSD or unmarked files); tools/fetch_fceumm.sh fetches commit ac0d00a into git-ignored third_party/fceumm, and programs linked with it stay in build/"
 PSX-001: "This board is GW5AST-138 revision C (package mark 2518CA0N), while the console138k core image it loads is built for revision B and works anyway"
 PSX-002: "GW5AST-138: 138,240 LUTs, 139,095 registers, 340 BSRAM blocks of 18 Kbit, about 765 KB"
 PSX-003: "50 MHz oscillator on FPGA pin V22; the BL616 control UART reaches the FPGA on V14 (FPGA RX) and U15 (FPGA TX), LVCMOS33 - the other end of the link PROT-003 describes from the BL616 side; all three confirmed on this board by the AE350 system at 2 Mbaud"
@@ -433,8 +436,9 @@ TOOL-015: "With FF_FS_REENTRANT 1 the SDK's FatFS R0.15 takes a FreeRTOS mutex (
 TOOL-016: "Linked out of the SDK under their own licences: FreeRTOS V10.4.6 (MIT, (C) 2021 Amazon.com), CherryUSB (Apache-2.0), FatFs R0.15 w/patch3 (ChaN), and the Bluetooth stack: the Zephyr-derived host (Apache-2.0; Intel, Nordic, Wind River, Oticon, Chettimada), TinyCrypt (BSD-3-Clause, Intel 2017), micro-ecc (BSD-2-Clause, Kenneth MacKay 2014) and ctr_prng (BSD-2-Clause, Chris Morrison 2016), whose binary-form notices are reproduced in LICENSES/, plus the binary-only RivieraWaves-based controller and PHY libraries under the SDK's Apache-2.0 alone; LVGL, TJpgDec, mbedTLS, littlefs and the codecs are not linked"
 TOOL-017: "Open-flow HDMI works: the apicula fork at 1c2b6cb+ writes the OSER10 aux half, HWL, lane-0 FCLKSEL0/3 and ODDR LSROMUX_0 like Gowin, and at 93761f4+ its io2hclk map splits each long side at the block midpoint as the vendor does, so the build adds no fuses; the clock network was never the fault"
 TOOL-018: "The AE350 firmware is built with xPack GNU RISC-V Embedded GCC 15.2.0-1 (riscv-none-elf-gcc 15.2.0), configured --with-arch=rv32imac --with-abi=ilp32, so -march=rv32imac_zicsr_zifencei -mabi=ilp32 selects its default multilib: the boot ROM (firmware/boot/Makefile) links libgcc alone, and loaded programs (firmware/rt/rt.mk) link newlib 4.5.0's libc and libm, libstdc++ and libsupc++ with the runtime's own crt0 and syscalls; the compiler is found in ~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin"
-TOOL-019: "newlib 4.5.0's <sys/dirent.h> is an #error, so firmware/rt/include/sys/dirent.h stands in and syscalls.c's opendir, readdir and closedir always fail; rt.mk builds third-party LIB_SOURCES with their own flags"
+TOOL-019: "newlib 4.5.0's <sys/dirent.h> is an #error, so firmware/rt/include/sys/dirent.h stands in and syscalls.c's opendir, readdir, closedir and _stat always fail; rt.mk builds third-party LIB_SOURCES with their own flags"
 EMU-001: "libretro Nestopia 135dfa6 runs Castlevania on the A25 with checksums matching a PC build, at 23.16 ms a frame against 16.64 ms: 71.8 percent of full speed, with a 0.78 s start"
+EMU-002: "libretro FCEUmm ac0d00a runs Castlevania on the A25 with checksums matching a PC build, at 19.07 ms a frame: 87.2 percent of full speed and 1.2 times Nestopia (1.8 times on the PC)"
 ```
 
 ---
@@ -1883,6 +1887,19 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "This project's tools/fetch_nestopia.sh, .gitignore (/third_party/) and README.md (Nestopia benchmark; References and licensing)"
   verification: "Read from the fetched tree on 2026-10-12 (core-log entry 10); fetch_nestopia.sh reported the pinned commit and a clean tree."
 
+- record_id: PROV-007
+  kind: EXTERNAL
+  topic_id: PROV
+  title: "libretro FCEUmm is distributed under GPL-2.0, mostly or-later, and is fetched at a pinned commit, never vendored"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "libretro/libretro-fceumm's Copying is the GNU GPL version 2. Most source files, such as src/fceu.c (Copyright 2003 Xodnizel) and src/ppu.c (Copyright 1998 BERO, 2003 Xodnizel), allow 'any later version'; src/boards/pic16c5x.c is BSD-3-Clause (Tony La Porta, from MAME), src/md5.c says only 'licensed under the GPL', and src/boards/emu2413.c (Mitsutaka Okazaki) states no licence. Its Authors file credits BERO with the base FCE code, Xodnizel with most of FCE Ultra, and CaH4e3, Quietust, Mitsutaka Okazaki and others. Commit ac0d00a7fc01166f84c7bac01d1084ebfd2b865e of 2026-10-11 is the head of master that TinyNES uses."
+  consequence: "tools/fetch_fceumm.sh clones that commit into third_party/fceumm/, which .gitignore excludes, and fails if HEAD differs or the tree has local changes, so TinyNES (MIT) carries no FCEUmm source. Programs linked with it, such as build/firmware/apps/nes_bench/fceumm/nes_bench.elf, are GPL-2.0 and stay in build/; with a cartridge image built in they are for local use only. README.md's licensing section names the authors and these terms."
+  sources:
+    - "https://github.com/libretro/libretro-fceumm commit ac0d00a7fc01166f84c7bac01d1084ebfd2b865e: Copying, Authors, src/fceu.c, src/ppu.c, src/md5.c, src/boards/pic16c5x.c and src/boards/emu2413.c headers"
+    - "This project's tools/fetch_fceumm.sh, .gitignore (/third_party/) and README.md (NES emulator benchmark; References and licensing)"
+  verification: "Read from the fetched tree on 2026-10-12 (core-log entry 11); fetch_fceumm.sh reported the pinned commit and a clean tree. Only the file headers named here were read for exceptions. A search for C files without a GPL notice, cut off at ten results, also listed files with no notice at all, such as src/filter.c, src/input/cursor.c and src/boards/vrcirq.c; the tree was not checked exhaustively."
+
 - record_id: PSX-001
   kind: DEVICE
   topic_id: PSX
@@ -2426,16 +2443,16 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - record_id: TOOL-019
   kind: TOOLCHAIN
   topic_id: TOOL
-  title: "newlib 4.5.0's <sys/dirent.h> refuses to compile, so the runtime supplies its own and failing directory calls"
+  title: "newlib 4.5.0's <sys/dirent.h> refuses to compile, so the runtime supplies its own, with failing directory and stat calls"
   status: VERIFIED
   verified_date: 2026-10-12
   statement: "In xPack GNU RISC-V Embedded GCC 15.2.0-1, riscv-none-elf/include/dirent.h includes <sys/dirent.h>, whose generic version is '#error \"<dirent.h> not supported\"'; newlib's dirent.h then declares opendir, readdir, closedir and others on a DIR type it does not define, and uses ssize_t. libretro-common's vfs/vfs_implementation.c includes <dirent.h> on every non-Windows, non-Vita target."
-  consequence: "firmware/rt/include/sys/dirent.h, ahead of newlib's on rt.mk's include path, defines DIR as an incomplete struct and struct dirent with d_name, after <sys/types.h>; firmware/rt/syscalls.c gives opendir (ENOENT), readdir and closedir (EBADF), which always fail, as _open does. rt.mk also builds LIB_SOURCES, third-party code, with ARCHFLAGS, -O2, -g, section splitting, CPPFLAGS, LIB_CPPFLAGS and LIB_CFLAGS or LIB_CXXFLAGS, without the TinyNES -Wall -Wextra -Werror and language flags, and links EXTRA_OBJECTS. With these, the libretro Nestopia core (PROV-006) and libretro-common compile with upstream's GCC flags and link with no undefined symbols; the stat, rename and fstat members of libc that the file layer pulls in are discarded by --gc-sections."
+  consequence: "firmware/rt/include/sys/dirent.h, ahead of newlib's on rt.mk's include path, defines DIR as an incomplete struct and struct dirent with d_name, after <sys/types.h>; firmware/rt/syscalls.c gives opendir (ENOENT), readdir and closedir (EBADF), which always fail, as _open does, and _stat, which fails with ENOENT for the libretro-common path checks that FCEUmm keeps (EMU-002). rt.mk also builds LIB_SOURCES, third-party code, with ARCHFLAGS, -O2, -g, section splitting, CPPFLAGS, LIB_CPPFLAGS and LIB_CFLAGS or LIB_CXXFLAGS, without the TinyNES -Wall -Wextra -Werror and language flags, and links EXTRA_OBJECTS. With these, the libretro Nestopia core (PROV-006) and libretro-common compile with upstream's GCC flags and link with no undefined symbols; the stat, rename and fstat members of libc that Nestopia's file layer pulls in are discarded by --gc-sections, but FCEUmm's call to stat survives and needs _stat."
   sources:
     - "~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/riscv-none-elf/include/dirent.h and include/sys/dirent.h"
     - "libretro/nestopia 135dfa6, libretro/libretro-common/vfs/vfs_implementation.c includes"
-    - "This project's firmware/rt/include/sys/dirent.h, firmware/rt/syscalls.c, firmware/rt/rt.mk, firmware/apps/nes_bench/Makefile and build/firmware/apps/nes_bench/nes_bench.map"
-  verification: "Built on 2026-10-12 (core-log entry 10): without the stand-in, vfs_implementation.c failed on the #error, then on ssize_t; with it, nes_bench linked and ran on the board. Nestopia's C++ built with both -std=gnu++11 and upstream's -std=c++98; only the gnu++11 build was run."
+    - "This project's firmware/rt/include/sys/dirent.h, firmware/rt/syscalls.c, firmware/rt/rt.mk, firmware/apps/nes_bench/Makefile and build/firmware/apps/nes_bench/<core>/nes_bench.map"
+  verification: "Built on 2026-10-12 (core-log entry 10): without the stand-in, vfs_implementation.c failed on the #error, then on ssize_t; with it, nes_bench linked and ran on the board. Nestopia's C++ built with both -std=gnu++11 and upstream's -std=c++98; only the gnu++11 build was run. Revised 2026-10-12 (core-log entry 11): FCEUmm's link stopped on newlib's _stat_r needing _stat, which the runtime now provides, and the FCEUmm program then ran on the board."
 
 - record_id: EMU-001
   kind: EXTERNAL
@@ -2449,6 +2466,19 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "This project's firmware/apps/nes_bench/main.cpp and Makefile, tools/fetch_nestopia.sh, tools/load_ae350.py"
     - "libretro/nestopia 135dfa6 (PROV-006), libretro/libretro.cpp retro_load_game and retro_run, libretro/nstdatabase.hpp nst_db_xml"
   verification: "Measured on this board on 2026-10-12 (core-log entry 10): one run, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, printed the figures above and TinyNES EXIT 0; the user accepted the result. Frame times on other games or with other scripts were not measured."
+
+- record_id: EMU-002
+  kind: EXTERNAL
+  topic_id: EMU
+  title: "libretro FCEUmm ac0d00a runs Castlevania correctly on the A25 at 87.2 percent of full speed, 1.2 times Nestopia"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "firmware/apps/nes_bench built with CORE=fceumm (soft-float rv32imac, -O2, upstream's unix defines with WANT_32BPP and without the NTSC filter and HD packs, fceumm_ramstate 'fill $00') ran the same Castlevania image and 1,800-frame script as EMU-001. On the A25 the program was 1,665,796 bytes and loaded in 9.07 s; retro_init and retro_load_game took 102,431 us; retro_run averaged 19,070 us (minimum 12,344, maximum 20,123) against 16,639 us, so 1,715 frames ran over and the speed was 87.2 percent. All 16 checksum lines matched the PC build, which averaged 197 us a frame against Nestopia's 362 us there and gave identical checksums on two runs. FCEUmm loads content from memory only through RETRO_ENVIRONMENT_GET_GAME_INFO_EXT and otherwise opens info->path, so the harness answers that call with the built-in image; Nestopia does not ask for it, and its checksums were unchanged."
+  consequence: "FCEUmm is the faster of the two cores tried: 1.21 times Nestopia on the A25 and 1.84 times on the PC. The smaller gain on the A25, where its 0.80 MB of code is a third of Nestopia's but still far beyond the 32 KiB I-cache (DEV-013), suggests SDRAM misses rather than instruction count dominate there, though that has not been measured. It needs about 1.15 times its speed for 60 frames a second; the untested levers are those of EMU-001. Its link needed _stat (TOOL-019)."
+  sources:
+    - "This project's firmware/apps/nes_bench/main.cpp and Makefile, tools/fetch_fceumm.sh, tools/load_ae350.py"
+    - "libretro/libretro-fceumm ac0d00a (PROV-007): Makefile.common, Makefile.libretro (unix), src/drivers/libretro/libretro.c retro_load_game, src/fceu.c FCEUI_LoadGame and option_ramstate"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 11): one run, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, printed the figures above and TinyNES EXIT 0; the user accepted the result."
 ```
 
 ---

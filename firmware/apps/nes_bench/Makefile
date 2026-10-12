@@ -1,18 +1,23 @@
 # SPDX-License-Identifier: MIT
 #
-# Headless Nestopia benchmark. Needs the core, fetched by
-# tools/fetch_nestopia.sh, and a cartridge image, which is built in:
+# Headless NES emulator benchmark. CORE=nestopia (the default) or
+# CORE=fceumm picks the libretro core, fetched by tools/fetch_nestopia.sh or
+# tools/fetch_fceumm.sh; a cartridge image is built in:
 #
-#   make ROM=<file.nes>         AE350 program, build/firmware/apps/nes_bench/
+#   make ROM=<file.nes>         AE350 program, build/firmware/apps/nes_bench/<core>/
 #   make ROM=<file.nes> host    the same program for this PC, in host/ there
 #
 # FRAMES=<n> and INPUT="<script>" replace the defaults in main.cpp. The
-# programs contain Nestopia and are GPL-2.0 (third_party/nestopia/COPYING);
-# with the cartridge image built in they are for local use only.
+# programs contain the core and are GPL-2.0 (COPYING or Copying in its
+# third_party/ directory); with the cartridge image built in they are for
+# local use only.
 
 APP     := nes_bench
 SOURCES := main.cpp rom.S
+CORE    ?= nestopia
+BUILD   ?= $(abspath ../../..)/build/firmware/apps/$(APP)/$(CORE)
 
+ifeq ($(CORE),nestopia)
 NST_DIR := $(abspath ../../../third_party/nestopia)
 ifeq ($(wildcard $(NST_DIR)/libretro/Makefile.common),)
 $(error Nestopia not found in $(NST_DIR): run tools/fetch_nestopia.sh)
@@ -26,8 +31,26 @@ LIB_SOURCES  := $(SOURCES_CXX) $(SOURCES_C)
 LIB_CPPFLAGS := -D__LIBRETRO__ -DNST_NO_ZLIB -DNDEBUG $(INCFLAGS)
 LIB_CFLAGS   := -std=gnu99
 LIB_CXXFLAGS := -std=gnu++11 -fno-rtti
+else ifeq ($(CORE),fceumm)
+FCEU_DIR := $(abspath ../../../third_party/fceumm)
+ifeq ($(wildcard $(FCEU_DIR)/Makefile.common),)
+$(error FCEUmm not found in $(FCEU_DIR): run tools/fetch_fceumm.sh)
+endif
+# Upstream's unix build (Makefile.libretro) without the NTSC filter and
+# HD texture packs, which run only when their options are chosen.
+CORE_DIR    := $(FCEU_DIR)/src
+WANT_32BPP  := 1
+HAVE_NTSC   := 0
+HAVE_HDPACK := 0
+include $(FCEU_DIR)/Makefile.common
 
-APP_DEFS := $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
+LIB_SOURCES  := $(SOURCES_C)
+LIB_CPPFLAGS := $(COREDEFINES) -DNDEBUG $(INCFLAGS)
+else
+$(error CORE must be nestopia or fceumm)
+endif
+
+APP_DEFS := -DNES_CORE='"$(CORE)"' $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
             $(if $(INPUT),-DNES_INPUT='"$(INPUT)"')
 CPPFLAGS += -I$(LIBRETRO_COMM_DIR)/include $(APP_DEFS)
 
