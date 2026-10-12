@@ -88,6 +88,27 @@ hardware. `TINY_NES_SEED=N` passes a placement seed to nextpnr.
 The load is volatile. The host check needs Python `pyserial`. It does not
 alter BL616 firmware or the FPGA's configuration flash.
 
+## Build sweeps
+
+`tools/sweep.py` builds design variants over many nextpnr seeds in parallel
+and tabulates them. It never loads the board. A design is described by a JSON
+file in `tools/designs/` (sources, top, constraints, device, target frequency
+and named variants as parameter overrides). Each variant is synthesised once,
+then placed and routed once per seed:
+
+```sh
+python3 tools/sweep.py ae350_uart --variants normal,trace --seeds 1-16 --jobs 16 --pack clean
+```
+
+Each run records its nextpnr status and first error, Fmax per clock, hold
+violations, used resources, placement wirelength, the number of sinks each
+net failed to reach on dedicated clock routing, each clock net's route length
+in pips, and run time and peak memory. `--pack clean` or `--pack all` also
+packs bitstreams and records their SHA-256; packs run `--pack-jobs` at a time
+(default 4) because each holds about 1.7 GB. `--nextpnr-arg` passes extra
+nextpnr options. Results go to `build/sweep/<design>-<time>/` as
+`results.csv`, `results.json` and `summary.txt`, with every run's logs.
+
 ## References and licensing
 
 The board pin and AE350 clock facts come from the project reference library

@@ -99,3 +99,35 @@ Route the AE350 bus clocks over the global clock network into the row-0 `AE350_S
 - User Test: PASS
 
 ---
+
+## 4 COMMIT Unreleased 2026-10-12T08:49:40-07:00
+
+#### Coming From:
+
+Unreleased c3567bc
+
+#### Purpose:
+
+Add a general parallel build-sweep tool that compares design variants across nextpnr seeds for timing, resource use and clock routing without loading the board.
+
+#### Outcome:
+
+Added `tools/sweep.py` and the design description `tools/designs/ae350_uart.json`, and documented them in the README. The tool synthesises each variant once, places and routes every variant and seed in a parallel pool, optionally packs the results in a smaller pool, and writes `results.csv`, `results.json` and `summary.txt` with each run's nextpnr status and first error, Fmax per clock, hold violations, used resources, placement wirelength, dedicated clock-routing misses per net, clock route length in pips, run time and peak memory. Measured per run, synthesis took 0.6 s, nextpnr about 3 s and 120 MB, and an Apicula pack about 7 s and 1.7 GB, so 16 parallel place-and-route jobs fit this 28-thread, 15 GB machine while packing defaults to four at a time. A three-seed trace check reproduced the seed-2 trace image byte for byte as SHA-256 `0fc643d5ff77307993a3e8d40693e9f9be9bb2fb4025950cadbb19ddb4f15ee7` and the two seed-4 hold violations, so place and route is deterministic per seed. The sweep of normal and trace over seeds 1 to 16 with 16 jobs and clean packing finished place and route 7.6 s after synthesis and packed 27 images by 57.8 s. All 16 normal runs were hold-clean, with `bus_clk` Fmax from 144.53 to 186.25 MHz, while 11 of 16 trace runs were clean and seeds 4, 11, 13, 14 and 16 failed with 2, 1, 8, 4 and 8 hold violations, with clean `bus_clk` Fmax from 131.53 to 179.34 MHz. In every run, `bus_clk` missed dedicated clock routing on every sink, 70 in normal and 297 in trace, so the whole bus clock, including all fabric registers and not only the four `AE350_SOC` taps, is carried on general routing with a seed-dependent route of 127 to 210 pips in normal and 370 to 638 in trace; only `sys_clk` used a global buffer, and `core_clk` always took its one-pip dedicated hop. Hold failures therefore grow with the number of bus-clock registers, and the routing fix has to bring `PLL_R[0]` `CLKOUT0` onto the global network for all of its sinks. No image from this cycle was loaded, and the user did not test hardware. The core-syntax audit passed.
+
+#### Next Steps:
+
+Make nextpnr route `PLL_R[0]` `CLKOUT0` onto the global clock network for every `bus_clk` sink, including the row-0 `AE350_SOC` taps fed from a row-10 spine the way the vendor does, then use the sweep to confirm that dedicated-routing misses drop to zero and hold failures disappear across seeds before the user checks `TinyNES AE350 OK` on hardware.
+
+#### Files Modified:
+
+- README.md
+- tools/designs/ae350_uart.json
+- tools/sweep.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: N/A
+- User Test: N/A
+
+---
