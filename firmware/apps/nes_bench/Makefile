@@ -33,6 +33,9 @@ include $(FCEU_DIR)/Makefile.common
 
 LIB_SOURCES  := $(filter-out $(CORE_DIR)/drivers/libretro/libretro.c \
                              $(CORE_DIR)/drivers/libretro/libretro_dipswitch.c,$(SOURCES_C))
+# fceu_settings.c reaches into the core's FSettings, so it is built with the
+# core's own flags.
+LIB_SOURCES  += $(abspath fceu_settings.c)
 LIB_CPPFLAGS := $(COREDEFINES) -DNDEBUG $(INCFLAGS)
 
 ifeq ($(PLAY),1)

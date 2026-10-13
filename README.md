@@ -269,7 +269,7 @@ It fails on a `BAD` or `NOBOOT` line, a non-zero exit, or a missing
 In two-wire mode the BL616 runs TinyTang and holds the FPGA UART, so both
 the image and the programs go through it. `tools/deploy_tinytang.sh` puts
 `build/ae350_soc/ae350_soc.bin` on the SD card as
-`/cores/console138k/tinynes.bin` with TinyTang's `tinytang_put.py` and loads
+`/root/cores/console138k/tinynes.bin` with TinyTang's `tinytang_put.py` and loads
 it with `tangload`, after turning the desk layer off so its display frames
 do not reach the AE350's UART. `load_ae350.py --tinytang` then uses
 TinyTang's USB console, `/dev/ttyACM0`: it checks the shell is at a prompt
@@ -397,7 +397,13 @@ for Start; A and X do nothing. A controller that is absent or not a Classic read
 nothing pressed. The game runs until HOME and `-` are held together, prints
 `TinyNES NES PLAY PAD1=<state> PAD2=<state>` (`classic`, `other` or
 `absent`) at the start and its `F=` lines once a minute, and ends with the
-usual summary:
+usual summary. The play build's sound plays on the I2S2 (see *I2S audio on
+PMOD1*): FCEUmm runs at 48,909 Hz, the DAC's 48,828.125 Hz times the NES's
+60.0988 frames a second over HDMI's 60, so each frame makes the samples one
+HDMI frame plays, and a one-sample correction a frame holds the FIFO near
+1,100 pairs. The summary adds an `AUDIO` line with underruns, dropped
+samples, the FIFO level range, the corrections and the time to send a
+frame's sound, and the program fails on any underrun or drop:
 
 ```sh
 make -C firmware/apps/nes_bench ROM=<file.nes> PLAY=1
@@ -411,8 +417,10 @@ that sets those `mcache_ctl` bits for its run, and `OPT=<flags>` replaces
 
 The driver gives the core the few callbacks and settings it needs from a
 driver, with power-on RAM filled with `0x00` so every run is the same and
-the libretro driver's sound settings (48 kHz, volume 150), loads the
-built-in image and calls `FCEUI_Emulate` once a frame. On the AE350 it
+the libretro driver's sound settings (48 kHz, volume 150, and each APU
+channel at full volume, which `fceu_settings.c` sets because
+`FCEUI_Initialize` leaves them at 0 and FCEUmm has no setter for them),
+loads the built-in image and calls `FCEUI_Emulate` once a frame. On the AE350 it
 points the core's picture buffer at the SDRAM frame buffer not being shown,
 so the PPU draws straight into it; FCEUmm's palette, 768 entries with the
 colour-emphasis tables, goes to the video unit's palette as the core sets
@@ -438,7 +446,7 @@ TinyNES NES VIDEO=<crc> AUDIO=<crc>
 decodes the A25's cache configuration registers and reads back
 `mcache_ctl`. An `F=` line covers the 120 frames before it. The frame times
 are `FCEUI_Emulate` alone, which emulates the frame and mixes its sound;
-nothing plays the sound. `SHOW` is the mean time to hand a frame to the
+the benchmark does not play it, the `PLAY=1` build does. `SHOW` is the mean time to hand a frame to the
 video unit (0 on the PC). `VIDEO` is a CRC-32 of the picture and each
 line's emphasis of every 60th frame and `AUDIO` of every frame's samples,
 both taken outside the timed calls. `OVER` counts frames slower than the
@@ -462,7 +470,14 @@ last used FCEUmm's libretro driver, whose `BLIT` was its conversion of the
 | FCEUmm libretro, XRGB8888, `MCACHE=0x2000` | 19.20 ms (12.36 to 20.50) | 8.23 ms | 1,718 | 86.6% |
 | FCEUmm libretro, XRGB8888, `OPT=-O3` | 19.40 ms (12.44 to 20.47) | 8.25 ms | 1,715 | 85.7% |
 | FCEUmm libretro, RGB565 | 15.85 ms (9.09 to 17.06) | 5.01 ms | 607 | 104.9% |
-| FCEUmm, own driver, on HDMI (default) | 10.82 ms (3.99 to 12.02) | 0.62 ms | 0 | 153.7% |
+| FCEUmm, own driver, on HDMI, channels muted | 10.82 ms (3.99 to 12.02) | 0.62 ms | 0 | 153.7% |
+| FCEUmm, own driver, on HDMI (default) | 10.84 ms (3.93 to 12.07) | 0.61 ms | 0 | 153.5% |
+
+Until 2026-10-13 the driver left FCEUmm's APU channel volumes at 0, so the
+core mixed silence and the `AUDIO` checksums of the row above covered zeros;
+with the channels on, mixing real sound costs nothing measurable, and the
+default build's last line is `VIDEO=f2160661 AUDIO=4512be2f` on the board
+and the PC.
 
 The last run showed every frame at the next vertical blank (`LATE=0
 MISSED=0`), started in 64 ms against the libretro build's 102 ms, and its
@@ -627,6 +642,55 @@ If the internal pull-ups do not give a fast enough rise for another controller,
 build a 50 kHz diagnostic separately with `make -C firmware/apps/pad_test
 BUILD=$PWD/build/firmware/apps/pad_test_50k PAD_QUARTER=375`, then load that
 directory's `pad_test.elf`.
+
+### I2S audio on PMOD1
+
+`fpga/ae350_soc/i2s_out.sv` sends stereo I2S to a Digilent Pmod I2S2 seated
+normally on PMOD1: its CS4344 DAC's MCLK, LRCK, SCLK and SDIN on Digilent
+pins 1-4 (FPGA W19, F19, E22 and E21); pins 7-10, the ADC, are unused. Every
+audio clock is counted down from the 75 MHz bus clock, so the unit adds no
+clock to the clock network: MCLK is 12.5 MHz (bus / 6, 50% duty), SCLK
+MCLK / 4 and LRCK MCLK / 256, a sample rate of 48,828.125 Hz, inside the
+CS4344's 2 to 50 kHz range for a 256x MCLK. The frame is I2S, 64 SCLKs: LRCK
+low for left, a delay bit, then the 16-bit sample MSB first and zeros. The
+clocks run from reset with silence. A 2,048-pair FIFO in block RAM feeds the
+DAC one pair a frame; an empty FIFO plays silence and counts an underrun.
+Its registers are at `0xe8050000`:
+
+| Offset | Register | Use |
+|---|---|---|
+| `0x000` | ID | `TNA1` (`0x544e4131`) |
+| `0x004` | CTRL | bit 0 enables playback; writing bit 1 empties the FIFO |
+| `0x008` | STATUS | bits 11:0 FIFO level in pairs, bits 31:16 underruns |
+| `0x00c` | DATA | write one pair: left in bits 31:16, right in 15:0 |
+| `0x010` | FRAMES | frames sent since reset |
+| `0x014` | DROPS | writes dropped because the FIFO was full |
+
+Other accesses get an AHB ERROR. `tests/i2s_out_tb.sv` decodes SDIN at
+rising SCLK edges as the DAC does and checks the clock ratios and duty, that
+LRCK and SDIN change only as SCLK falls, the delay bit and zero padding, the
+sample order through the FIFO, silence and the underrun count when it runs
+dry, dropped writes when it is full, the flush, a STATUS read in a DATA
+write's data phase, and the ERROR responses. `firmware/apps/audio_test/`
+measures the frame rate against the A25's cycle counter and plays 1 kHz on
+the left and 2 kHz on the right for five seconds:
+
+```sh
+mkdir -p build/i2s_out_tb
+iverilog -g2012 -s i2s_out_tb -o build/i2s_out_tb/tb \
+  fpga/ae350_soc/i2s_out.sv tests/i2s_out_tb.sv
+vvp build/i2s_out_tb/tb
+make -C firmware/apps/audio_test
+python3 tools/load_ae350.py --tinytang build/firmware/apps/audio_test/audio_test.elf \
+  --expect 'TinyNES AUDIO OK'
+```
+
+Connect Line Out to powered speakers or an amplifier, starting at a low
+volume; the board has no headphone amplifier. On the board `audio_test`
+measured 48,827.968 Hz (a quarter-second count, so 16 Hz is one frame),
+played five seconds with no underrun or dropped write, and the user heard
+the tones in the right channels. The `PLAY=1` build of `nes_bench` then
+played Castlevania's sound with the game for 5,866 frames with no underrun.
 
 ## Build sweeps
 

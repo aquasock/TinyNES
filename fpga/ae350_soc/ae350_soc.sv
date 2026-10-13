@@ -7,7 +7,9 @@
 // (exts_uart), and drives the HDMI port at 1280x720 60 Hz (video) from two
 // frame buffers in the top 128 KiB of the SDRAM, read through the SDRAM's
 // video channel, with its registers, palette and emphasis in the EXTS
-// window at 0xe8010000.
+// window at 0xe8010000. Four Wii Classic Controllers on PMOD0 are read at
+// 0xe8040000 (wii_pads), and stereo I2S for a Pmod I2S2 on PMOD1 is fed
+// through a sample FIFO at 0xe8050000 (i2s_out).
 //
 // If the CPU has written nothing to the UART 2^NOBOOT_BITS bus clocks after
 // reset (about 1.8 s), fabric reports instead, about once a second until the
@@ -44,7 +46,10 @@ module ae350_soc_top #(
     output wire        tmds_clk_n,
     output wire [2:0]  tmds_d_p,
     output wire [2:0]  tmds_d_n,
-    inout  wire [7:0]  pmod0
+    inout  wire [7:0]  pmod0,
+    // Pmod I2S2 seated normally on PMOD1: its DAC's MCLK, LRCK, SCLK and
+    // SDIN on Digilent pins 1-4. Pins 7-10, the ADC, are left unused.
+    output wire [3:0]  pmod1_dac
 );
     wire pll_locked;
     wire bus_clk;
@@ -233,30 +238,33 @@ module ae350_soc_top #(
     wire cpu_owns;
 
     // The EXTS window: 0xe8010000 selects video, 0xe8040000 selects the
-    // Wii pads, and 0xe8000000 selects UART. The open flow has no
+    // Wii pads, 0xe8050000 the audio, and 0xe8000000 selects UART. The open flow has no
     // timing model for the AE350's ports, so each path to or from them has
     // at most one LUT: HREADY is the AND of the slaves' registered HREADYs,
     // HRESP their OR, and read data a mux on a registered UART select.
     wire video_hit = !exts_addr[18] && (exts_addr[17] | exts_addr[16]);
     wire pads_hit = exts_addr[18] && !(exts_addr[17] | exts_addr[16]);
+    wire audio_hit = exts_addr[18] && !exts_addr[17] && exts_addr[16];
     reg data_uart = 1'b1;
-    wire [31:0] uart_rdata, video_rdata, pads_rdata;
+    wire [31:0] uart_rdata, video_rdata, pads_rdata, audio_rdata;
     wire uart_ready, uart_resp, video_ready, video_resp, pads_ready, pads_resp;
+    wire audio_ready, audio_resp;
     always @(posedge bus_clk or negedge resetn)
         if (!resetn)
             data_uart <= 1'b1;
         else if (exts_ready)
-            data_uart <= !video_hit && !pads_hit;
-    assign exts_rdata = data_uart ? uart_rdata : (video_rdata | pads_rdata);
-    assign exts_ready = uart_ready & video_ready & pads_ready;
-    assign exts_resp = uart_resp | video_resp | pads_resp;
+            data_uart <= !video_hit && !pads_hit && !audio_hit;
+    assign exts_rdata = data_uart ? uart_rdata
+                                  : (video_rdata | pads_rdata | audio_rdata);
+    assign exts_ready = uart_ready & video_ready & pads_ready & audio_ready;
+    assign exts_resp = uart_resp | video_resp | pads_resp | audio_resp;
 
     exts_uart #(.UART_DIV2(UART_DIV2), .DROP_CPU_TX(CPU_TX_DROP)) regs (
         .clk(bus_clk),
         .resetn(resetn),
         .haddr(exts_addr),
         .htrans(exts_trans),
-        .hsel(exts_sel && !video_hit && !pads_hit),
+        .hsel(exts_sel && !video_hit && !pads_hit && !audio_hit),
         .hready_in(exts_ready),
         .hwrite(exts_write),
         .hwdata(exts_wdata),
@@ -296,6 +304,19 @@ module ae350_soc_top #(
         .hrdata(pads_rdata), .hready(pads_ready), .hresp(pads_resp),
         .scl_in(pad_scl_in), .sda_in(pad_sda_in),
         .scl_low(pad_scl_low), .sda_low(pad_sda_low)
+    );
+
+    // The instance name sorts after "bus_clk": Yosys names a flattened net
+    // after the alphabetically first of its names, and nextpnr's
+    // NPNR_GOWIN_CLK_FIRST finds the bus clock only as bus_clk (DEV-016).
+    i2s_out sound (
+        .clk(bus_clk), .resetn(resetn),
+        .haddr(exts_addr[11:0]), .htrans(exts_trans),
+        .hsel(exts_sel && audio_hit), .hwrite(exts_write),
+        .hsize(exts_size), .hwdata(exts_wdata), .hready_in(exts_ready),
+        .hrdata(audio_rdata), .hready(audio_ready), .hresp(audio_resp),
+        .mclk(pmod1_dac[0]), .lrck(pmod1_dac[1]),
+        .sclk(pmod1_dac[2]), .sdin(pmod1_dac[3])
     );
 
     // HDMI: 50 MHz -> 27 MHz -> 371.25 MHz serial clock (hdmi_pll), divided

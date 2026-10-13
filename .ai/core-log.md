@@ -635,3 +635,48 @@ The next cycle should propose sound output for user approval: FCEUmm already mix
 - User Test: PASS
 
 ---
+
+## 18 COMMIT Unreleased 2026-10-13T01:42:39-07:00
+
+#### Coming From:
+
+Unreleased a575c7b
+
+#### Purpose:
+
+Play FCEUmm's sound through a Digilent Pmod I2S2 on PMOD1, as the user approved, and follow the SD card's new layout under `/root` in the two-wire deploy.
+
+#### Outcome:
+
+`fpga/ae350_soc/i2s_out.sv` is a new EXTS unit at `0xe8050000` that counts MCLK (12.5 MHz), SCLK and LRCK from the 75 MHz bus clock, so it adds no clock to the clock network, sends 48,828.125 Hz I2S to the CS4344 within DS613F2's 256x limit of 50 kHz, and feeds it from a 2,048-pair block-RAM FIFO with level, underrun, frame and drop counters; `ae350_soc.sv` and `ae350_soc.cst` put it on PMOD1 pins W19, F19, E22 and E21, and `firmware/include/tinynes.h` names its registers. `tests/i2s_out_tb.sv` decodes SDIN as the DAC does and caught seven planted faults, and the SoC testbench's pipelined master found a STATUS read in a DATA write's data phase missing the write, which `level_next` fixed and the unit test now checks; both SoC testbench modes passed. The first seed-3 build failed pixel-clock hold, and a 16-seed sweep then ran without `NPNR_GOWIN_CLK_FIRST` applied because Yosys had named the bus clock net `audio.clk` after the new instance; the build script's check caught it at seed 13, the instance was renamed `sound`, `tools/sweep.py` now fails such runs, and the repeated sweep was 12 of 16 clean. The seed-12 image, now the default, is `ae350_soc.fs` SHA-256 `7cc7acb95af25665e3bb9de945c8a60efce0863e1bf799a4d02fcea3c821c44b` and `ae350_soc.bin` `2cbcc063005e96c79aa4a3b302f86ea2f52daf5890b7f79c40ef6998b9d0f7c9`, bus Fmax 84.84 MHz and pixel Fmax 85.73 MHz. The user moved the card's folders under `/root`, so `tools/deploy_tinytang.sh` now writes `/root/cores/console138k/tinynes.bin` with TinyTang `f590643` (its entry 47) on the board. In two-wire mode `firmware/apps/audio_test/` measured 48,827.968 Hz, played five seconds with no underrun or drop, and the user heard 1 kHz left and 2 kHz right. The game was silent: nes_bench's own driver had never set FCEUmm's APU channel volumes, which `FCEUI_Initialize` leaves at 0, so every sample since entry 15 was zero; `firmware/apps/nes_bench/fceu_settings.c` now sets them to 256 as the libretro driver does. The benchmark then ran at 153.5 percent with its checksums matching the PC build, now `VIDEO=f2160661 AUDIO=4512be2f`, and the `PLAY=1` build, which runs FCEUmm at 48,909 Hz so a frame makes one HDMI frame's samples and steers the FIFO level by one sample a frame, played 5,866 frames at 147.9 percent with no underrun or drop and reports the pairs sent and played and the frames shown; the user said it looked and sounded perfect and closed the cycle. Two things seen this cycle are unexplained: one earlier play run overflowed the FIFO (437 drops in 1,582 frames) while two others did not, and with this image the monitor twice failed to wake or flickered, recovering after the USB cable was unplugged or the board power-cycled, while `video_test` read the picture correct inside the FPGA. AUD-001, PMOD-008 and EMU-006 are new, EMU-004, EMU-005 and DEV-016 are revised, and BLE-012, DEV-006, TCTL-006, TDESK-011, TOOL-017 and TOOL-022 follow the card's new paths. The README documents the unit, its test, the play build's sound and the corrected benchmark. The core-syntax audit passed.
+
+#### Next Steps:
+
+If the HDMI loss returns, the next cycle should first run the board with the I2S2 removed and then with another clean seed to tell the I2S clocks beside the HDMI port from the placement, and should watch the play build's PUSHED, PLAYED and VBL figures for a repeat of the FIFO overflow; otherwise the next cycle should propose the next step for user approval, such as loading cartridges from `/root/data/nes` instead of building one into the program, or player 2.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/audio_test/Makefile
+- firmware/apps/audio_test/main.c
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/fceu_settings.c
+- firmware/apps/nes_bench/main.cpp
+- firmware/include/tinynes.h
+- fpga/ae350_soc/ae350_soc.cst
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/i2s_out.sv
+- tests/ae350_soc_tb.sv
+- tests/i2s_out_tb.sv
+- tools/build_ae350_soc.sh
+- tools/deploy_tinytang.sh
+- tools/designs/ae350_soc.json
+- tools/sweep.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

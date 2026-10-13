@@ -202,6 +202,7 @@ module ae350_soc_tb #(
     wire [1:0] sdram_dqm;
     wire [15:0] sdram_dq;
     tri1 [7:0] pmod0;
+    wire [3:0] pmod1_dac;
 
     ae350_soc_top #(.NOBOOT_BITS(NOBOOT_BITS), .SDRAM_INIT_CYCLES(100)) dut (
         .sys_clk(clk),
@@ -220,7 +221,8 @@ module ae350_soc_tb #(
         .tmds_clk_n(),
         .tmds_d_p(),
         .tmds_d_n(),
-        .pmod0(pmod0)
+        .pmod0(pmod0),
+        .pmod1_dac(pmod1_dac)
     );
 
     sdram_model chip (
@@ -604,8 +606,8 @@ module ae350_soc_tb #(
         end
     endtask
 
-    // Video, pads and UART share the EXTS port: transfers to each, back to
-    // back and after each other's ERROR responses.
+    // Video, pads, audio and UART share the EXTS port: transfers to each,
+    // back to back and after each other's ERROR responses.
     task test_video;
         begin
             ext_m.clear();
@@ -629,6 +631,14 @@ module ae350_soc_tb #(
             ext_m.push(32'he8040002, 1'b0, 3'd2, 0, 1'b0);
             ext_m.push(32'he8040004, 1'b1, 3'd2, 32'd200, 1'b0);
             ext_m.push(32'he8040004, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8050000, 1'b0, 3'd2, 0, 1'b0); // 20
+            ext_m.push(32'he8000008, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he805000c, 1'b1, 3'd2, 32'h11112222, 1'b0);
+            ext_m.push(32'he8050008, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8050018, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8040000, 1'b0, 3'd2, 0, 1'b0); // 25
+            ext_m.push(32'he8050004, 1'b1, 3'd2, 32'd2, 1'b0);
+            ext_m.push(32'he8050008, 1'b0, 3'd2, 0, 1'b0);
             ext_m.run();
             ext_m.expect_ok(0, 32'h544e5631);
             ext_m.expect_ok(1, 32'h544e3031);
@@ -650,10 +660,20 @@ module ae350_soc_tb #(
             ext_m.expect_error(17);
             ext_m.expect_write_ok(18);
             ext_m.expect_ok(19, 32'd200);
+            ext_m.expect_ok(20, 32'h544e4131);
+            ext_m.expect_ok(21, 32'h544e3031);
+            ext_m.expect_write_ok(22);
+            ext_m.expect_ok(23, 32'd1);
+            ext_m.expect_error(24);
+            ext_m.expect_ok(25, 32'h544e5031);
+            ext_m.expect_write_ok(26);
+            ext_m.expect_ok(27, 32'd0);
+            if (dut.sound.frames == 0 || pmod1_dac[0] === 1'bx)
+                $fatal(1, "the I2S clocks are not running");
             repeat (8) @(negedge pix_clk);
             if (dut.screen.palette[1] !== 24'h123456)
                 $fatal(1, "palette write through EXTS did not land");
-            $display("PASS: EXTS video and pad registers beside the UART registers");
+            $display("PASS: EXTS video, pad and audio registers beside the UART registers");
         end
     endtask
 

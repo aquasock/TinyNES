@@ -83,6 +83,26 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 #define TN_PAD_QUARTER_100K 187u
 #define TN_PAD_QUARTER_50K  375u
 
+/* Stereo I2S to a Pmod I2S2 on PMOD1 (fpga/ae350_soc/i2s_out.sv). The DAC
+ * plays one sample pair per frame at TN_AUDIO_RATE from a FIFO of
+ * TN_AUDIO_DEPTH pairs; an empty FIFO plays silence and counts an underrun.
+ * DATA takes left in bits 31:16 and right in bits 15:0. */
+#define TN_AUDIO_ID        TN_REG(0x50000) /* read: TN_AUDIO_ID_VALUE */
+#define TN_AUDIO_CTRL      TN_REG(0x50004) /* bit 0 enable; write bit 1 flushes */
+#define TN_AUDIO_STATUS    TN_REG(0x50008)
+#define TN_AUDIO_DATA      TN_REG(0x5000c) /* write: one sample pair */
+#define TN_AUDIO_FRAMES    TN_REG(0x50010) /* read: frames sent since reset */
+#define TN_AUDIO_DROPS     TN_REG(0x50014) /* read: writes to a full FIFO */
+#define TN_AUDIO_ID_VALUE  0x544e4131u /* "TNA1" */
+#define TN_AUDIO_ENABLE    0x1u
+#define TN_AUDIO_FLUSH     0x2u
+#define TN_AUDIO_LEVEL(s)  ((s) & 0xfffu)
+#define TN_AUDIO_UNDERRUNS(s) ((s) >> 16)
+#define TN_AUDIO_DEPTH     2048u
+/* 75 MHz bus clock / 1536: MCLK = bus / 6, LRCK = MCLK / 256. */
+#define TN_AUDIO_RATE_NUM  75000000u
+#define TN_AUDIO_RATE_DEN  1536u
+
 #define TN_UART_BAUD 2000000u
 #define TN_CORE_HZ   750000000u
 

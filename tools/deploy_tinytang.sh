@@ -16,7 +16,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 tinytang="${TINYTANG_DIR:-$(dirname "$root")/TinyTang}"
 port="${TINYTANG_PORT:-/dev/ttyACM0}"
 image="${1:-$root/build/ae350_soc/ae350_soc.bin}"
-remote="${TINYNES_REMOTE:-/cores/console138k/tinynes.bin}"
+remote="${TINYNES_REMOTE:-/root/cores/console138k/tinynes.bin}"
 
 [[ -f "$image" ]] || { echo "missing image: $image (run tools/build_ae350_soc.sh)" >&2; exit 2; }
 [[ -f "$tinytang/tools/tinytang_put.py" ]] ||

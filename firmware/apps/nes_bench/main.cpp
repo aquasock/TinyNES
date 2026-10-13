@@ -42,9 +42,24 @@
 // are players 1 and 2 in place of the script, the game runs until HOME and
 // SELECT are held together on either controller, and the report lines come
 // once a minute and at the end:
-//   TinyNES NES PLAY PAD1=<state> PAD2=<state>
+//   TinyNES NES PLAY PAD1=<state> PAD2=<state> SOUND=<Hz>
 // where <state> is classic, other or absent. A controller that is absent or
-// not a Classic Controller reads as nothing pressed.
+// not a Classic Controller reads as nothing pressed. The sound plays on the
+// Pmod I2S2 on PMOD1 (fpga/ae350_soc/i2s_out.sv), FCEUmm's mono sample in
+// both channels. The DAC takes 75 MHz / 1536 = 48,828.125 pairs a second,
+// 813.8 per 60 Hz HDMI frame, while the game runs one NES frame per HDMI
+// frame, so FCEUmm is run at that rate times 60.0988 / 60, 48,909 Hz, to
+// make as many samples a frame as are played. The FIFO starts with 800
+// pairs of silence, and at the start of each frame its level is steered
+// toward AUDIO_TARGET by repeating or dropping one sample. The end adds
+//   TinyNES NES AUDIO UNDER=<n> DROPS=<n> LEVEL=<min>-<max> ADJUST=+<n>/-<n>
+//       PUSH=<us> PUSHED=<pairs> PLAYED=<pairs> VBL=<frames>
+// UNDER counts frames the DAC found the FIFO empty, DROPS samples sent to a
+// full FIFO, LEVEL the range of the level at frame starts, ADJUST the
+// samples repeated and dropped, PUSH the mean time to send a frame's sound,
+// and PUSHED, PLAYED and VBL the pairs sent, the pairs the DAC played and
+// the HDMI frames shown since the sound was enabled. The program fails if
+// UNDER or DROPS is not 0.
 
 #include <cstdint>
 #include <cstdio>
@@ -71,6 +86,9 @@ void FCEUI_CloseGame(void);
 void FCEUI_Kill(void);
 extern uint8_t *XBuf, *XDBuf;
 extern int option_ramstate;
+// fceu_settings.c: the five APU channel volumes, which FCEUI_Initialize
+// leaves at 0.
+void nes_bench_apu_volumes(int volume);
 }
 
 namespace {
@@ -80,8 +98,17 @@ const uint8_t JOY_A = 0x01, JOY_B = 0x02, JOY_SELECT = 0x04, JOY_START = 0x08,
 // FCEUmm's libretro driver's defaults, which these runs keep.
 const int SOUND_RATE = 48000;
 const uint32_t SOUND_VOLUME = 150;
+// Each APU channel at full volume, as the libretro driver's defaults.
+const int APU_CHANNEL_VOLUME = 256;
 // The NES frame period: FCEUmm's NTSC rate of 39375000 / 655171 Hz.
 const double NES_FPS = 39375000.0 / 655171.0;
+#ifdef NES_PLAY
+// The sound FIFO's level at the start of a frame, in sample pairs: nothing
+// is corrected within AUDIO_BAND of AUDIO_TARGET. A frame's emulation plays
+// up to about 610 pairs before its own are sent and each frame sends about
+// 814, so the level stays between about 490 and 1,720 of 2,048.
+const uint32_t AUDIO_TARGET = 1100, AUDIO_BAND = 200, AUDIO_PREFILL = 800;
+#endif
 const unsigned WIDTH = 256, HEIGHT = 240;
 // The PPU writes lines 0 to 240 of XBuf (240 for the lines it does not
 // show), each up to 272 bytes from its start, so a frame needs 61,712
@@ -297,6 +324,41 @@ bool quit_held(uint16_t held)
 {
 	return (held & (WII_HOME | WII_SELECT)) == (WII_HOME | WII_SELECT);
 }
+
+// One frame's sound to the DAC's FIFO, steering its level (read at the
+// start of the frame) toward AUDIO_TARGET by one sample.
+struct AudioStats {
+	uint32_t level_min = UINT32_MAX, level_max = 0;
+	unsigned repeated = 0, dropped = 0;
+	uint32_t pushed = 0;
+};
+
+void send_audio(const int32_t *sound, int32_t count, uint32_t level,
+		AudioStats &stats)
+{
+	if (level < stats.level_min)
+		stats.level_min = level;
+	if (level > stats.level_max)
+		stats.level_max = level;
+	if (count <= 0)
+		return;
+	int32_t n = count;
+	if (level > AUDIO_TARGET + AUDIO_BAND && n > 1) {
+		n--;
+		stats.dropped++;
+	}
+	// Each element is a 16-bit mono sample, as FCEUmm's libretro driver
+	// takes it: the same in both halves.
+	for (int32_t i = 0; i < n; i++)
+		TN_AUDIO_DATA = (uint32_t)sound[i] << 16 | ((uint32_t)sound[i] & 0xffffu);
+	stats.pushed += (uint32_t)n;
+	if (level < AUDIO_TARGET - AUDIO_BAND) {
+		TN_AUDIO_DATA = (uint32_t)sound[n - 1] << 16 |
+				((uint32_t)sound[n - 1] & 0xffffu);
+		stats.repeated++;
+		stats.pushed++;
+	}
+}
 #endif
 
 #ifndef NES_PLAY
@@ -393,8 +455,15 @@ int main()
 		printf("TinyNES NES INIT FAILED\n");
 		return 1;
 	}
+	nes_bench_apu_volumes(APU_CHANNEL_VOLUME);
 	FCEUI_SetSoundVolume(SOUND_VOLUME);
+#ifdef NES_PLAY
+	const int sound_rate = (int)((double)TN_AUDIO_RATE_NUM / TN_AUDIO_RATE_DEN *
+				     NES_FPS / 60.0 + 0.5);
+	FCEUI_Sound(sound_rate);
+#else
 	FCEUI_Sound(SOUND_RATE);
+#endif
 	if (!FCEUI_LoadGame("rom.nes", nes_rom, rom_size, nullptr)) {
 		printf("TinyNES NES LOAD FAILED\n");
 		return 1;
@@ -431,7 +500,20 @@ int main()
 		printf("TinyNES NES BAD PAD ID=%08lx\n", (unsigned long)TN_PAD_ID);
 		return 1;
 	}
-	printf("TinyNES NES PLAY PAD1=%s PAD2=%s\n", pad_state(0), pad_state(1));
+	if (TN_AUDIO_ID != TN_AUDIO_ID_VALUE) {
+		printf("TinyNES NES BAD AUDIO ID=%08lx\n", (unsigned long)TN_AUDIO_ID);
+		return 1;
+	}
+	printf("TinyNES NES PLAY PAD1=%s PAD2=%s SOUND=%d\n", pad_state(0),
+	       pad_state(1), sound_rate);
+	TN_AUDIO_CTRL = TN_AUDIO_FLUSH;
+	for (uint32_t i = 0; i < AUDIO_PREFILL; i++)
+		TN_AUDIO_DATA = 0;
+	const uint32_t under0 = TN_AUDIO_UNDERRUNS(TN_AUDIO_STATUS);
+	const uint32_t drops0 = TN_AUDIO_DROPS;
+	AudioStats audio;
+	uint64_t push_total = 0;
+	uint32_t played0 = 0, vbl0 = 0;
 #endif
 #else
 	const char *dump = getenv("NES_DUMP");
@@ -452,6 +534,7 @@ int main()
 		joypads = read_pad(0, held1) | (uint32_t)read_pad(1, held2) << 8;
 		if (quit_held(held1) || quit_held(held2))
 			break;
+		const uint32_t audio_level = TN_AUDIO_LEVEL(TN_AUDIO_STATUS);
 #else
 		joypads = pad_for(f);
 #endif
@@ -463,6 +546,16 @@ int main()
 		uint64_t t = ticks();
 		FCEUI_Emulate(&pixels, &sound, &sound_size, 0);
 		t = ticks() - t;
+#ifdef NES_PLAY
+		const uint64_t a = ticks();
+		send_audio(sound, sound_size, audio_level, audio);
+		if (f == 0) {
+			TN_AUDIO_CTRL = TN_AUDIO_ENABLE;
+			played0 = TN_AUDIO_FRAMES;
+			vbl0 = TN_VIDEO_FRAMES;
+		}
+		push_total += ticks() - a;
+#endif
 
 		uint64_t s = ticks();
 #ifdef __riscv
@@ -528,8 +621,18 @@ int main()
 
 #ifdef __riscv
 	const unsigned late = TN_VIDEO_LATE - late0;
+#ifdef NES_PLAY
+	const uint32_t under = TN_AUDIO_UNDERRUNS(TN_AUDIO_STATUS) - under0;
+	const uint32_t drops = TN_AUDIO_DROPS - drops0;
+	const uint32_t played_pairs = TN_AUDIO_FRAMES - played0;
+	const uint32_t vbl_count = TN_VIDEO_FRAMES - vbl0;
+	TN_AUDIO_CTRL = TN_AUDIO_FLUSH;
+#else
+	const uint32_t under = 0, drops = 0;
+#endif
 #else
 	const unsigned late = 0, missed = 0;
+	const uint32_t under = 0, drops = 0;
 #endif
 	const unsigned n = played ? played : 1;
 	const uint64_t avg = total / n ? total / n : 1;
@@ -544,6 +647,15 @@ int main()
 	       speed % 10, late, missed);
 	printf("TinyNES NES VIDEO=%08lx AUDIO=%08lx\n", (unsigned long)video_crc,
 	       (unsigned long)audio_crc);
+#ifdef NES_PLAY
+	printf("TinyNES NES AUDIO UNDER=%lu DROPS=%lu LEVEL=%lu-%lu ADJUST=+%u/-%u "
+	       "PUSH=%llu PUSHED=%lu PLAYED=%lu VBL=%lu\n", (unsigned long)under,
+	       (unsigned long)drops, (unsigned long)(played ? audio.level_min : 0),
+	       (unsigned long)audio.level_max, audio.repeated, audio.dropped,
+	       (unsigned long long)to_us(push_total / n),
+	       (unsigned long)audio.pushed, (unsigned long)played_pairs,
+	       (unsigned long)vbl_count);
+#endif
 
 	// The last frame stays on screen; the core frees only its own buffer.
 	XBuf = core_xbuf;
@@ -552,5 +664,5 @@ int main()
 #if defined(__riscv) && defined(NES_MCACHE)
 	__asm__ volatile("csrc 0x7ca, %0" : : "r"((uint32_t)NES_MCACHE));
 #endif
-	return late ? 1 : 0;
+	return late || under || drops ? 1 : 0;
 }

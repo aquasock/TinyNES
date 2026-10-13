@@ -144,6 +144,15 @@ def place_and_route(tools, design, synth_json, out, seed, extra):
     row.update(parse_pnr((out / "nextpnr.log").read_text(errors="replace"),
                          out / "timing.json", out / "routed.json"))
     row["status"] = "ok" if rc == 0 else "fail"
+    # The nextpnr fork's NPNR_GOWIN_CLK_FIRST names a net to route first; a
+    # name that matches no net is silently ignored, so a run without the
+    # fork's "routing '<net>' first" line fails, as tools/build_ae350_soc.sh
+    # does.
+    first = os.environ.get("NPNR_GOWIN_CLK_FIRST")
+    if first and rc == 0 and f"routing '{first}' first" not in \
+            (out / "nextpnr.log").read_text(errors="replace"):
+        row["status"] = "fail"
+        row["reason"] = f"{first} not routed first"
     return row
 
 
