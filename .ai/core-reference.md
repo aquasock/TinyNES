@@ -144,6 +144,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Which mcache_ctl bits exist beyond the cache enables? | DEV | DEV-014 |
 | How are the AE350's bus ports timed in the open flow? | DEV | DEV-015 |
 | Why does an open-flow AE350 image not boot when its placement changes, and what is NPNR_GOWIN_CLK_FIRST? | DEV | DEV-016 |
+| Why do flip-flops on one clock hold 0 in some placements, and how must an HCLK CLKDIV clock enter the clock plane? | DEV | DEV-017 |
 | Is there a core with no emulator for TinyDesk to sit on? | DEV | DEV-005 |
 | Which FPGA pins are the JTAG programmer's? | BRD | BRD-001 |
 | Why does the SD card fail to mount? | BRD | BRD-002 |
@@ -263,7 +264,8 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Why was the open-flow core's HDMI dark, how is it fixed, and which flow builds the desktop core? | TOOL | TOOL-017 |
 | Which compiler builds the AE350 firmware, and which runtime library does it link? | TOOL | TOOL-018 |
 | Why does <dirent.h> fail to compile for the AE350, and how is third-party code built? | TOOL | TOOL-019 |
-| Why does a block RAM read back zero in the open flow? | TOOL | TOOL-020 |
+| Why did the video unit's block RAMs read back wrong in the open flow? | TOOL | TOOL-020, DEV-017 |
+| How is Gowin EDA run headless to measure a vendor route? | TOOL | TOOL-021 |
 | Is it safe to send a file to the board, or is the desktop holding the console? | TOOL | TOOL-011 |
 | How is the board debugged one-wire, and what of TinyTang and TinyDesk is reachable then? | TOOL | TOOL-012 |
 | How is a core deployed, debugged and exercised entirely over one-wire? | TOOL | TOOL-013 |
@@ -301,7 +303,7 @@ DEV-005: "The menu core is the console138k design with nestang's NES machine not
 DEV-006: "The FPGA is not empty at power-up: with no tangload it is already running a core that answers core ID 0 on the UART and shows a TangCore splash on HDMI, so it configures itself from storage of its own; boot.tdsh replaces it within seconds, and every boot reloads this project's core (tangload, fpga, nesload for a cartridge)"
 DEV-007: "The FPGA's 16 MB XTX configuration flash (JEDEC 0b 40 18) holds one image at offset 0, 1,084,246 B, a compressed GW5AST-138 bitstream matching no TangCore 0.9 core; TangCore's installer and firmware never write that flash, so it is most likely the factory splash core"
 DEV-008: "The A25 core runs at PLL_R[0] CLKOUT1's frequency whatever net drives CORE_CLK; it measured 750.0000 MHz against the 50 MHz oscillator in an open-flow build with a 75 MHz bus; Gowin's manual keeps AHB and APB synchronous and below 200 MHz"
-DEV-009: "PLL_R[0] CLKOUT0 reaches the global clock network through TRPLL0CLK0 at the centre mux; entering at (54,93) SPINE8 or SPINE10 (TOP bridge inputs) clocks the AE350 buses, entering at (54,88) SPINE16 (BOTTOM bridge input) leaves them dead"
+DEV-009: "PLL_R[0] CLKOUT0 reaches the global clock network through TRPLL0CLK0 at the centre mux; entering at (54,93) SPINE8 or SPINE10 (TOP bridge inputs) clocks the AE350 buses, entering at (54,88) SPINE16 (BOTTOM bridge input) leaves them dead; the rule is for top PLLs only (DEV-017)"
 DEV-010: "The A25 fetches down mispredicted paths to address 0 on the RAM port (HPROT[0] 0, 32-byte WRAP4 line fills with the I-cache on); with both caches on, one ERROR on such a fill stops the core, so ahb_ram answers fetches outside its block RAM and SDRAM windows with zero and OKAY"
 DEV-011: "The AE350 RAM port (DDR_H*) carries 0x40000000 to at least 0x7fffffff, cacheable: TinyNES runs block RAM at 0x60000000 and SDRAM at 0x40000000 there with both caches on, and Tang-PSX ran DDR3 up to 0x7fffffff"
 DEV-012: "The A25's misa reads 0x4094312d: RV32 IMAFDC plus N, S, U and X, so it has a single- and double-precision FPU, which TinyNES's soft-float rv32imac/ilp32 firmware does not use"
@@ -309,6 +311,7 @@ DEV-013: "The A25's micm_cfg and mdcm_cfg read 0x00439ada: the L1 I-cache and D-
 DEV-014: "U-Boot names Andes mcache_ctl bits 9 and 10 as I- and D-cache prefetch enables and bit 13 as D-cache write-around; on this A25 they read back 0 when set, so only the cache enables, bits 0 and 1, exist of those tried"
 DEV-015: "Gowin's timing analyser charges the AE350 AHB ports setups of -1.681 to 0.125 ns, holds to 0.094 ns and clock-to-out up to 1.859 ns; the Apicula and nextpnr forks now carry them as an AE350_SOC timing variant"
 DEV-016: "Open-flow AE350 images whose bus clock reaches the A25's row-0 taps through global branch GB20 do not boot, through GB10 they do; the build routes bus_clk first with a temporary nextpnr knob to keep it on GB10"
+DEV-017: "Clock-bridge pips (27,94) SPINE17 <= CBRIDGEOUT_BOTTOM0 and SPINE18 <= CBRIDGEOUT_BOTTOM2 clock nothing, SPINE26 <= CBRIDGEOUT_BOTTOM2 at (27,96) and (81,96) works; an HCLK CLKDIV enters at (54,88) SPINE18 (its TOP entry is dead); fork cd3893f and a build check enforce it"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
 BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
@@ -447,7 +450,8 @@ TOOL-016: "Linked out of the SDK under their own licences: FreeRTOS V10.4.6 (MIT
 TOOL-017: "Open-flow HDMI works: the apicula fork at 1c2b6cb+ writes the OSER10 aux half, HWL, lane-0 FCLKSEL0/3 and ODDR LSROMUX_0 like Gowin, and at 93761f4+ its io2hclk map splits each long side at the block midpoint as the vendor does, so the build adds no fuses; the clock network was never the fault"
 TOOL-018: "The AE350 firmware is built with xPack GNU RISC-V Embedded GCC 15.2.0-1 (riscv-none-elf-gcc 15.2.0), configured --with-arch=rv32imac --with-abi=ilp32, so -march=rv32imac_zicsr_zifencei -mabi=ilp32 selects its default multilib: the boot ROM (firmware/boot/Makefile) links libgcc alone, and loaded programs (firmware/rt/rt.mk) link newlib 4.5.0's libc and libm, libstdc++ and libsupc++ with the runtime's own crt0 and syscalls; the compiler is found in ~/tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin"
 TOOL-019: "newlib 4.5.0's <sys/dirent.h> is an #error, so firmware/rt/include/sys/dirent.h stands in and syscalls.c's opendir, readdir, closedir and _stat always fail; rt.mk builds third-party LIB_SOURCES with their own flags"
-TOOL-020: "Apicula's 1-bit two-clock DPB reads zero on the GW5AST-138C though its attributes and routing match Gowin's; TinyNES builds its frame buffers as 4Kx4 arrays"
+TOOL-020: "The video unit's two-clock block RAMs read back wrong in every shape tried, most likely through the pixel clock's dead bridge spines (DEV-017); TinyNES keeps its frame buffers in the SDRAM and every video block RAM on one clock"
+TOOL-021: "gw_sh runs headless with LD_PRELOAD of the system libfreetype and QT_QPA_PLATFORM=offscreen; regenerating the fork's chipdb needs GOWINHOME and msgspec from ~/tools/pydeps"
 EMU-001: "libretro Nestopia 135dfa6 runs Castlevania on the A25 with checksums matching a PC build, at 23.16 ms a frame against 16.64 ms: 71.8 percent of full speed, with a 0.78 s start"
 EMU-002: "libretro FCEUmm ac0d00a runs Castlevania on the A25 with checksums matching a PC build, at 19.07 ms a frame: 87.2 percent of full speed and 1.2 times Nestopia (1.8 times on the PC); it is the core TinyNES keeps"
 EMU-003: "8.23 ms of FCEUmm's 19.14 ms XRGB8888 frame on the A25 is the 8-bit to XRGB8888 conversion; RGB565 cuts it to 5.01 ms and the frame to 15.85 ms, 104.9 percent; -O3 is slower and the prefetch and write-around bits do not exist"
@@ -569,7 +573,7 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   sources:
     - "aquasock/apicula epic/gw5ast138c apycula/chipdb.py fse_clock_pips_138 (centre clock mux table 38)"
     - "Gowin IDE 1.9.11.03 bitstreams of the TinyNES AE350 gate and of a PLL-to-UART test design, decoded with Apicula"
-  verification: "Measured on this board on 2026-10-12 (core-log entry 5) with agent-run SRAM loads in one-wire mode: the bit-patched image ran on two loads while the unpatched image stayed silent, and 16-seed open-flow builds with the fork's restricted chipdb passed as trace and normal images."
+  verification: "Measured on this board on 2026-10-12 (core-log entry 5) with agent-run SRAM loads in one-wire mode: the bit-patched image ran on two loads while the unpatched image stayed silent, and 16-seed open-flow builds with the fork's restricted chipdb passed as trace and normal images. Revised 2026-10-12 (core-log entry 14): CBRIDGEOUT_BOTTOM0 also fails for an HCLK CLKDIV clock, and the TOP-entry rule does not carry over to that source, whose TOP entry clocks nothing; see DEV-017, whose fork commit cd3893f keeps this record's PLL rule."
 
 - record_id: DEV-010
   kind: DEVICE
@@ -590,11 +594,11 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   status: VERIFIED
   verified_date: 2026-10-12
   statement: "The A25 sends data accesses and instruction fetches for 0x40000000 and 0x60000000, and in Tang-PSX up to 0x7fffffff, out on the 64-bit RAM AHB port (DDR_H*), with the full 32-bit address on DDR_HADDR, and caches them once mcache_ctl enables the caches: the D-cache fills and writes back 32-byte lines there as WRAP4 bursts of doublewords. Wrong-path fetches to address 0 also come out on this port (DEV-010)."
-  consequence: "The fabric decodes the RAM port itself and can put several memories on it: TinyNES places 64 KiB of block RAM at 0x60000000 and the dock's 32 MiB SDRAM at 0x40000000, both cacheable, and Tang-PSX put 1 GiB of DDR3 at 0x40000000. Anything a fabric master writes there must be invalidated in the D-cache before the CPU reads it, and anything the CPU writes must be written back first (tn_dcache_wbinval, MCCTL command 6, in firmware/include/tinynes.h)."
+  consequence: "The fabric decodes the RAM port itself and can put several memories on it: TinyNES places 64 KiB of block RAM at 0x60000000 and the dock's 32 MiB SDRAM at 0x40000000, both cacheable, and Tang-PSX put 1 GiB of DDR3 at 0x40000000. Anything a fabric master writes there must be invalidated in the D-cache before the CPU reads it, and anything the CPU writes must be written back first (tn_dcache_wbinval, MCCTL command 6, in firmware/include/tinynes.h); the video unit reads its frame buffers from the top 128 KiB of the SDRAM (TN_VIDEO_FB_BASE, 0x41fe0000), so a program writes them back before asking for a buffer to be shown."
   sources:
     - "This project's fpga/ae350_soc/ahb_ram.sv (BASE, SDRAM_BASE), firmware/boot/main.c (the cached block RAM and SDRAM tests) and firmware/common/memtest.c (tn_test_words)"
     - "Tang-PSX 61974ca, .ai/core-reference.md AE350-002 and AE350-003 (RAM port at 0x40000000, cacheable) and .ai/core-log.md entry 44 (L2 bypass range 0x7fe00000-0x7fffffff on DDR3 behind the RAM port)"
-  verification: "Measured on this board on 2026-10-12 (core-log entry 8): the image placing block RAM at 0x60000000 and SDRAM at 0x40000000 passed every RAM test with the caches off and on and printed a cached block RAM time matching entry 7's (CAC=001e33f4 against 001e33e1). Whether the port also carries 0x00000000 to 0x3fffffff as memory, rather than only the stray fetches of DEV-010, was not tested; Gowin's manual was not read for the port's decode. Revised 2026-10-12 (core-log entry 9): the firmware's register header and memory tests moved to firmware/include/tinynes.h and firmware/common/memtest.c; a program loaded into the SDRAM and run from it with both caches on, after fence.i, executed correctly, so instruction fetches through the I-cache from 0x40000000 work too."
+  verification: "Measured on this board on 2026-10-12 (core-log entry 8): the image placing block RAM at 0x60000000 and SDRAM at 0x40000000 passed every RAM test with the caches off and on and printed a cached block RAM time matching entry 7's (CAC=001e33f4 against 001e33e1). Whether the port also carries 0x00000000 to 0x3fffffff as memory, rather than only the stray fetches of DEV-010, was not tested; Gowin's manual was not read for the port's decode. Revised 2026-10-12 (core-log entry 9): the firmware's register header and memory tests moved to firmware/include/tinynes.h and firmware/common/memtest.c; a program loaded into the SDRAM and run from it with both caches on, after fence.i, executed correctly, so instruction fetches through the I-cache from 0x40000000 work too. Revised 2026-10-12 (core-log entry 14): video_test wrote both frame buffers through the D-cache, ran MCCTL command 6 and read them back equal from the SDRAM, and the video unit's line fetches of them showed the whole picture."
 
 - record_id: DEV-012
   kind: DEVICE
@@ -662,6 +666,20 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "aquasock/nextpnr epic/gw5ast138c 7d1b131c, himbaechel/uarch/gowin/globals.cc (NPNR_GOWIN_CLK_FIRST)"
     - "This project's tools/build_ae350_soc.sh"
   verification: "Observed on this board on 2026-10-12 (core-log entry 13) with agent-run SRAM loads in one-wire mode and power cycles between failures (BRD-012): the GB10 rebuild of the failing netlist, identical in placement and Fmax, passed the UART check on its first load. INFERRED because the mechanism is not traced; the evidence is the consistent split across the images listed."
+
+- record_id: DEV-017
+  kind: DEVICE
+  topic_id: DEV
+  title: "GW5AST-138 clock-bridge pips that clock nothing, and where an HCLK CLKDIV enters the clock plane"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "On this board's GW5AST-138C, a clock that reaches a spine through the bridge pip `(27,94) SPINE17 <= CBRIDGEOUT_BOTTOM0` or `(27,94) SPINE18 <= CBRIDGEOUT_BOTTOM2` clocks none of the flip-flops on the branches fed from that spine; they hold their power-up 0. The same clock through `SPINE26 <= CBRIDGEOUT_BOTTOM2` at (27,96) and (81,96) clocks every one. Over seeds 1, 3, 6 and 8 of one TinyNES image whose HDMI pixel clock came from a CLKDIV at RIGHTSIDE[4] (HCLK escape wire 111), all 32 `pixel1` flip-flops sorted exactly by the spine feeding their branch: SPINE17 or SPINE18 stuck at 0, SPINE26 correct. The CLKDIV wire entering the centre mux at `(54,88) SPINE16` fed CBRIDGEOUT_BOTTOM0, entering at `(54,88) SPINE18` fed CBRIDGEOUT_BOTTOM2, and entering at `(54,93) SPINE9` (CBRIDGEOUT_TOP1) left the whole pixel clock dead in 8 of 8 seeds: no HDMI signal and no palette write acknowledged. A Gowin IDE 1.9.11.03 build of the same clock chain with flip-flops pinned across the device took `(54,88) SPINE19 <= UNK111`, `(27,94) SPINE16 <= CBRIDGEOUT_BOTTOM3` and `(27,96)`/`(81,96) SPINE24 <= CBRIDGEOUT_BOTTOM3`, and tapped SPINE19 and SPINE27. `SPINE25 <= CBRIDGEOUT_BOTTOM0` was on the silent bus-clock route of DEV-009."
+  consequence: "The aquasock Apicula fork at cd3893f (epic/gw5ast138c) drops the three bridge pips above, the (27,94) pair also at (81,94), and lets the CLKDIV escape wires 105 to 112 enter the centre mux only at `(54,88) SPINE18`; tests/test_clock_bridge_138c.py holds the chipdb to that. tools/build_ae350_soc.sh fails unless the pixel clock reaches the spines only through `SPINE26 <= CBRIDGEOUT_BOTTOM2`. With both, 8 of 8 seeds and the unseeded image showed the whole picture. Lead, not finding: the vendor's SPINE16 output at (27,94) followed by taps on SPINE19 suggests the (27,94) bridge outputs are permuted against the spine names the chipdb gives them, which would also fit DEV-016's GB20 fault; the other bridge pips and entries remain unmeasured, so any new clock source or a design whose pixel clock needs more than SPINE26 needs the same measurement."
+  sources:
+    - "aquasock/apicula epic/gw5ast138c cd3893f, apycula/chipdb.py `_gw5ast138c_dead_bridge_pips` and the CLKDIV entry rule in fse_clock_pips_138; tests/test_clock_bridge_138c.py"
+    - "Routed nextpnr JSON and Apicula-decoded bitstreams of the TinyNES ae350_soc seeds named (build/sweep_bits), and a Gowin IDE 1.9.11.03 build of the HDMI clock chain with 23 pinned flip-flops, decoded with gowin_unpack (TOOL-021)"
+    - "This project's tools/build_ae350_soc.sh (pixel clock bridge check), fpga/ae350_soc/video.sv (BITS and PIXELS registers)"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 14) with agent-run SRAM loads in one-wire mode: the video unit's BITS register and video_test's PIXELS check, read over the UART, gave the stuck bits of every seed, and the user watched each picture on a monitor; a sweep with the TOP entry was dead on all 8 seeds, and the sweep with the fork at cd3893f passed on all 8 and on the unseeded image."
 
 - record_id: BRD-001
   kind: BOARD
@@ -804,7 +822,7 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   sources:
     - "TinyTang fpga/desktop/desktop.cst (TMDS pins) and fpga/hdmi_test/hdmi_test.v (PLL chain, CLKDIV, OSER10 and ELVDS_OBUF use)"
     - "This project's fpga/ae350_soc/ae350_soc.cst, ae350_soc.sdc, ae350_soc.sv and video.sv; nextpnr-himbaechel cst.cc for the RIGHTSIDE[n] = block x 4 + lane naming"
-  verification: "On this board on 2026-10-12 (core-log entry 13) the user saw the fabric colour bars on HDMI from every cycle-13 image, and then video_test's picture with its moving square from 3937428f. A beacon build measured the pixel clock against the oscillator at 74.25 MHz."
+  verification: "On this board on 2026-10-12 (core-log entry 13) the user saw the fabric colour bars on HDMI from every cycle-13 image, and then video_test's picture with its moving square from 3937428f. A beacon build measured the pixel clock against the oscillator at 74.25 MHz. Revised 2026-10-12 (core-log entry 14): the pixel clock's path onto the global network decides whether pixel-clock logic runs at all (DEV-017); with the fork at cd3893f the user watched the whole video_test picture on eight seeds and the unseeded image."
 
 - record_id: BRD-012
   kind: BOARD
@@ -2521,16 +2539,29 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - record_id: TOOL-020
   kind: TOOLCHAIN
   topic_id: TOOL
-  title: "Apicula's 1-bit-wide, two-clock DPB block RAM reads back zero on the GW5AST-138C"
+  title: "The open flow's video block RAM failures on the GW5AST-138C, most likely the pixel clock's dead bridge spines"
   status: INFERRED
   verified_date: 2026-10-12
-  statement: "With the aquasock Apicula fork (epic/gw5ast138c, f20633a and 860ada4), a DPB with BIT_WIDTH_0 and BIT_WIDTH_1 of 1, written on port A from one clock and read on port B from another, reads zero on the board. Yosys mapped video.sv's four 32Kx8 frame-buffer lanes to 64 such blocks; the picture was black, and a build that coloured pixels by palette index instead of the palette (DEBUG_INDEX) showed the emphasis RAM's contents and zero for every frame-buffer pixel. A gate-level simulation of that netlist against Gowin's DPB models drew the picture correctly. Built as 4Kx4 arrays, which map to DPB at width 4 with the same two clocks, the frame buffers show the picture. Modes seen working: DPB width 4 with two clocks, DPB width 2 with one clock (ahb_ram) and DPX9B at widths 9 and 18. Ruled out by decoding with gowin_unpack a Gowin IDE 1.9.11.03 build and an Apicula build of one test design holding a 1-bit and a 4-bit two-clock DPB: the BSRAM attributes match except DPA_MODE/DPB_MODE=WT (Gowin) and GSR=DISABLE (Apicula), which differ the same way at both widths; the routing into the block matches, address bit 0 included (ADA0/ADA1 at C4/C5 of the next tile, ADB0 to ADB3 at A0 to A3 of the tile after); the output pin matches (DOB0 at Q0); and all 64 1-bit blocks in the failing SoC bitstream decode to the expected settings. The fork's fuzz/gw5ast138c/harness/equiv.py marks the 138C BSRAM mode fuses as unverified. Separately, gowin_pack's get_DP_fuses reads WRITE_MODE while Yosys emits WRITE_MODE0 and WRITE_MODE1, so write-through is never set, at either width."
-  consequence: "Any memory Yosys would map to 1-bit DPB must be shaped so it maps wider until this is found: fpga/ae350_soc/video.sv builds each frame-buffer byte lane as eight 4Kx4 arrays (g_lane/g_bank). Whether a single-clock 1-bit DPB also fails has not been tried. The faulty fuse lies outside what the comparison decoded, or in a pip used only by 1-bit mode; neither is established."
+  statement: "Frame buffers written on the bus clock and read on the HDMI pixel clock came back wrong in every block RAM shape tried with the aquasock Apicula fork at 860ada4: 1-bit DPB blocks (64) read zero; 4Kx4 DPB blocks were per block either readable, zero, or missing bits 1 and 3; 2Kx9 DPX9B blocks read zero on all 8 placement seeds while a 512x9 DPX9B emphasis store on the same two clocks read correctly. The palette lost its entries from 256 up. Replacing the frame buffers with flip-flop line buffers fed from the SDRAM gave the same symptom, pixel bits stuck at 0 per flip-flop and per seed, which DEV-017 traced to pixel-clock branches fed through dead clock-bridge pips. A gate-level simulation of the 1-bit netlist against Gowin's DPB models drew the picture correctly, and a decode of Gowin and Apicula builds of one test design found matching BSRAM attributes and routing apart from WRITE_MODE (gowin_pack's get_DP_fuses reads WRITE_MODE while Yosys emits WRITE_MODE0 and WRITE_MODE1)."
+  consequence: "TinyNES no longer keeps frame buffers in block RAM: they are in the SDRAM, read into flip-flop line buffers, and the palette and emphasis stores are written and read on the pixel clock only; tools/build_ae350_soc.sh fails if any video block RAM has two clocks. The block RAM modes were not retried after the clock-bridge fix of DEV-017, so whether any of them is faulty in its own right is not known; a design that needs block RAM on two clocks should first be checked on hardware with the pixel or second clock routed as DEV-017 requires."
   sources:
     - "aquasock/apicula epic/gw5ast138c, apycula/gowin_pack.py get_DP_fuses and get_bsram_bitwidth, apycula/gowin_unpack.py parse_attrvals, fuzz/gw5ast138c/harness/equiv.py"
     - "Gowin IDE 1.9.11.03 and open-flow builds of a two-DPB comparison design, decoded with gowin_unpack; Gowin simlib gw5a/prim_sim.v DPB and DPX9B models"
-    - "This project's fpga/ae350_soc/video.sv and tools/build_ae350_soc.sh (TINY_NES_SOC_DIAG=3)"
-  verification: "On this board on 2026-10-12 (core-log entry 13): the 1-bit frame-buffer image was black on two loads and the palette-bypass image showed zero frame-buffer pixels on one; the 4-bit image (3937428f) showed the picture on one load. INFERRED because the fault is located by elimination, not by a source."
+    - "This project's fpga/ae350_soc/video.sv and tools/build_ae350_soc.sh"
+  verification: "On this board on 2026-10-12 (core-log entries 13 and 14), from captured HDMI frames decoded per pixel and the palette-bypass build (TINY_NES_SOC_DIAG=3). INFERRED: the block RAM images were built before the clock-bridge fault was known, and their pixel-clock routes were not examined, so the attribution to DEV-017 is by the shared symptom. Revised 2026-10-12 (core-log entry 14): rewritten from the 1-bit-mode explanation after the 4-bit and 9-bit modes and flip-flops failed the same way."
+
+- record_id: TOOL-021
+  kind: TOOLCHAIN
+  topic_id: TOOL
+  title: "Running Gowin IDE 1.9.11.03's gw_sh headless on this workstation"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "~/tools/gowin-1.9.11.03/IDE/bin/gw_sh <script.tcl> stops on a symbol lookup error (libfontconfig needs FT_Done_MM_Var from a newer FreeType than the one bundled in IDE/lib) unless LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libfreetype.so.6, and then aborts without a display unless QT_QPA_PLATFORM=offscreen. With both it builds a GW5AST-LV138PG484AC1/I0 device version C project through to a .fs (set_device ... -device_version C, add_file, set_option -top_module, run all). The fork's gowin_unpack reads that .fs with GW5AST-138C; regenerating the fork's chipdb needs GOWINHOME=~/tools/gowin-1.9.11.03 and msgspec, found in ~/tools/pydeps."
+  consequence: "Vendor builds for measurement (DEV-009, DEV-017) can be scripted without the GUI; they are used only to measure what the open flow should do, never as the project's build."
+  sources:
+    - "Gowin IDE 1.9.11.03 Education, Linux, installed at ~/tools/gowin-1.9.11.03"
+    - "aquasock/apicula epic/gw5ast138c apycula/chipdb_builder.py and apycula/chipdb.py save_chipdb (msgspec)"
+  verification: "Done on this workstation on 2026-10-12 (core-log entry 14): the clock-chain probe built and its bitstream decoded, and the chipdb regenerated byte for byte from the unchanged source."
 
 - record_id: EMU-001
   kind: EXTERNAL

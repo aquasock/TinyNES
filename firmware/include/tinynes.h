@@ -35,17 +35,25 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 /* HDMI video (fpga/ae350_soc/video.sv): 1280x720 60 Hz showing a 256x240
  * frame buffer at 3x, or fabric colour bars until TN_VIDEO_ENABLE is set.
  * CTRL changes take effect at the next vertical blank; STATUS reports what
- * is being shown. Palette, emphasis and frame buffers are write-only; the
- * palette index of a pixel is the pixel itself when its line's emphasis is
- * 0, else 256 + emphasis * 64 + (pixel & 63). */
+ * is being shown. Palette and emphasis are write-only; the palette index of
+ * a pixel is the pixel itself when its line's emphasis is 0, else 256 +
+ * emphasis * 64 + (pixel & 63). The two frame buffers are the top 128 KiB
+ * of the SDRAM, pixel (x, y) at TN_VIDEO_FB(b) + 256 * y + x, written
+ * through the D-cache: write the D-cache back (tn_dcache_wbinval) before
+ * asking for a buffer to be shown. Programs must not use that memory. */
 #define TN_VIDEO_CTRL    TN_REG(0x10000) /* read and write */
 #define TN_VIDEO_STATUS  TN_REG(0x10004) /* read */
 #define TN_VIDEO_FRAMES  TN_REG(0x10008) /* read: vertical blanks */
 #define TN_VIDEO_ID      TN_REG(0x1000c) /* read: TN_VIDEO_ID_VALUE */
+#define TN_VIDEO_LATE    TN_REG(0x10010) /* read: lines shown before fetched */
+#define TN_VIDEO_PIXELS  TN_REG(0x10014) /* read: non-zero pixels, last frame */
+#define TN_VIDEO_BITS    TN_REG(0x10018) /* read: pixel bits seen 1 (7:0), 0 (15:8) */
+#define TN_VIDEO_LB(i)   TN_REG(0x10800 + 4 * (i)) /* read: line-buffer halfword */
 #define TN_VIDEO_PALETTE(i)     TN_REG(0x11000 + 4 * (i)) /* 0xRRGGBB */
 #define TN_VIDEO_EMPHASIS(b, y) TN_REG(0x12000 + 4 * (256 * (b) + (y)))
-#define TN_VIDEO_FB(b) ((volatile uint8_t *)(0xe8020000u + 0x10000u * (b)))
-#define TN_VIDEO_FB32(b) ((volatile uint32_t *)(0xe8020000u + 0x10000u * (b)))
+#define TN_VIDEO_FB_BASE  0x41fe0000u
+#define TN_VIDEO_FB_BYTES (128u << 10)
+#define TN_VIDEO_FB(b) ((uint8_t *)(TN_VIDEO_FB_BASE + 0x10000u * (b)))
 
 #define TN_VIDEO_ENABLE    0x1u /* CTRL: show the frame buffers */
 #define TN_VIDEO_BUFFER    0x2u /* CTRL: the buffer to show (STATUS: shown) */

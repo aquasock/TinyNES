@@ -2,7 +2,9 @@
 // The video unit on its own: registers and error responses over AHB, and
 // whole 1280x720 frames decoded from the TMDS words and compared, pixel by
 // pixel, with a model of the colour bars and of both frame buffers with
-// palette and emphasis. Also checks the sync timing and the buffer flip.
+// palette and emphasis. The frame buffers are a model of ahb_sdram's video
+// channel with a set latency. Also checks the sync timing, the buffer flip,
+// the line fetch addresses and the LATE count when fetches are too slow.
 `timescale 1ns / 1ps
 
 module video_tb;
@@ -23,12 +25,19 @@ module video_tb;
     wire [31:0] hrdata;
     wire hready, hresp;
     wire [9:0] tmds_b, tmds_g, tmds_r;
+    wire vstart;
+    wire [24:8] vaddr;
+    reg vvalid = 1'b0, vdone = 1'b0;
+    reg [6:0] vindex = 7'd0;
+    reg [15:0] vdata = 16'd0;
 
     video dut (
         .clk(clk), .resetn(resetn),
         .haddr(haddr[17:0]), .htrans(htrans), .hsel(hsel), .hwrite(hwrite),
         .hsize(hsize), .hwdata(hwdata), .hready_in(hready),
         .hrdata(hrdata), .hready(hready), .hresp(hresp),
+        .vstart(vstart), .vaddr(vaddr), .vvalid(vvalid), .vindex(vindex),
+        .vdata(vdata), .vdone(vdone),
         .pix_clk(pix_clk), .pix_reset(pix_reset),
         .tmds_blue(tmds_b), .tmds_green(tmds_g), .tmds_red(tmds_r)
     );
@@ -89,6 +98,36 @@ module video_tb;
     // ------------------------------------------------------------ model --
     localparam [31:0] REGS = 32'he8010000, PAL = 32'he8011000,
                       EMPH = 32'he8012000, FB = 32'he8020000;
+
+    // ahb_sdram's video channel: after fetch_delay clocks, the line's 128
+    // halfwords in order with a gap after every seventh, then vdone.
+    reg [7:0] fbmem [0:131071];   // buffer b's pixel (x, y) at {b, y, x}
+    integer fetch_delay = 40, fetches = 0, bad_fetches = 0, k;
+    initial forever begin
+        @(posedge clk);
+        if (vstart) begin
+            if (vaddr[24:17] !== 8'hff || vaddr[15:8] >= 240) begin
+                if (bad_fetches < 5) $display("fetch of %h", vaddr);
+                bad_fetches = bad_fetches + 1;
+            end
+            repeat (fetch_delay) @(posedge clk);
+            for (k = 0; k < 128; k = k + 1) begin
+                vvalid <= 1'b1;
+                vindex <= k;
+                vdata <= {fbmem[{vaddr[16:8], k[6:0], 1'b1}], fbmem[{vaddr[16:8], k[6:0], 1'b0}]};
+                @(posedge clk);
+                if (k % 7 == 6) begin
+                    vvalid <= 1'b0;
+                    @(posedge clk);
+                end
+            end
+            vvalid <= 1'b0;
+            vdone <= 1'b1;
+            @(posedge clk);
+            vdone <= 1'b0;
+            fetches = fetches + 1;
+        end
+    end
 
     function [23:0] pal_rgb(input [9:0] i);
         pal_rgb = {i[7:0] ^ 8'ha5, i[9:2], i[7:0] * 8'd13};
@@ -272,6 +311,8 @@ module video_tb;
         expect_error(1'b0, PAL, 3'd2);
         expect_error(1'b0, EMPH, 3'd2);
         expect_error(1'b0, FB, 3'd2);
+        expect_error(1'b1, FB, 3'd2);
+        expect_error(1'b0, REGS + 32'h1c, 3'd2);
         expect_error(1'b1, REGS + 32'h4, 3'd2);
         expect_error(1'b1, REGS + 32'hc, 3'd2);
         expect_error(1'b1, REGS, 3'd0);
@@ -292,28 +333,13 @@ module video_tb;
 
         for (i = 0; i < 768; i = i + 1)
             wr32(PAL + 4 * i, {8'hee, pal_rgb(i)});
+        // Back to back, so each waits for the one before to cross.
         for (i = 0; i < 512; i = i + 1)
             wr32(EMPH + 4 * i, {29'h1234567, emph(i[8], i[7:0])});
-        // Buffer 0 by words; buffer 1 by bytes, then halfwords, then words.
-        for (y = 0; y < 240; y = y + 1)
-            for (x = 0; x < 256; x = x + 4)
-                wr32(FB + 256 * y + x, {fb_pix(0, x + 3, y), fb_pix(0, x + 2, y),
-                                         fb_pix(0, x + 1, y), fb_pix(0, x, y)});
-        for (y = 0; y < 240; y = y + 1)
-            for (x = 0; x < 256; x = x + 4)
-                if (y < 80) begin
-                    for (i = 0; i < 4; i = i + 1)
-                        ahb(1'b1, FB + 32'h10000 + 256 * y + x + i, 3'd0,
-                            {4{fb_pix(1, x + i, y)}}, rd, err);
-                end else if (y < 160) begin
-                    ahb(1'b1, FB + 32'h10000 + 256 * y + x, 3'd1,
-                        {2{fb_pix(1, x + 1, y), fb_pix(1, x, y)}}, rd, err);
-                    ahb(1'b1, FB + 32'h10000 + 256 * y + x + 2, 3'd1,
-                        {2{fb_pix(1, x + 3, y), fb_pix(1, x + 2, y)}}, rd, err);
-                end else begin
-                    wr32(FB + 32'h10000 + 256 * y + x, {fb_pix(1, x + 3, y), fb_pix(1, x + 2, y),
-                                                         fb_pix(1, x + 1, y), fb_pix(1, x, y)});
-                end
+        for (i = 0; i < 2; i = i + 1)
+            for (y = 0; y < 256; y = y + 1)
+                for (x = 0; x < 256; x = x + 1)
+                    fbmem[{i[0], y[7:0], x[7:0]}] = y < 240 ? fb_pix(i[0], x, y) : 8'hxx;
 
         rd32(REGS + 32'h4, w);
         if (w[2:1] !== 2'b00) fail("STATUS before enable");
@@ -323,6 +349,28 @@ module video_tb;
         do rd32(REGS + 32'h4, w); while (!w[2]);
         if (w[1]) fail("STATUS buffer after enable");
         check_frame(1'b0, 1'b0);
+        f0 = fetches;
+        wait_vsync;
+        if (fetches - f0 != 240) begin
+            $display("%0d line fetches in a frame", fetches - f0);
+            fail("fetches per frame");
+        end
+        f1 = 0;
+        for (y = 0; y < 240; y = y + 1)
+            for (x = 0; x < 256; x = x + 1)
+                f1 = f1 + (fb_pix(0, x, y) != 8'd0);
+        rd32(REGS + 32'h14, w);
+        if (w !== 9 * f1) begin
+            $display("PIXELS %0d, expected %0d", w, 9 * f1);
+            fail("PIXELS");
+        end
+        rd32(REGS + 32'h18, w);
+        if (w !== 32'h0000ffff) begin
+            $display("BITS %h", w);
+            fail("BITS");
+        end
+        rd32(REGS + 32'h10, w);
+        if (w !== 32'd0) fail("LATE with prompt fetches");
 
         // vblank in STATUS, and FRAMES counts frames.
         wait_vsync;
@@ -345,9 +393,42 @@ module video_tb;
         wr32(REGS, 32'd3);
         do rd32(REGS + 32'h4, w); while (!w[1]);
         check_frame(1'b0, 1'b1);
+
+        // Fetches slower than a line (66.7 us) are counted once per line.
+        wait_vsync;
+        fetch_delay = 5200;
+        wait_vsync;
+        wait_vsync;
+        fetch_delay = 40;
+        rd32(REGS + 32'h10, w);
+        if (w < 32'd200) begin
+            $display("LATE %0d after slow fetches", w);
+            fail("LATE with slow fetches");
+        end
+        wait_vsync;
+        rd32(REGS + 32'h10, f0);
+        check_frame(1'b0, 1'b1);
+        rd32(REGS + 32'h10, f1);
+        if (f1 != f0) fail("LATE after fetches recover");
+
         wr32(REGS, 32'd2);
         do rd32(REGS + 32'h4, w); while (w[2]);
+        f0 = fetches;
         check_frame(1'b1, 1'b0);
+        if (fetches != f0) fail("fetches with the bars shown");
+        if (bad_fetches != 0) fail("fetch address");
+        // The line buffers keep the last two lines fetched, 238 and 239 of
+        // buffer 1, and read back through the diagnostic window.
+        for (i = 0; i < 256; i = i + 1) begin
+            rd32(REGS + 32'h800 + 4 * i, w);
+            y = 238 + i / 128;
+            x = 2 * (i % 128);
+            if (w !== {16'd0, fbmem[{1'b1, y[7:0], x[7:0] + 8'd1}], fbmem[{1'b1, y[7:0], x[7:0]}]}) begin
+                if (errors < 5) $display("line buffer %0d reads %h", i, w);
+                fail("line buffer readback");
+            end
+        end
+        expect_error(1'b1, REGS + 32'h800, 3'd2);
 
         if (raster_errors != 0) fail("raster timing");
         if (errors == 0)
@@ -358,7 +439,7 @@ module video_tb;
     end
 
     initial begin
-        #300_000_000;
+        #400_000_000;
         $display("FAIL video_tb: timeout");
         $finish;
     end

@@ -4,8 +4,10 @@
 // port at 0x60000000 (ahb_ram), has the dock's 32 MiB SDRAM on J9 at
 // 0x40000000 on the same port (ahb_sdram), and sends and receives on the
 // FPGA UART at 2,000,000 baud 8N1 through registers in the EXTS window
-// (exts_uart), and drives the HDMI port at 1280x720 60 Hz from frame buffers
-// and a palette in the EXTS window at 0xe8010000 (video).
+// (exts_uart), and drives the HDMI port at 1280x720 60 Hz (video) from two
+// frame buffers in the top 128 KiB of the SDRAM, read through the SDRAM's
+// video channel, with its registers, palette and emphasis in the EXTS
+// window at 0xe8010000.
 //
 // If the CPU has written nothing to the UART 2^NOBOOT_BITS bus clocks after
 // reset (about 1.8 s), fabric reports instead, about once a second until the
@@ -148,6 +150,13 @@ module ae350_soc_top #(
     wire sd_ack;
     wire [63:0] sd_rdata;
 
+    wire vid_start;
+    wire [24:8] vid_addr;
+    wire vid_valid;
+    wire [6:0] vid_index;
+    wire [15:0] vid_data;
+    wire vid_done;
+
     wire [31:0] exts_addr;
     wire [31:0] exts_wdata;
     wire exts_sel;
@@ -200,6 +209,12 @@ module ae350_soc_top #(
         .ack(sd_ack),
         .rdata(sd_rdata),
         .ready(),
+        .vstart(vid_start),
+        .vaddr(vid_addr),
+        .vvalid(vid_valid),
+        .vindex(vid_index),
+        .vdata(vid_data),
+        .vdone(vid_done),
         .sdram_clk(sdram_clk),
         .sdram_cs_n(sdram_cs_n),
         .sdram_ras_n(sdram_ras_n),
@@ -415,6 +430,12 @@ module ae350_soc_top #(
         .hrdata(video_rdata),
         .hready(video_ready),
         .hresp(video_resp),
+        .vstart(vid_start),
+        .vaddr(vid_addr),
+        .vvalid(vid_valid),
+        .vindex(vid_index),
+        .vdata(vid_data),
+        .vdone(vid_done),
         .pix_clk(pix_clk),
         .pix_reset(pix_reset),
         .tmds_blue(tmds_ch[0]),

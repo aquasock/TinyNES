@@ -2,16 +2,18 @@
 //
 // TinyNES HDMI video test. Loads its own palette and per-line emphasis,
 // then for FRAMES frames copies a 256x240 test picture into the frame
-// buffer not being shown, draws a moving 8x8 white square on it, asks for
-// it at the next vertical blank and waits until it is shown. Reports:
+// buffer not being shown, in the SDRAM through the D-cache, draws a moving
+// 8x8 white square on it, writes the D-cache back, asks for the buffer at
+// the next vertical blank and waits until it is shown. Reports:
 //
-//   TinyNES VIDEO OK FRAMES=<n> PERIOD=<us> COPY=<us> FB=<KB/s> VBL=<n>
+//   TinyNES VIDEO OK FRAMES=<n> PERIOD=<us> COPY=<us> FB=<KB/s> VBL=<n> LATE=<n>
 //
 // PERIOD is the mean time per frame (16,667 us at 60 Hz), COPY the mean time
-// to write a whole frame buffer with 32-bit stores, FB that write rate and
-// VBL the vertical blanks the fabric counted meanwhile. The picture stays
-// up after the program ends. A failed check prints BAD VIDEO <name> and the
-// program exits with 1.
+// to write a whole frame buffer and write the D-cache back, FB that rate,
+// VBL the vertical blanks the fabric counted meanwhile and LATE the lines it
+// showed before their fetch from the SDRAM had finished, which fails the
+// test. The picture stays up after the program ends. A failed check prints
+// BAD VIDEO <name> and the program exits with 1.
 //
 // The picture, top to bottom inside a white border: eight colour bars, red,
 // green and blue ramps, then seven strips drawn with emphasis 1 to 7, each
@@ -19,6 +21,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "tinynes.h"
 
@@ -102,26 +105,32 @@ int main(void)
 		fail("ID");
 	load_palette();
 	draw_picture();
+	// Both buffers through the D-cache, written back, then read back from
+	// the SDRAM once the D-cache no longer holds them.
+	for (uint32_t b = 0; b < 2; b++)
+		memcpy(TN_VIDEO_FB(b), picture, sizeof picture);
+	tn_dcache_wbinval();
+	for (uint32_t b = 0; b < 2; b++)
+		if (memcmp(TN_VIDEO_FB(b), picture, sizeof picture) != 0)
+			fail("SDRAM");
 
 	uint32_t sx = 20, sy = 20;
 	int32_t dx = 1, dy = 1;
 	uint64_t copy_cycles = 0;
 	uint32_t vbl0 = 0;
+	uint32_t late0 = TN_VIDEO_LATE;
 	uint64_t start = 0;
 	for (uint32_t frame = 0; frame <= FRAMES; frame++) {
 		uint32_t back = (TN_VIDEO_STATUS & TN_VIDEO_BUFFER) ? 0 : 1;
-		volatile uint32_t *fb32 = TN_VIDEO_FB32(back);
-		volatile uint8_t *fb = TN_VIDEO_FB(back);
+		uint8_t *fb = TN_VIDEO_FB(back);
 
 		uint64_t t0 = tn_cycles64();
-		for (uint32_t i = 0; i < W * H / 4; i++)
-			fb32[i] = picture[i];
+		memcpy(fb, picture, sizeof picture);
+		for (uint32_t y = 0; y < 8; y++)
+			memset(fb + (sy + y) * W + sx, 1, 8);
+		tn_dcache_wbinval();
 		if (frame > 0)
 			copy_cycles += tn_cycles64() - t0;
-
-		for (uint32_t y = 0; y < 8; y++)
-			for (uint32_t x = 0; x < 8; x++)
-				fb[(sy + y) * W + sx + x] = 1;
 		if (sx + dx < 1 || sx + dx + 8 > W - 1)
 			dx = -dx;
 		if (sy + dy < 1 || sy + dy + 8 > H - 1)
@@ -143,13 +152,40 @@ int main(void)
 	}
 	uint64_t total = tn_cycles64() - start;
 	uint32_t vbl = TN_VIDEO_FRAMES - vbl0;
+	uint32_t late = TN_VIDEO_LATE - late0;
 	uint32_t period_us = (uint32_t)(total / FRAMES / (TN_CORE_HZ / 1000000u));
 	uint32_t copy_us = (uint32_t)(copy_cycles / FRAMES / (TN_CORE_HZ / 1000000u));
 	uint32_t rate = copy_us ? W * H * 1000u / copy_us : 0;
 	if (vbl < FRAMES - 1 || vbl > FRAMES + 1)
 		fail("FRAMES");
-	printf("TinyNES VIDEO OK FRAMES=%u PERIOD=%u COPY=%u FB=%u VBL=%u\n",
+	if (late != 0) {
+		printf("BAD VIDEO LATE=%u\n", (unsigned)late);
+		exit(1);
+	}
+
+	// What the fabric shows of the buffer left up: its non-zero pixels,
+	// each 3x3 on the screen, and the start of each line-buffer half.
+	const uint8_t *shown = TN_VIDEO_FB((TN_VIDEO_STATUS & TN_VIDEO_BUFFER) ? 1 : 0);
+	uint32_t want = 0;
+	for (uint32_t i = 0; i < W * H; i++)
+		want += shown[i] != 0;
+	want *= 9;
+	uint32_t f = TN_VIDEO_FRAMES;
+	while (TN_VIDEO_FRAMES - f < 2)
+		;
+	uint32_t pixels = TN_VIDEO_PIXELS;
+	printf("VIDEO PIXELS=%u WANT=%u BITS=%04x LB0=", (unsigned)pixels, (unsigned)want,
+	       (unsigned)(TN_VIDEO_BITS & 0xffffu));
+	for (uint32_t i = 0; i < 8; i++)
+		printf("%04x", (unsigned)(TN_VIDEO_LB(i) & 0xffffu));
+	printf(" LB1=");
+	for (uint32_t i = 128; i < 136; i++)
+		printf("%04x", (unsigned)(TN_VIDEO_LB(i) & 0xffffu));
+	printf("\n");
+	if (pixels != want)
+		fail("PIXELS");
+	printf("TinyNES VIDEO OK FRAMES=%u PERIOD=%u COPY=%u FB=%u VBL=%u LATE=%u\n",
 	       (unsigned)FRAMES, (unsigned)period_us, (unsigned)copy_us,
-	       (unsigned)rate, (unsigned)vbl);
+	       (unsigned)rate, (unsigned)vbl, (unsigned)late);
 	return 0;
 }

@@ -1,15 +1,17 @@
 /* SPDX-License-Identifier: MIT
  *
  * TinyNES AE350 runtime programs, loaded into the SDRAM by the boot ROM:
- * code, data, .bss and the heap (from _end to __heap_end) in the SDRAM, the
- * stack in the 64 KiB fabric block RAM, whose bottom edge is a bus error.
+ * code, data, .bss and the heap (from _end to __heap_end) in the SDRAM below
+ * its top 128 KiB, which holds the video frame buffers (TN_VIDEO_FB_BASE),
+ * the stack in the 64 KiB fabric block RAM, whose bottom edge is a bus
+ * error.
  */
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
 
 MEMORY
 {
-	sdram (rwx) : ORIGIN = 0x40000000, LENGTH = 32M
+	sdram (rwx) : ORIGIN = 0x40000000, LENGTH = 32M - 128K
 	ram (rw)    : ORIGIN = 0x60000000, LENGTH = 64K
 }
 

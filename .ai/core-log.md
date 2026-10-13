@@ -488,3 +488,42 @@ The next cycle should start from the user's photograph of the distorted picture 
 - User Test: FAIL
 
 ---
+
+## 14 COMMIT Unreleased 2026-10-12T21:53:08-07:00
+
+#### Coming From:
+
+Unreleased f7b8385
+
+#### Purpose:
+
+Find and fix the distorted HDMI picture of entry 13 so that `video_test` shows the whole test picture on the board, as the user approved, moving the frame buffers into the SDRAM when block RAM proved unusable.
+
+#### Outcome:
+
+The user's capture card recorded the entry-13 image and the captured frames, decoded per pixel, showed each 4Kx4 frame-buffer block either readable, reading zero or missing bits 1 and 3, and the palette black from entry 256 up; 2Kx9 DPX9B frame buffers then read zero on all eight placement seeds while a 512x9 emphasis store on the same two clocks read correctly. At the user's choice the frame buffers moved to the top 128 KiB of the SDRAM: `fpga/ae350_soc/ahb_sdram.sv` gained a video channel that reads a 256-byte line in one row ahead of A25 transfers and behind refresh, `fpga/ae350_soc/video.sv` fetches each line into two flip-flop line buffers and keeps the palette and emphasis in block RAM on the pixel clock only, with bus writes handed across, a LATE count of lines shown before their fetch ended, and diagnostic PIXELS, BITS and line-buffer readback registers, and a pipeline stage before the TMDS encoders keeps the pixel clock above 74.25 MHz. `firmware/rt/link.ld` stops the heap below the buffers, `firmware/include/tinynes.h` names them and the new registers, and `video_test` writes the buffers through the D-cache, writes it back with MCCTL command 6, reads them back from the SDRAM and fails on LATE or on PIXELS differing from the picture. The line buffers read back correctly over the bus, yet seeds showed pixel bits stuck at 0, and BITS with the routed netlists sorted every `pixel1` flip-flop by the spine feeding its clock branch: SPINE17 and SPINE18, reached through `(27,94) CBRIDGEOUT_BOTTOM0` and `BOTTOM2`, never clocked, SPINE26 through `(27,96)` and `(81,96) BOTTOM2` always did. Raising the pixel clock constraint to 150 MHz gave byte-identical bitstreams, so nextpnr's placement is not timing-driven here and the timing explanation was dropped. A first fork change sending the CLKDIV into the TOP entry, as DEV-009 does for the PLL, left the pixel clock dead on all eight seeds and the user's monitor without signal, and was reverted. A Gowin IDE 1.9.11.03 build of the same clock chain, run headless (TOOL-021) and decoded with gowin_unpack, entered at `(54,88) SPINE19` through `BOTTOM3`. The aquasock Apicula fork at `cd3893f` now drops the three dead bridge pips and lets the CLKDIV wires enter only at `(54,88) SPINE18`, with `tests/test_clock_bridge_138c.py`; its existing `test_ae350_tap_directions.py` still expects the stale 453 of entry 13. `tools/build_ae350_soc.sh` now fails unless the pixel clock reaches the spines only through `SPINE26 <= CBRIDGEOUT_BOTTOM2` and every video block RAM has one clock. With the fork, all eight seeds passed the check and, loaded by the agent in one-wire mode while the user watched the monitor, printed `PIXELS=468378 WANT=468378 BITS=ffff` and `VIDEO OK FRAMES=600 PERIOD=16666 VBL=600 LATE=0`; the unseeded image, SHA-256 `1b9ad22e5b3a5ad55fe661664e2c61c69f7399917a9915824bf34c3c9161ac3c` with bus Fmax 82.80 MHz and pixel Fmax 88.64 MHz, did the same, and `rt_test` on it printed `HEAP=32448K` and `SDRAM OK 32448K MISS=379`, the video fetches of the held picture costing about 2.5 percent of SDRAM throughput. Both `ae350_soc_tb` modes, including a new line fetch through the SDRAM model beside a RAM-port read, passed, as did `tests/video_tb.sv` with its new fetch, LATE, PIXELS, BITS and line-buffer readback checks. The user watched every seed and accepted the result. DEV-017 and TOOL-021 are new, TOOL-020 is rewritten, and DEV-009, DEV-011 and BRD-011 are revised. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should propose sending FCEUmm's 8-bit frames and palette to the video unit, drawing into the SDRAM frame buffers in place of the RGB565 conversion that entry 12 measured, for user approval; any new clock source on this chip needs its clock-plane entry measured as DEV-017 describes, and the NPNR_GOWIN_CLK_FIRST workaround of DEV-016 and the stale Apicula test count remain open.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/video_test/main.c
+- firmware/include/tinynes.h
+- firmware/rt/link.ld
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/ahb_sdram.sv
+- fpga/ae350_soc/video.sv
+- tests/ae350_soc_tb.sv
+- tests/video_tb.sv
+- tools/build_ae350_soc.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

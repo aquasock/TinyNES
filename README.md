@@ -108,7 +108,7 @@ alter BL616 firmware or the FPGA's configuration flash.
 |---|---|---|
 | ROM | `0x80000000` | 32 KiB block-RAM boot ROM (`ahb_boot_rom.sv`) holding the firmware image |
 | RAM (64-bit) | `0x60000000` | 64 KiB block RAM (`ahb_ram.sv`) holding the firmware's data and stack |
-| RAM (64-bit) | `0x40000000` | 32 MiB SDRAM on the dock's J9 module (`ahb_sdram.sv`); a data access to any address on this port outside the two RAMs gets an AHB ERROR, and an instruction fetch reads zero |
+| RAM (64-bit) | `0x40000000` | 32 MiB SDRAM on the dock's J9 module (`ahb_sdram.sv`), its top 128 KiB the video frame buffers; a data access to any address on this port outside the two RAMs gets an AHB ERROR, and an instruction fetch reads zero |
 | EXTS (uncached) | `0xe8000000` | UART data `+0x00`, UART status `+0x04`, ID `0x544e3031` ("TN01") `+0x08`, scratch `+0x0c`, UART receive `+0x10` (`exts_uart.sv`); HDMI video from `+0x10000` (`video.sv`, below) |
 
 The clocks are the same as in the UART gate: the core runs at 750 MHz and the
@@ -207,15 +207,20 @@ branch `GB20`, and works through `GB10`; the cause is not yet known. Until it
 is, the script sets `NPNR_GOWIN_CLK_FIRST=bus_clk`, a temporary knob in the
 nextpnr fork that routes the bus clock first so that it takes `GB10`, and
 fails if nextpnr did not apply it. A sweep of `ae350_soc` (below) needs the
-same variable set.
+same variable set. The Apicula fork must be at `cd3893f` or later, which
+keeps the HDMI pixel clock off clock-bridge paths that clock nothing on this
+chip (reference record DEV-017); the script fails unless the pixel clock
+reaches the clock spines only through the one bridge path measured to work,
+and unless every video block RAM is written and read on one clock.
 
 The testbench drives each AHB port directly. `TEST=0` covers the ROM, the RAM's
 byte lanes, ERROR responses and zero-reading fetches, the EXTS registers, the
 CPU UART, the UART receiver (byte order, senders 5% fast and slow, glitches,
 missing stop bits, overrun and the status bits), and the SDRAM controller
 against `tests/sdram_model.sv`, a W9825G6KH-6 model that checks command
-order and timing, and that video transfers reach the video unit beside the
-UART registers. `TEST=1` covers the `NOBOOT` report and the CPU taking the
+order and timing, that video transfers reach the video unit beside the UART
+registers, and that the video unit fetches frame-buffer lines through the
+SDRAM controller while the RAM port reads the SDRAM. `TEST=1` covers the `NOBOOT` report and the CPU taking the
 UART over:
 
 ```sh
@@ -289,7 +294,8 @@ include ../../rt/rt.mk
 
 `make -C firmware/apps/<name>` builds `build/firmware/apps/<name>/<name>.elf`.
 The program occupies the bottom of the SDRAM. The heap runs from its end to
-the top of the SDRAM, and the stack is the top of the 64 KiB block RAM.
+the start of the video frame buffers, 128 KiB below the top of the SDRAM, and
+the stack is the top of the 64 KiB block RAM.
 `stdout` and `stderr` go to the UART, with `\n` sent as `\r\n`.
 Returning from `main` or calling `exit` prints `TinyNES EXIT <code>`, and a
 trap prints `BAD TRAP C=<mcause> P=<mepc> V=<mtval>`. Either way the program
@@ -421,12 +427,23 @@ FCEUmm.
 60 Hz (CEA-861 timing, 74.25 MHz pixel clock, positive syncs), as DVI. It
 shows a 256x240 frame buffer at three times its size, 768x720, centred
 between black side bars. Until a program turns the frame buffers on it shows
-eight colour bars made by the fabric. There are two frame buffers of 8-bit
-palette indices, a 768-entry palette and a 3-bit colour emphasis for each
-line, all in block RAM. A pixel's palette index follows FCEUmm's: the pixel
-itself when its line's emphasis is 0, otherwise 256 + 64 x emphasis + the
-pixel's low six bits. Offsets are from `0xe8000000`, and
-`firmware/include/tinynes.h` names them:
+eight colour bars made by the fabric. A pixel's palette index follows
+FCEUmm's: the pixel itself when its line's emphasis is 0, otherwise
+256 + 64 x emphasis + the pixel's low six bits.
+
+The two frame buffers of 8-bit palette indices are the top 128 KiB of the
+SDRAM: pixel (x, y) of buffer b is at `0x41fe0000 + 0x10000b + 256y + x`
+(`TN_VIDEO_FB(b)`). Programs write them through the D-cache and must write
+it back (`tn_dcache_wbinval`) before asking for a buffer to be shown. While
+each line is shown, the unit fetches the next 256-byte line through a video
+channel of the SDRAM controller, which serves it ahead of the A25 and behind
+refresh, into the other of two line buffers built from flip-flops. The
+768-entry palette and the 3-bit emphasis of each line are block RAM written
+and read on the pixel clock; a bus write to them is handed across and holds
+the bus for a few clocks. No block RAM is written on one clock and read on
+another, as that did not work in the open flow here (reference record
+TOOL-020). Offsets are from `0xe8000000`, and `firmware/include/tinynes.h`
+names them:
 
 | Offset | Access | Contents |
 |---|---|---|
@@ -434,26 +451,28 @@ pixel's low six bits. Offsets are from `0xe8000000`, and
 | `0x10004` | read | STATUS: bit 0 in vertical blank, bit 1 the buffer shown, bit 2 the frame buffers are shown |
 | `0x10008` | read | FRAMES: vertical blanks since reset |
 | `0x1000c` | read | ID `0x544e5631` ("TNV1") |
+| `0x10010` | read | LATE: lines shown before their SDRAM fetch had finished |
+| `0x10014` | read | PIXELS (diagnostic): screen pixels of the last frame whose value was not 0, nine per NES pixel |
+| `0x10018` | read | BITS (diagnostic): bit n set if pixel bit n was ever 1 in the last frame, bit 8 + n if ever 0 |
+| `0x10800 + 4i` | read | Line buffer halfword i (diagnostic), one wait state |
 | `0x11000 + 4i` | write | Palette entry i, red in bits 23:16, green 15:8, blue 7:0 |
 | `0x12000 + 4(256b + y)` | write | Emphasis, bits 2:0, of line y of buffer b |
-| `0x20000 + 0x10000b + 256y + x` | write | Pixel (x, y) of buffer b, as bytes, halfwords or words |
 
-Registers, palette and emphasis take 32-bit transfers only; any other access,
-including a read of a write-only area, gets an AHB ERROR. Every other transfer
-completes with no wait state. The 371.25 MHz serial clock comes from two PLLs
-fed by the 50 MHz oscillator, and a `CLKDIV` in the right side's clock block
-beside the TMDS pins divides it by five for the pixel clock. The build fails
-unless the pixel clock meets 74.25 MHz. The TMDS encoder is TinyTang's
-(`fpga/hdmi_test/hdmi_test.v`, MIT).
+Registers and palette and emphasis take 32-bit transfers only; any other
+access, including a read of a write-only area or of the old frame-buffer
+window at `0x20000`, gets an AHB ERROR. The 371.25 MHz serial clock comes
+from two PLLs fed by the 50 MHz oscillator, and a `CLKDIV` in the right
+side's clock block beside the TMDS pins divides it by five for the pixel
+clock. The build fails unless the pixel clock meets 74.25 MHz. The TMDS
+encoder is TinyTang's (`fpga/hdmi_test/hdmi_test.v`, MIT).
 
-Each byte lane of each frame buffer is written as eight 4Kx4 arrays, so that
-each maps to one block RAM in 4-bit mode. Left to itself, synthesis picks
-1-bit mode, and Apicula's 1-bit mode reads back as zero on this chip.
-
-`tests/video_tb.sv` tests the unit on its own: registers and error responses,
-then whole frames decoded from the TMDS words and compared pixel by pixel with
-a model of the bars and of both frame buffers with palette and emphasis, the
-sync timing and the buffer flip. It takes several minutes:
+`tests/video_tb.sv` tests the unit on its own with a model of the SDRAM's
+video channel: registers and error responses, whole frames decoded from the
+TMDS words and compared pixel by pixel with a model of the bars and of both
+frame buffers with palette and emphasis, the sync timing, the buffer flip,
+the fetch addresses, the LATE count when fetches are made too slow, the
+PIXELS and BITS registers and the line-buffer readback. It takes several
+minutes:
 
 ```sh
 mkdir -p build/video_tb
@@ -461,9 +480,12 @@ iverilog -g2012 -s video_tb -o build/video_tb/tb fpga/ae350_soc/video.sv tests/v
 vvp -n build/video_tb/tb
 ```
 
-`firmware/apps/video_test/` loads its own palette and emphasis, then for 600
-frames copies a test picture into the buffer not shown, draws a moving white
-square on it, and flips buffers at the next vertical blank:
+`firmware/apps/video_test/` loads its own palette and emphasis, writes both
+buffers and reads them back from the SDRAM after writing the D-cache back,
+then for 600 frames copies a test picture into the buffer not shown, draws a
+moving white square on it, writes the D-cache back and flips buffers at the
+next vertical blank. It then checks what the fabric shows of the last buffer
+with PIXELS:
 
 ```sh
 make -C firmware/apps/video_test
@@ -472,17 +494,18 @@ python3 tools/load_ae350.py build/firmware/apps/video_test/video_test.elf \
 ```
 
 ```text
-TinyNES VIDEO OK FRAMES=<n> PERIOD=<us> COPY=<us> FB=<KB/s> VBL=<n>
+VIDEO PIXELS=<n> WANT=<n> BITS=<hex> LB0=<hex> LB1=<hex>
+TinyNES VIDEO OK FRAMES=<n> PERIOD=<us> COPY=<us> FB=<KB/s> VBL=<n> LATE=<n>
 ```
 
 `PERIOD` is the mean time per frame, `COPY` the mean time to write a whole
-frame buffer with 32-bit stores, `FB` that rate and `VBL` the vertical blanks
-the fabric counted meanwhile. On the board it reports
-`FRAMES=600 PERIOD=16666 COPY=2253 FB=27270 VBL=600`, and the moving square
-can be seen. The picture is distorted, though, and the fault is not yet
-found. `TINY_NES_SOC_DIAG=3` builds the SoC with the palette bypassed, each
-pixel coloured from its palette index alone (`build/ae350_soc_index/`), to
-tell palette faults from frame buffer faults.
+frame buffer and write the D-cache back, `FB` that rate, `VBL` the vertical
+blanks the fabric counted meanwhile and `LATE` the lines shown late, which
+fails the test, as does PIXELS differing from WANT. On the board it reports
+`PIXELS=468378 WANT=468378 BITS=ffff` and `FRAMES=600 PERIOD=16666 COPY=2832
+FB=21694 VBL=600 LATE=0`, with the whole picture shown. `TINY_NES_SOC_DIAG=3`
+builds the SoC with the palette bypassed, each pixel coloured from its
+palette index alone (`build/ae350_soc_index/`).
 
 ## Build sweeps
 

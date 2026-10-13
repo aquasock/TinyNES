@@ -96,6 +96,24 @@ if not pixel:
 if min(t["achieved"] for t in pixel) < 74.25:
     raise SystemExit(f"74.25 MHz HDMI pixel clock timing failed: {pixel}")
 print(f"Pixel Fmax {min(t['achieved'] for t in pixel):.2f} MHz")
+# Block RAM written on one clock and read on another reads back wrong in the
+# open flow on this chip (core-log entry 14), so every block RAM in the video
+# unit must have both ports on one clock; its line buffers are flip-flops.
+cells = design["modules"]["top"]["cells"]
+video_rams = {n: c for n, c in cells.items() if n.startswith("screen.")
+              and any(p.startswith("CLKB") for p in c["connections"])}
+two_clock = sorted(n for n, c in video_rams.items()
+                   if c["connections"]["CLKA"] != c["connections"]["CLKB"])
+if two_clock:
+    raise SystemExit(f"video block RAMs on two clocks: {two_clock[:4]}")
+print(f"Video block RAMs: {len(video_rams)}, each on one clock")
+# The pixel clock must reach the spines only through the bridge pips measured
+# to clock (core-log entry 14): (27,96) and (81,96) SPINE26 <= CBRIDGEOUT_BOTTOM2.
+pix_route = design["modules"]["top"]["netnames"]["pix_clk"]["attributes"]["ROUTING"].split(";")
+bridges = sorted({p.split("/", 1)[1] for p in pix_route[1::3] if "/CBRIDGEOUT" in p})
+if bridges != ["SPINE26/CBRIDGEOUT_BOTTOM2"]:
+    raise SystemExit(f"pixel clock uses unmeasured clock bridge pips: {bridges}")
+print("Pixel clock bridge: SPINE26 <= CBRIDGEOUT_BOTTOM2 only")
 PY
 "$suite/py3bin/python3" -m apycula.gowin_pack \
     -d "$family" \

@@ -623,19 +623,104 @@ module ae350_soc_tb #(
             ext_m.expect_ok(6, 32'ha5a5a5a5);
             ext_m.expect_error(7);
             ext_m.expect_ok(8, 32'd3);
-            ext_m.expect_write_ok(9);
+            ext_m.expect_error(9);
             ext_m.expect_write_ok(10);
-            ext_m.expect_write_ok(11);
+            ext_m.expect_error(11);
             ext_m.expect_write_ok(12);
             ext_m.expect_ok(13, 32'd0);
             ext_m.expect_error(14);
             ext_m.expect_ok(15, 32'h544e3031);
-            if ({dut.screen.g_lane[1].g_bank[0].hi[0], dut.screen.g_lane[1].g_bank[0].lo[0]} !== 8'h77 ||
-                dut.screen.palette[1] !== 24'h123456 ||
-                {dut.screen.g_lane[2].g_bank[7].hi[4095], dut.screen.g_lane[2].g_bank[7].lo[4095]} !== 8'hef ||
-                {dut.screen.g_lane[3].g_bank[7].hi[4095], dut.screen.g_lane[3].g_bank[7].lo[4095]} !== 8'hbe)
-                $fatal(1, "video writes through EXTS did not land");
-            $display("PASS: EXTS video registers, palette and frame buffer beside the UART registers");
+            repeat (8) @(negedge pix_clk);
+            if (dut.screen.palette[1] !== 24'h123456)
+                $fatal(1, "palette write through EXTS did not land");
+            $display("PASS: EXTS video registers and palette beside the UART registers");
+        end
+    endtask
+
+    // A video line fetch through the SDRAM's video channel, with the RAM
+    // port reading the SDRAM during it: lines 0 and 1 of frame buffer 1 are
+    // written through the RAM port, buffer 1 is shown and the raster moved
+    // to just before vertical blank, where line 0 is fetched, and then to
+    // the end of the frame, where line 1 is fetched as line 0 begins.
+    function [63:0] fb_word(input [7:0] y, input [4:0] i);
+        integer b;
+        begin
+            for (b = 0; b < 8; b = b + 1)
+                fb_word[8 * b +: 8] = (y * 8'd37) ^ ({i, 3'b000} + b) ^ 8'h5a;
+        end
+    endfunction
+
+    task automatic expect_line(input [7:0] y);
+        integer k;
+        reg [63:0] w;
+        begin
+            for (k = 0; k < 128; k = k + 1) begin
+                w = fb_word(y, k / 4);
+                if (dut.screen.lb[{y[0], k[6:0]}] !== w[16 * (k % 4) +: 16])
+                    $fatal(1, "video line %0d halfword %0d is %h, expected %h", y, k,
+                           dut.screen.lb[{y[0], k[6:0]}], w[16 * (k % 4) +: 16]);
+            end
+        end
+    endtask
+
+    task automatic wait_fetch;
+        begin
+            @(posedge clk);
+            while (dut.screen.fd !== dut.screen.fr_req || dut.screen.fetching) @(posedge clk);
+        end
+    endtask
+
+    task test_video_fetch;
+        integer y, i;
+        begin
+            ram_m.clear();
+            for (y = 0; y < 2; y = y + 1)
+                for (i = 0; i < 32; i = i + 1)
+                    ram_m.push(32'h41ff0000 + 256 * y + 8 * i, 1'b1, 3'd3, fb_word(y, i), 1'b0);
+            ram_m.push(S + 32'h100, 1'b1, 3'd3, 64'h0f1e2d3c_4b5a6978, 1'b0);
+            ram_m.run();
+            for (i = 0; i < 65; i = i + 1)
+                ram_m.expect_write_ok(i);
+            ext_m.clear();
+            ext_m.push(32'he8010000, 1'b1, 3'd2, 32'd3, 1'b0);
+            ext_m.run();
+            ext_m.expect_write_ok(0);
+            repeat (8) @(negedge pix_clk);
+            dut.screen.vcnt = 10'd719;
+            dut.screen.hcnt = 11'd1640;
+            // The RAM port's read waits for the line in progress.
+            wait (dut.vid_start);
+            ram_m.clear();
+            ram_m.push(S + 32'h100, 1'b0, 3'd3, 0, 1'b0);
+            ram_m.run();
+            ram_m.expect_ok(0, 64'h0f1e2d3c_4b5a6978);
+            wait_fetch();
+            if (dut.screen.vaddr !== 17'h1ff00)
+                $fatal(1, "line 0 fetched from %h", dut.screen.vaddr);
+            expect_line(0);
+            @(negedge pix_clk);
+            dut.screen.vcnt = 10'd749;
+            dut.screen.hcnt = 11'd1640;
+            wait (dut.vid_start);
+            wait_fetch();
+            if (dut.screen.vaddr !== 17'h1ff01)
+                $fatal(1, "line 1 fetched from %h", dut.screen.vaddr);
+            expect_line(1);
+            expect_line(0);
+            repeat (8) @(negedge clk);
+            if (dut.screen.late !== 32'd0)
+                $fatal(1, "LATE is %0d", dut.screen.late);
+            // Stop the fetches before the remaining tests.
+            ext_m.clear();
+            ext_m.push(32'he8010000, 1'b1, 3'd2, 32'd0, 1'b0);
+            ext_m.run();
+            ext_m.expect_write_ok(0);
+            repeat (8) @(negedge pix_clk);
+            dut.screen.vcnt = 10'd719;
+            dut.screen.hcnt = 11'd1640;
+            repeat (20) @(negedge pix_clk);
+            wait_fetch();
+            $display("PASS: SDRAM video line fetches beside a RAM port read");
         end
     endtask
 
@@ -843,6 +928,8 @@ module ae350_soc_tb #(
             join
             if (dut.cpu_owns !== 1'b1)
                 $fatal(1, "a CPU write did not take the UART");
+            // After the CPU has the UART, so that NOBOOT stays silent.
+            test_video_fetch();
             expect_quiet(3 << NOBOOT_BITS);
             $display("PASS: CPU UART writes are sent in order and NOBOOT stays silent");
         end else begin

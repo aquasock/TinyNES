@@ -17,10 +17,21 @@
 // progress; it is merged into the buffer if it hits the buffered line and
 // then written to the SDRAM, only its own byte lanes changing.
 //
+// The video channel reads one 256-byte line for the video unit:
+//
+//   vstart pulses with vaddr, which stays steady until vdone; the line's
+//   128 halfwords come back in order, each on vdata with its index while
+//   vvalid is high, and vdone pulses once after the last.
+//
+// A pending video line goes ahead of a waiting A25 transfer, and refresh
+// ahead of both; a line takes about 140 clocks, so the A25 waits at most
+// that long for one.
+//
 // Every access opens its row and closes it again when done (ACTIVE,
 // READ/WRITE one column at a time, PRECHARGE), so all banks are idle
 // between accesses and AUTO REFRESH can be issued then. Byte address bits
-// [9:1] are the column, [11:10] the bank and [24:12] the row.
+// [9:1] are the column, [11:10] the bank and [24:12] the row, so a video
+// line is always within one row.
 //
 // The SDRAM clock is the bus clock inverted (an ODDR at the pin), so the
 // SDRAM samples commands and write data half a bus clock after they leave
@@ -44,6 +55,13 @@ module ahb_sdram #(
     output reg         ack,
     output reg  [63:0] rdata,
     output reg         ready,
+
+    input  wire        vstart,
+    input  wire [24:8] vaddr,
+    output reg         vvalid,
+    output reg  [6:0]  vindex,
+    output reg  [15:0] vdata,
+    output reg         vdone,
 
     output wire        sdram_clk,
     output reg         sdram_cs_n,
@@ -86,6 +104,7 @@ module ahb_sdram #(
     localparam [3:0] S_PRECHARGE = 4'd8;
     localparam [3:0] S_REFRESH = 4'd9;
     localparam [3:0] S_WAIT = 4'd10;
+    localparam [3:0] S_VREAD = 4'd11;
 
     ODDR sdram_clk_oddr (
         .D0(1'b0),
@@ -117,22 +136,26 @@ module ahb_sdram #(
     reg [3:0] state = S_INIT;
     reg [3:0] after_wait = S_IDLE;
     reg [15:0] wait_count = INIT_CYCLES[15:0];
-    reg [3:0] step = 4'd0;
+    reg [6:0] step = 7'd0;
     reg op_write = 1'b0;
+    reg op_video = 1'b0;
+    reg video_pending = 1'b0;
     reg [24:3] op_addr = 22'd0;
     reg [7:0] op_lanes = 8'd0;
     reg [63:0] op_wdata = 64'd0;
 
-    // Reads in flight: a valid bit and the halfword index per clock.
+    // Reads in flight: a valid bit, a video bit and the halfword index per
+    // clock.
     reg [CAPTURE-1:0] pipe_valid = 0;
-    reg [3:0] pipe_index [0:CAPTURE-1];
+    reg [CAPTURE-1:0] pipe_video = 0;
+    reg [6:0] pipe_index [0:CAPTURE-1];
 
     reg [9:0] refresh_count = 10'd0;
     reg refresh_due = 1'b0;
 
     wire idle = state == S_IDLE && pipe_valid == 0;
     wire line_hit = line_tagged && line_tag == addr[24:5];
-    wire [3:0] read_index = {op_addr[4:3], 2'b00} + step;
+    wire [3:0] read_index = {op_addr[4:3], 2'b00} + step[3:0];
 
     integer k;
     always @(posedge clk or negedge resetn) begin
@@ -140,14 +163,21 @@ module ahb_sdram #(
             state <= S_INIT;
             after_wait <= S_IDLE;
             wait_count <= INIT_CYCLES[15:0];
-            step <= 4'd0;
+            step <= 7'd0;
             op_write <= 1'b0;
+            op_video <= 1'b0;
+            video_pending <= 1'b0;
+            vvalid <= 1'b0;
+            vindex <= 7'd0;
+            vdata <= 16'd0;
+            vdone <= 1'b0;
             ready <= 1'b0;
             ack <= 1'b0;
             rdata <= 64'd0;
             line_tagged <= 1'b0;
             line_valid <= 4'd0;
             pipe_valid <= 0;
+            pipe_video <= 0;
             refresh_count <= 10'd0;
             refresh_due <= 1'b0;
             {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_NOP;
@@ -161,11 +191,22 @@ module ahb_sdram #(
             dq_oe <= 1'b0;
             sdram_dqm <= 2'b00;
 
+            vvalid <= 1'b0;
+            vdone <= 1'b0;
+            if (vstart)
+                video_pending <= 1'b1;
+
             pipe_valid <= {pipe_valid[CAPTURE-2:0], 1'b0};
+            pipe_video <= {pipe_video[CAPTURE-2:0], 1'b0};
             for (k = CAPTURE - 1; k > 0; k = k - 1)
                 pipe_index[k] <= pipe_index[k - 1];
-            if (pipe_valid[CAPTURE-1]) begin
-                line[16 * pipe_index[CAPTURE-1] +: 16] <= dq_rise;
+            if (pipe_valid[CAPTURE-1] && pipe_video[CAPTURE-1]) begin
+                vvalid <= 1'b1;
+                vindex <= pipe_index[CAPTURE-1];
+                vdata <= dq_rise;
+                vdone <= pipe_index[CAPTURE-1] == 7'd127;
+            end else if (pipe_valid[CAPTURE-1]) begin
+                line[16 * pipe_index[CAPTURE-1][3:0] +: 16] <= dq_rise;
                 if (pipe_index[CAPTURE-1][1:0] == 2'd3)
                     line_valid[pipe_index[CAPTURE-1][3:2]] <= 1'b1;
             end
@@ -195,7 +236,7 @@ module ahb_sdram #(
                 S_INIT_PRE: begin
                     {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_PRECHARGE;
                     sdram_a[10] <= 1'b1;
-                    step <= 4'd0;
+                    step <= 7'd0;
                     wait_count <= 16'd0;
                     after_wait <= S_INIT_REF;
                     state <= S_WAIT;
@@ -204,7 +245,7 @@ module ahb_sdram #(
                     {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_REFRESH;
                     step <= step + 1'b1;
                     wait_count <= T_RC - 2;
-                    after_wait <= step == 4'd7 ? S_INIT_MODE : S_INIT_REF;
+                    after_wait <= step == 7'd7 ? S_INIT_MODE : S_INIT_REF;
                     state <= S_WAIT;
                 end
                 S_INIT_MODE: begin
@@ -220,7 +261,14 @@ module ahb_sdram #(
                     if (refresh_due && pipe_valid == 0) begin
                         refresh_due <= 1'b0;
                         state <= S_REFRESH;
+                    end else if ((video_pending || vstart) && idle) begin
+                        video_pending <= 1'b0;
+                        op_video <= 1'b1;
+                        op_write <= 1'b0;
+                        op_addr <= {vaddr, 5'd0};
+                        state <= S_ACTIVE;
                     end else if (req && !ack && idle && (write || !line_hit)) begin
+                        op_video <= 1'b0;
                         op_write <= write;
                         op_addr <= addr;
                         op_lanes <= lanes;
@@ -243,18 +291,28 @@ module ahb_sdram #(
                     {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_ACTIVE;
                     sdram_ba <= op_addr[11:10];
                     sdram_a <= op_addr[24:12];
-                    step <= 4'd0;
+                    step <= 7'd0;
                     wait_count <= 16'd0;
-                    after_wait <= op_write ? S_WRITE : S_READ;
+                    after_wait <= op_video ? S_VREAD : op_write ? S_WRITE : S_READ;
                     state <= S_WAIT;
                 end
                 S_READ: begin
                     {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_READ;
                     sdram_a <= {4'b0000, op_addr[9:5], read_index};
                     pipe_valid[0] <= 1'b1;
-                    pipe_index[0] <= read_index;
+                    pipe_index[0] <= {3'd0, read_index};
                     step <= step + 1'b1;
-                    if (step == 4'd15)
+                    if (step == 7'd15)
+                        state <= S_PRECHARGE;
+                end
+                S_VREAD: begin
+                    {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_READ;
+                    sdram_a <= {4'b0000, op_addr[9:8], step};
+                    pipe_valid[0] <= 1'b1;
+                    pipe_video[0] <= 1'b1;
+                    pipe_index[0] <= step;
+                    step <= step + 1'b1;
+                    if (step == 7'd127)
                         state <= S_PRECHARGE;
                 end
                 S_WRITE: begin
@@ -264,7 +322,7 @@ module ahb_sdram #(
                     dq_out <= op_wdata[16 * step[1:0] +: 16];
                     dq_oe <= 1'b1;
                     step <= step + 1'b1;
-                    if (step == 4'd3) begin
+                    if (step == 7'd3) begin
                         // tWR: PRECHARGE two clocks after the last WRITE.
                         wait_count <= 16'd0;
                         after_wait <= S_PRECHARGE;
