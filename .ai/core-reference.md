@@ -122,6 +122,10 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 - topic_id: EMU
   name: "NES emulator cores on the AE350"
   description: "Emulator cores tried on the A25: which revision, how they are built and checked against a PC build, and how fast they run."
+
+- topic_id: WII
+  name: "Wii extension controllers"
+  description: "The externally defined I2C initialization, identity and report format of Wii Classic Controllers."
 ```
 
 ---
@@ -283,6 +287,8 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Which NES core is faster on the A25, and why was Nestopia dropped? | EMU | EMU-002 |
 | Where does FCEUmm's frame time go on the A25, and what made it faster? | EMU | EMU-003, EMU-004 |
 | How does FCEUmm's picture reach HDMI, and how fast does the game run with it? | EMU | EMU-004 |
+| How is a Wii Classic Controller initialized and read over I2C? | WII | WII-001 |
+| Which PMOD0 pins are used for four Wii extension buses? | PMOD | PMOD-007 |
 | Which silicon revision is this board, and which revision is the core image? | PSX | PSX-001 |
 | How much logic and block RAM does the device have? | PSX | PSX-002 |
 | Which FPGA pins carry the core UART, and where is the board's clock? | PSX | PSX-003 |
@@ -329,6 +335,7 @@ PMOD-001: "Two PMOD sockets: PMOD1 beside HDMI on W19 W20 F19 F20 E22 D22 E21 D2
 PMOD-002: "/tang.ini at the SD root is the socket contract (pmod0/pmod1 plus _flip, flat under [tang]); a missing file or absent entry releases the socket and unknown modules are refused; modules carry no ID pins, so presence can never be detected; this firmware parses it (tang_ini.c) and, by the user's choice, does not enforce flip safety"
 PMOD-004: "On the merged Phosphor core the socket control register is 0xc0: hold 0, PMOD0 personality 7:4, PMOD1 11:8, flips 12/13; personalities 0 none, 1 oledrgb, 2 vga J1, 3 vga J2, 4 rotary encoder; both sockets power up released, so a host must declare them; the bring-up core has the same layout at 0x10, which is not extended frame type 0x10"
 PMOD-006: "tangload declares /tang.ini to core 0x50 at ABI 1.8+ and reads it back; names none, oledrgb, encoder, i2s2 (personality 5, ABI 1.10), vga_j1, vga_j2; qualified: I2S2 on PMOD0 0x0050; encoder face up on PMOD1 pins 7-12 needs flip=yes, 0x2400, or 0x2410 with OLED on PMOD0; PmodVGA face up has J1 on PMOD1 and J2 on PMOD0, 0x0230; missing-file release and unknown-module refusal pass"
+PMOD-007: "PMOD0's eight LVCMOS33 signal pins can form four independent I2C pairs: Digilent pins 1/7 V18/V19, 2/8 G21/G22, 3/9 F18/E18, 4/10 C22/B22; 3.3 V and ground use pins 6/12 and 5/11; a Classic Controller Pro on pair 1 works at about 100 kHz with internal pull-ups"
 BL6-001: "USB_BASE 0x20072000; OTG_CSR +0x80 (ID 21, CROLE 20, SPD 23:22, VBUS_VLD 19, A_SESS 18, B_SESS 17, A_BUS_DROP 5, A_BUS_REQ 4); PDS usb_ctl 0x2000E500 (IDDIG 5, DRVBUS_POL 4)"
 BL6-002: "OCRAM is 320 KB at 0x20FC0000; the PSRAM window is declared but this board has no external RAM"
 BL6-003: "The allocator is TLSF: mem.h exposes g_kmemheap, kfree_size(), and heapsize; PMEM_HEAP is the same heap unless the chip is a BL618"
@@ -457,6 +464,7 @@ EMU-001: "libretro Nestopia 135dfa6 runs Castlevania on the A25 with checksums m
 EMU-002: "libretro FCEUmm ac0d00a runs Castlevania on the A25 with checksums matching a PC build, at 19.07 ms a frame: 87.2 percent of full speed and 1.2 times Nestopia (1.8 times on the PC); it is the core TinyNES keeps"
 EMU-003: "8.23 ms of FCEUmm's 19.14 ms XRGB8888 frame on the A25 is the 8-bit to XRGB8888 conversion; RGB565 cuts it to 5.01 ms and the frame to 15.85 ms, 104.9 percent; -O3 is slower and the prefetch and write-around bits do not exist"
 EMU-004: "With its own driver in place of libretro.c, FCEUmm's core draws straight into the SDRAM frame buffers and Castlevania runs on HDMI at 10.82 ms a frame (max 12.02), 153.7 percent, every frame shown at the next vertical blank, checksums matching the PC"
+WII-001: "Wii extensions use I2C address 0x52; write F0=55 then FB=00 to disable encryption, read six identity bytes at FA and six format-1 data bytes after setting pointer 00; NintendoExtensionCtrl waits 10 ms, 20 ms and 175 us at those steps and accepts Classic IDs 00/01 00 A4 20 00..03 01; buttons in bytes 4-5 are active low"
 ```
 
 ---
@@ -890,6 +898,24 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "Tang-PSX 61974ca: .ai/core-reference.md BRD-004 and BRD-005, including the verified J1-on-PMOD1 placement"
     - "TinyTang 42e9f9b: ports/bl616/tang_ini.c, ports/bl616/tang_ini.h, ports/bl616/phosphor/pmod_sockets.cpp, docs/tang.ini and tools/tests/test_ini.sh; firmware 969e6ff-dirty.71fe989"
   verification: "The parser passes its host test under AddressSanitizer and UBSan, which failed when the VGA pairing rule and the bad-flip refusal were each removed. On this board on 2026-10-07, entries 58-60 exercised all four listed layouts through automatic core-load declaration and read-back. Entry 58 records a full 3:19 track at 44.1 kHz with zero underruns and user acceptance of I2S2 audio and the oscilloscope. Entry 59 records encoder counts of exactly four per detent in both directions, button and switch transitions, matching OLED/source signatures with advancing panel frames and user acceptance of the image, reapplication and unknown-module rejection. Entry 60 records no VGA picture at 0x0320, mirrored HDMI and CRT images accepted by the user at 0x0230 without moving the module, then a matching /tang.ini and automatic declaration after reload. Missing-file release was verified in entry 58. No hardware test of every invalid-flip, section or VGA-pair parser case is claimed. Revised 2026-10-11 (core-log entry 10): folded in the parser's behaviour from the retired PMOD-005. On 2026-10-10 a 14-load soak of desktop.bin and phosphortang.bin declared the sockets on every load after pmod_sockets.cpp's register reads gained a retry (core-log entry 2)."
+
+- record_id: PMOD-007
+  kind: BOARD
+  topic_id: PMOD
+  title: "PMOD0 signal pairs and power pins for four Wii extension buses"
+  status: SOURCED
+  verified_date: 2026-10-13
+  statement: "PMOD0's Sipeed signal order maps Digilent pins 1/7 to FPGA V18/V19, pins 2/8 to G21/G22, pins 3/9 to F18/E18, and pins 4/10 to C22/B22, all LVCMOS33 (PMOD-001). The standard PMOD power positions are 3.3 V on pins 6 and 12 and ground on pins 5 and 11. A Wii extension requires 3.3 V power and has separate SCL and SDA signals (WII-001)."
+  consequence: "For TinyNES's four independent buses, controller n uses Digilent pin n for SCL and pin n+6 for SDA, n=1..4. The FPGA pins must release the line or pull it low, with pull-ups on both signals; fpga/ae350_soc/ae350_soc.cst enables the FPGA's internal pull-ups. This is the user's chosen wiring, not a PMOD-wide standard. One firsthand cable report used red/white/yellow/green for 3.3 V/ground/SCL/SDA, while another used white for detect and black for ground; cable color alone is not enough to establish another controller's wiring. The user verified the tested cable as red/white/yellow/green for 3.3 V/ground/SCL/SDA. At about 100 kHz, the internal pull-ups worked for that controller on PMOD0; its electrical rise time was not measured."
+  sources:
+    - "Tang-Phosphor, src/boards/console138k_pmod.cst and .ai/core-reference.md, Dock PMOD Sockets record (PMOD-001)"
+    - "Sipeed Tang Console board photograph, top side: https://raw.githubusercontent.com/sipeed/sipeed_wiki/main/docs/hardware/zh/tang/tang-console/assert/console_bdt.jpg"
+    - "Digilent Pmod Interface Specification Rev. 1.2.0: standard 2x6 power and ground positions"
+    - "NintendoExtensionCtrl 2bec235, README.md: 3.3 V supply and SCL/SDA connections"
+    - "HTLAB Wii extension cable teardown, connector pin and cable color table: https://htlab.net/electronics/game/wii-remote-extension-controller/"
+    - "aalmada's photographed Wii extension connector and cable, original photo description: https://commons.wikimedia.org/wiki/File:Wiimote_Extension_Connector_Pin-Out_(Nunchuck,_MotionPlus_and_Classic_Controller)_(7085452395).png"
+    - "User wiring decision for TinyNES cycle 16, 2026-10-12"
+  verification: "Pin mapping and voltage were read from the cited sources and the planned wiring was agreed with the user. Revised 2026-10-13 (core-log entry 16): the user verified the cable colors and wired a Classic Controller Pro to PMOD0's first signal pair and power positions. TinyNES identified and repeatedly read that controller with zero reported PAD1 failures; the user confirmed the button and analog reports matched their actions. The other three signal pairs were checked by simulation but not with physical controllers."
 
 - record_id: BL6-001
   kind: SOC
@@ -2616,6 +2642,20 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "This project's firmware/apps/nes_bench/main.cpp (the driver and benchmark) and Makefile (the core without libretro.c and libretro_dipswitch.c)"
     - "libretro/libretro-fceumm ac0d00a: src/driver.h, src/fceu.c FCEUI_Emulate and option_ramstate, src/video.c XBuf, src/ppu.c DoLine and RefreshLine, src/palette.c WritePalette, src/drivers/libretro/libretro.c (the symbols it gave the core, retro_load_game and resolve_samplerate_hint)"
   verification: "Measured on this board on 2026-10-12 (core-log entry 15): one run loaded by the agent in one-wire mode with the ae350_soc image 1b9ad22e of core-log entry 14, printing TinyNES EXIT 0 and the figures above while the user watched the game on HDMI and accepted it; the PC build's dumped frames at 60, 600, 1,200 and 1,800 show the title, the gate, the courtyard and the castle hall in correct colours."
+
+- record_id: WII-001
+  kind: EXTERNAL
+  topic_id: WII
+  title: "Wii Classic Controller I2C wake-up, identity and default data format"
+  status: VERIFIED
+  verified_date: 2026-10-13
+  statement: "Wii extension controllers use 7-bit I2C address 0x52. For unencrypted communication, write 0x55 to register 0xF0 and 0x00 to 0xFB; NintendoExtensionCtrl waits 10 ms after the first write and 20 ms after the second. Six bytes read after pointer 0xFA identify the controller: WiiBrew lists 00 00 A4 20 01 01 for Classic Controller and 01 00 A4 20 01 01 for Classic Controller Pro; NintendoExtensionCtrl also accepts identity byte 4 values 0x00 through 0x03 for a Classic. The default Classic data format is 0x01: six bytes read after setting pointer 0x00, with left-stick axes in 6 bits, right-stick axes and triggers in 5 bits and 15 active-low buttons in bytes 4 and 5. NintendoExtensionCtrl waits 175 microseconds after setting a read pointer before requesting data. Its example offers 400 kHz I2C as a fast mode, not a required rate."
+  consequence: "fpga/ae350_soc/wii_pads.sv uses the unencrypted wake-up, the library's Classic identity match and six-byte format, waits 200 microseconds after setting a pointer, and starts at about 100 kHz to tolerate the PMOD0 internal pull-ups. The 200-microsecond wait, 100-kHz default, 1-ms SCL timeout, polling interval and 100-ms retry are TinyNES implementation choices, not Wii protocol limits. One Classic Controller Pro was read successfully at the default rate; electrical rise time and other extension variants are not measured."
+  sources:
+    - "WiiBrew Wiimote/Extension Controllers, Registers / Initialization and Identification: https://www.wiibrew.org/wiki/Wiimote/Extension_Controllers"
+    - "WiiBrew Wiimote/Extension Controllers/Classic Controller, Data Format 0x01: https://wiibrew.org/wiki/Wiimote/Extension_Controllers/Classic_Controller"
+    - "dmadison/NintendoExtensionCtrl 2bec2355c85e5cae2d159182d1982e59de707ec0, src/internal/ExtensionController.cpp initialize and requestControlData, src/internal/NXC_Comms.h I2C_ConversionDelay, src/internal/ExtensionController.h I2C_Addr, src/internal/NXC_Identity.h decodeIdentity and examples/Any/SpeedTest/SpeedTest.ino"
+  verification: "The cited WiiBrew records and exact library commit were read on 2026-10-12. tests/wii_pads_tb.sv models the transactions and passed. Revised 2026-10-13 (core-log entry 16): on this board the unencrypted initialization returned Classic Controller Pro ID 01 00 A4 20 01 01 and PAD1 reported changing active-low buttons, both sticks and both triggers at the default 100-kHz setting, with zero PAD1 failures; the user confirmed the values matched the controller actions."
 ```
 
 ---

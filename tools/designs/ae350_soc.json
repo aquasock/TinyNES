@@ -7,6 +7,7 @@
         "fpga/ae350_soc/ahb_sdram.sv",
         "fpga/ae350_soc/exts_uart.sv",
         "fpga/ae350_soc/video.sv",
+        "fpga/ae350_soc/wii_pads.sv",
         "fpga/ae350_soc/ae350_soc.sv"
     ],
     "lib_sources": ["{suite}/share/yosys/gowin/cells_xtra_gw5a.v"],

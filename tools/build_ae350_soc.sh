@@ -22,6 +22,9 @@ apycula="${APICULA_FORK:-$(dirname "$root")/apicula-mathieufro}"
 pydeps="${PYDEPS:-$HOME/tools/pydeps}"
 device=GW5AST-LV138PG484AC1/I0
 family=GW5AST-138C
+# The added PMOD logic changes placement; the unseeded route has a 0.06 ns
+# pixel-clock hold violation. Seed 3 passed the seed sweep and is repeatable.
+seed="${TINY_NES_SEED:-3}"
 
 [[ -f "$suite/environment" ]] || { echo "missing open toolchain: $suite" >&2; exit 2; }
 # shellcheck disable=SC1090
@@ -47,7 +50,7 @@ cd "$root"
 echo "Yosys synthesis"
 yosys -Q -T -q -l "$out/synth.log" -p "
     read_verilog -lib $suite/share/yosys/gowin/cells_xtra_gw5a.v
-    read_verilog -sv $src/ahb_boot_rom.sv $src/ahb_ram.sv $src/ahb_sdram.sv $src/exts_uart.sv $src/video.sv $src/ae350_soc.sv
+    read_verilog -sv $src/ahb_boot_rom.sv $src/ahb_ram.sv $src/ahb_sdram.sv $src/exts_uart.sv $src/video.sv $src/wii_pads.sv $src/ae350_soc.sv
     $synth_param
     synth_gowin -family gw5a -top ae350_soc_top
     write_json $out/ae350_soc.json
@@ -62,7 +65,7 @@ echo "nextpnr placement and routing"
     --vopt cst="$src/ae350_soc.cst" \
     --sdc "$src/ae350_soc.sdc" \
     --report "$out/timing.json" \
-    ${TINY_NES_SEED:+--seed "$TINY_NES_SEED"} \
+    --seed "$seed" \
     >"$out/nextpnr.log" 2>&1 || {
         tail -80 "$out/nextpnr.log" >&2
         exit 1

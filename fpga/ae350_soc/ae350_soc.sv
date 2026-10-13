@@ -43,7 +43,8 @@ module ae350_soc_top #(
     output wire        tmds_clk_p,
     output wire        tmds_clk_n,
     output wire [2:0]  tmds_d_p,
-    output wire [2:0]  tmds_d_n
+    output wire [2:0]  tmds_d_n,
+    inout  wire [7:0]  pmod0
 );
     wire pll_locked;
     wire bus_clk;
@@ -231,32 +232,31 @@ module ae350_soc_top #(
     wire fb_ready;
     wire cpu_owns;
 
-    // The EXTS window: address bit 17 or 16 set selects video (0xe8010000 to
-    // 0xe803ffff; elsewhere in the window it aliases), anything else the
-    // UART registers, which decode the full address. The open flow has no
+    // The EXTS window: 0xe8010000 selects video, 0xe8040000 selects the
+    // Wii pads, and 0xe8000000 selects UART. The open flow has no
     // timing model for the AE350's ports, so each path to or from them has
-    // at most one LUT: HREADY is the AND of the two slaves' registered
-    // HREADYs, HRESP their OR (each is high only during its own ERROR), and
-    // read data a mux on a registered select.
-    wire video_hit = exts_addr[17] | exts_addr[16];
-    reg data_video = 1'b0;
-    wire [31:0] uart_rdata, video_rdata;
-    wire uart_ready, uart_resp, video_ready, video_resp;
+    // at most one LUT: HREADY is the AND of the slaves' registered HREADYs,
+    // HRESP their OR, and read data a mux on a registered UART select.
+    wire video_hit = !exts_addr[18] && (exts_addr[17] | exts_addr[16]);
+    wire pads_hit = exts_addr[18] && !(exts_addr[17] | exts_addr[16]);
+    reg data_uart = 1'b1;
+    wire [31:0] uart_rdata, video_rdata, pads_rdata;
+    wire uart_ready, uart_resp, video_ready, video_resp, pads_ready, pads_resp;
     always @(posedge bus_clk or negedge resetn)
         if (!resetn)
-            data_video <= 1'b0;
+            data_uart <= 1'b1;
         else if (exts_ready)
-            data_video <= video_hit;
-    assign exts_rdata = data_video ? video_rdata : uart_rdata;
-    assign exts_ready = uart_ready & video_ready;
-    assign exts_resp = uart_resp | video_resp;
+            data_uart <= !video_hit && !pads_hit;
+    assign exts_rdata = data_uart ? uart_rdata : (video_rdata | pads_rdata);
+    assign exts_ready = uart_ready & video_ready & pads_ready;
+    assign exts_resp = uart_resp | video_resp | pads_resp;
 
     exts_uart #(.UART_DIV2(UART_DIV2), .DROP_CPU_TX(CPU_TX_DROP)) regs (
         .clk(bus_clk),
         .resetn(resetn),
         .haddr(exts_addr),
         .htrans(exts_trans),
-        .hsel(exts_sel && !video_hit),
+        .hsel(exts_sel && !video_hit && !pads_hit),
         .hready_in(exts_ready),
         .hwrite(exts_write),
         .hwdata(exts_wdata),
@@ -269,6 +269,33 @@ module ae350_soc_top #(
         .cpu_owns(cpu_owns),
         .tx(uart_tx),
         .rx(uart_rx)
+    );
+
+    wire [3:0] pad_scl_in, pad_sda_in, pad_scl_low, pad_sda_low;
+    genvar pad_index;
+    generate
+        for (pad_index = 0; pad_index < 4; pad_index = pad_index + 1) begin : pad_io
+            // Digilent pins 1-4 are SCL, pins 7-10 are SDA. Sipeed's IO
+            // numbering interleaves the rows: each controller uses a pair.
+            IOBUF scl_buf (
+                .I(1'b0), .OEN(!pad_scl_low[pad_index]),
+                .O(pad_scl_in[pad_index]), .IO(pmod0[2*pad_index])
+            );
+            IOBUF sda_buf (
+                .I(1'b0), .OEN(!pad_sda_low[pad_index]),
+                .O(pad_sda_in[pad_index]), .IO(pmod0[2*pad_index+1])
+            );
+        end
+    endgenerate
+
+    wii_pads pads (
+        .clk(bus_clk), .resetn(resetn),
+        .haddr(exts_addr[11:0]), .htrans(exts_trans),
+        .hsel(exts_sel && pads_hit), .hwrite(exts_write),
+        .hsize(exts_size), .hwdata(exts_wdata), .hready_in(exts_ready),
+        .hrdata(pads_rdata), .hready(pads_ready), .hresp(pads_resp),
+        .scl_in(pad_scl_in), .sda_in(pad_sda_in),
+        .scl_low(pad_scl_low), .sda_low(pad_sda_low)
     );
 
     // HDMI: 50 MHz -> 27 MHz -> 371.25 MHz serial clock (hdmi_pll), divided

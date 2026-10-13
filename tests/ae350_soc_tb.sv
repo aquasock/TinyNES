@@ -164,6 +164,16 @@ module ELVDS_OBUF (
     assign OB = !I;
 endmodule
 
+module IOBUF (
+    input wire I,
+    input wire OEN,
+    inout wire IO,
+    output wire O
+);
+    assign IO = OEN ? 1'bz : I;
+    assign O = IO;
+endmodule
+
 module ae350_soc_tb #(
     // 0: every port, register and UART path, the receiver included. 1: the
     // NOBOOT report and the CPU taking the UART over from it.
@@ -191,6 +201,7 @@ module ae350_soc_tb #(
     wire [12:0] sdram_a;
     wire [1:0] sdram_dqm;
     wire [15:0] sdram_dq;
+    tri1 [7:0] pmod0;
 
     ae350_soc_top #(.NOBOOT_BITS(NOBOOT_BITS), .SDRAM_INIT_CYCLES(100)) dut (
         .sys_clk(clk),
@@ -208,7 +219,8 @@ module ae350_soc_tb #(
         .tmds_clk_p(),
         .tmds_clk_n(),
         .tmds_d_p(),
-        .tmds_d_n()
+        .tmds_d_n(),
+        .pmod0(pmod0)
     );
 
     sdram_model chip (
@@ -592,8 +604,8 @@ module ae350_soc_tb #(
         end
     endtask
 
-    // The video unit and the UART registers share the EXTS port: transfers to
-    // each, back to back and after each other's ERROR responses.
+    // Video, pads and UART share the EXTS port: transfers to each, back to
+    // back and after each other's ERROR responses.
     task test_video;
         begin
             ext_m.clear();
@@ -613,6 +625,10 @@ module ae350_soc_tb #(
             ext_m.push(32'he8010000, 1'b0, 3'd2, 0, 1'b0);
             ext_m.push(32'he8040000, 1'b0, 3'd2, 0, 1'b0);
             ext_m.push(32'he8000008, 1'b0, 3'd2, 0, 1'b0); // 15
+            ext_m.push(32'he8040010, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8040002, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8040004, 1'b1, 3'd2, 32'd200, 1'b0);
+            ext_m.push(32'he8040004, 1'b0, 3'd2, 0, 1'b0);
             ext_m.run();
             ext_m.expect_ok(0, 32'h544e5631);
             ext_m.expect_ok(1, 32'h544e3031);
@@ -628,12 +644,16 @@ module ae350_soc_tb #(
             ext_m.expect_error(11);
             ext_m.expect_write_ok(12);
             ext_m.expect_ok(13, 32'd0);
-            ext_m.expect_error(14);
+            ext_m.expect_ok(14, 32'h544e5031);
             ext_m.expect_ok(15, 32'h544e3031);
+            ext_m.expect_ok(16, 32'd0);
+            ext_m.expect_error(17);
+            ext_m.expect_write_ok(18);
+            ext_m.expect_ok(19, 32'd200);
             repeat (8) @(negedge pix_clk);
             if (dut.screen.palette[1] !== 24'h123456)
                 $fatal(1, "palette write through EXTS did not land");
-            $display("PASS: EXTS video registers and palette beside the UART registers");
+            $display("PASS: EXTS video and pad registers beside the UART registers");
         end
     endtask
 

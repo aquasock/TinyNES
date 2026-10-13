@@ -199,6 +199,10 @@ the bitstream `build/ae350_soc/ae350_soc.fs`:
 bash tools/build_ae350_soc.sh
 ```
 
+The SoC build uses nextpnr seed 3 by default: the unseeded route with the
+PMOD0 logic misses a pixel-clock hold check by 0.06 ns. Set
+`TINY_NES_SEED=N` to evaluate another placement.
+
 The build needs the forks of nextpnr and Apicula on their `epic/gw5ast138c`
 branches, which add a timing model for the AE350's AHB ports, measured from
 the vendor's timing reports, so the bus paths into and out of the A25 are
@@ -518,6 +522,74 @@ fails the test, as does PIXELS differing from WANT. On the board it reports
 FB=21694 VBL=600 LATE=0`, with the whole picture shown. `TINY_NES_SOC_DIAG=3`
 builds the SoC with the palette bypassed, each pixel coloured from its
 palette index alone (`build/ae350_soc_index/`).
+
+### Wii Classic Controller inputs
+
+The SoC polls four Wii extension controllers on four separate open-drain I2C
+buses on PMOD0. Connect controller 1's SCL to Digilent pin 1 (FPGA V18) and
+SDA to pin 7 (V19); controller 2 uses pins 2 and 8 (G21/G22), controller 3
+pins 3 and 9 (F18/E18), and controller 4 pins 4 and 10 (C22/B22). Power each
+from PMOD0's 3.3 V on pin 6 or 12 and ground on pin 5 or 11. The signals use
+internal pull-ups first; an external pull-up or a slower clock may be needed
+if the measured rise time is too long. Do not feed 5 V into the signal pins.
+For a four-wire Wii extension cable, red/white/yellow/green often mean
+3.3 V/ground/SCL/SDA, respectively, but cable colors vary. Check the cable's
+contacts or breakout labels with a continuity meter before applying power.
+On the tested red/white/yellow/green cable, the user confirmed that mapping.
+With the board's component side up and HDMI at the top, PMOD0 is the lower
+socket on the right. Its holes run this way (inside column, outside column):
+
+```text
+toward HDMI:       1 yellow SCL    7 green SDA
+                   2               8
+                   3               9
+                   4              10
+                   5 white GND    11 GND
+toward USB-A:      6 red 3.3 V    12 3.3 V
+```
+
+Each bus wakes a controller at I2C address `0x52` without encryption, reads
+its six-byte identity, then polls six data bytes from register `0x00`. A NACK
+or SCL held low for 1 ms marks it absent; it retries after 100 ms. The reset
+clock is about 100 kHz on the 75 MHz bus. All registers are 32-bit accesses
+under the EXTS base `0xe8040000`:
+
+| Offset | Access | Meaning |
+| --- | --- | --- |
+| `0x000` | read | ID `TNP1` (`0x544e5031`) |
+| `0x004` | read/write | Quarter-bit clocks; write a nonzero value to change it and restart all four buses (`187` for about 100 kHz, `375` for 50 kHz) |
+| `0x010 + 0x10n` | read | Pad n status: present bit 0, Classic identity bit 1, successful reads bits 23:8, failures bits 31:24 |
+| `0x014 + 0x10n` | read | Data bytes 0-3; captures bytes 4-5 for the next DATA2 read |
+| `0x018 + 0x10n` | read | Captured data bytes 4-5 in bits 15:0, identity bytes 4-5 in bits 31:16 |
+| `0x01c + 0x10n` | read | Identity bytes 0-3 |
+
+Pad n is numbered 0 to 3 in the register map. Classic Controller format 1
+has 15 active-low buttons in data bytes 4-5, two sticks and two triggers.
+`firmware/apps/pad_test/` prints decoded values whenever they change:
+
+```sh
+mkdir -p build/wii_pads_tb
+iverilog -g2012 -s wii_pads_tb -o build/wii_pads_tb/tb \
+  fpga/ae350_soc/wii_pads.sv tests/wii_pads_tb.sv
+vvp build/wii_pads_tb/tb
+make -C firmware/apps/pad_test
+python3 tools/load_ae350.py build/firmware/apps/pad_test/pad_test.elf \
+  --run-timeout 140 --expect 'TinyNES PAD OK'
+```
+
+The testbench models two controllers and two empty sockets, checks identity,
+data bytes, clock stretching, unplug and retry, and the writable clock
+divider. On 2026-10-13 the Classic Controller Pro on PMOD0 pins 1/7/5/6
+reported a Classic Pro identity, zero PAD1 I2C failures, changing buttons,
+both sticks and both triggers at the default clock; the user confirmed the
+reports matched their inputs. The other three buses remain untested with pads.
+The program watches the pads for 120 seconds and exits successfully if it
+found a Classic controller and sampled its data; it prints any input changes
+during that time.
+If the internal pull-ups do not give a fast enough rise for another controller,
+build a 50 kHz diagnostic separately with `make -C firmware/apps/pad_test
+BUILD=$PWD/build/firmware/apps/pad_test_50k PAD_QUARTER=375`, then load that
+directory's `pad_test.elf`.
 
 ## Build sweeps
 

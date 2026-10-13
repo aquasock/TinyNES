@@ -559,3 +559,43 @@ The next cycle should propose making the benchmark a playable NES for user appro
 - User Test: PASS
 
 ---
+
+## 16 COMMIT Unreleased 2026-10-13T00:04:20-07:00
+
+#### Coming From:
+
+Unreleased b9c2900
+
+#### Purpose:
+
+Read four Wii Classic Controller extension buses on PMOD0 so the AE350 can use real controller inputs.
+
+#### Outcome:
+
+`wii_pads.sv` adds four independent open-drain I2C masters with unencrypted wake-up, Classic identity checks, six-byte polling, clock stretching, retry and memory-mapped status and input registers at `0xe8040000`; `ae350_soc.sv`, its constraints and build manifest connect them to PMOD0, while `tinynes.h` and `pad_test` expose decoded controls over UART. The two-controller simulation, both SoC test modes and the firmware build passed. The seed-3 FPGA image `4d1b27e8d8e4969ebe66bd132ae3374cc327fafd63e1506a0e6bd97e09810d5d` passed bus timing at 77.64 MHz and pixel timing at 80.85 MHz and loaded to SRAM through the FTDI one-wire debugger. On PMOD0 pins 1, 7, 5 and 6, the user's color-verified Classic Controller Pro returned ID `01 00 A4 20 01 01` at the default about-100-kHz rate; PAD1 reported thousands of successful samples with zero I2C failures, and changing face, D-pad, shoulder, system, stick and trigger values. The user confirmed that the reported values matched their actions. The program's final exit line was not captured because the host test was interrupted for a pause after the live pass; the other three buses were simulated but not populated with controllers. The README and PMOD-007 and WII-001 record the wiring and measured behavior. The core-syntax audit passed.
+
+#### Next Steps:
+
+Make FCEUmm playable by feeding the pad registers into its input callbacks and running the emulator continuously, then add sound playback. The user requested two-wire mode for future firmware updates because the FTDI one-wire path is slow; the current AE350 upload tool only uses the one-wire UART, so a two-wire transport is still needed before that preference can be used for TinyNES program uploads. The three unused controller buses and other extension variants remain available for later hardware checks.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/pad_test/Makefile
+- firmware/apps/pad_test/main.c
+- firmware/include/tinynes.h
+- fpga/ae350_soc/ae350_soc.cst
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/wii_pads.sv
+- tests/ae350_soc_tb.sv
+- tests/wii_pads_tb.sv
+- tools/build_ae350_soc.sh
+- tools/designs/ae350_soc.json
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  *
  * Registers the fabric decodes in the AE350's uncached EXTS window
- * (fpga/ae350_soc/exts_uart.sv and video.sv), the memory map, the A25 cache controls and
+ * (fpga/ae350_soc/exts_uart.sv, video.sv and wii_pads.sv), the memory map, the A25 cache controls and
  * the boot ROM's UART load protocol. Shared by the boot ROM and the runtime.
  */
 #ifndef TINYNES_H
@@ -63,6 +63,25 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 #define TN_VIDEO_WIDTH     256u
 #define TN_VIDEO_HEIGHT    240u
 #define TN_VIDEO_PALETTE_SIZE 768u
+
+/* Wii Classic Controller inputs on PMOD0. Four separate I2C buses run in
+ * fabric, one per adjacent PMOD signal pair. Reading DATA also captures its
+ * upper two bytes for a subsequent DATA2 read. Buttons in bytes 4 and 5 are
+ * active low. A pad may answer without identifying as a Classic Controller;
+ * check both PRESENT and CLASSIC before decoding its data. */
+#define TN_PAD_ID          TN_REG(0x40000) /* read: TN_PAD_ID_VALUE */
+#define TN_PAD_CTRL        TN_REG(0x40004) /* read/write: quarter bit clocks; write restarts masters */
+#define TN_PAD_STATUS(n)   TN_REG(0x40010 + 0x10u * (n))
+#define TN_PAD_DATA(n)     TN_REG(0x40014 + 0x10u * (n))
+#define TN_PAD_DATA2(n)    TN_REG(0x40018 + 0x10u * (n))
+#define TN_PAD_IDENT(n)    TN_REG(0x4001c + 0x10u * (n))
+#define TN_PAD_ID_VALUE    0x544e5031u /* "TNP1" */
+#define TN_PAD_PRESENT     0x01u
+#define TN_PAD_CLASSIC     0x02u
+#define TN_PAD_READS(s)    (((s) >> 8) & 0xffffu)
+#define TN_PAD_FAILS(s)    ((s) >> 24)
+#define TN_PAD_QUARTER_100K 187u
+#define TN_PAD_QUARTER_50K  375u
 
 #define TN_UART_BAUD 2000000u
 #define TN_CORE_HZ   750000000u
