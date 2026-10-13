@@ -446,3 +446,45 @@ The next cycle should propose to the user how to remove the remaining 5 millisec
 - User Test: PASS
 
 ---
+
+## 13 COMMIT Unreleased 2026-10-12T18:16:06-07:00
+
+#### Coming From:
+
+Unreleased a331d15
+
+#### Purpose:
+
+Give the A25 an HDMI picture, as the user approved: a 1280x720 60 Hz output showing a 256x240 indexed frame buffer at three times its size, with FCEUmm's palette and colour emphasis applied in FPGA logic.
+
+#### Outcome:
+
+`fpga/ae350_soc/video.sv` adds the video unit on the EXTS window at `0xe8010000`: control, status, frame count and ID registers, a 768-entry palette, per-line emphasis and two frame buffers, with CEA-861 720p timing, fabric colour bars until a program turns the buffers on, and TinyTang's MIT TMDS encoder; `ae350_soc.sv` adds the two HDMI PLLs, the `CLKDIV`, the serialisers and the EXTS mux, `firmware/include/tinynes.h` names the registers, `firmware/apps/video_test/` draws a test picture with a moving square, `tests/video_tb.sv` decodes whole frames from the TMDS words against a model, and `tests/ae350_soc_tb.sv` checks video transfers beside the UART registers; both testbenches passed throughout. On the board the first images showed the colour bars but the A25 never printed its boot lines, and after each such load the debug bridge's UART stayed silent for every image until a power cycle (BRD-012). Bisection with fabric-only beacons, an off-bus variant and a powered supply ruled out power, the HDMI PLLs and the video logic; at the user's choice the A25's bus ports were given a timing model measured from Gowin's timing analyser, committed as aquasock/apicula `860ada4` and aquasock/nextpnr `67293958` (DEV-015), which did not cure it. The cause was the clock branch: when the pixel clock was added nextpnr fed the AE350's bus clock taps from global branch GB20 instead of GB10, and only the GB10 images boot (DEV-016); a temporary nextpnr knob, `NPNR_GOWIN_CLK_FIRST` in aquasock/nextpnr `7d1b131c`, routes `bus_clk` first, and `tools/build_ae350_soc.sh` now sets it and fails if nextpnr did not apply it. The GB10 image ran `video_test` but the picture was black; a gate-level simulation of the netlist was correct, and the new `TINY_NES_SOC_DIAG=3` build, which colours pixels by palette index (`DEBUG_INDEX`), showed the emphasis RAM working and every frame-buffer pixel zero. Apicula's 1-bit two-clock block RAM, which Yosys chose for the frame buffers, reads zero on this chip, though a decode of Gowin and Apicula builds of the same test RAMs found matching attributes and routing (TOOL-020); the user asked whether decrypting Gowin's encrypted netlists would go against the project's spirit, was told it would and is not done, and agreed. At the user's choice of a shortcut over a hardware fuse hunt, the frame buffers are now built as 4Kx4 arrays that map to 4-bit block RAM. That build, `build/ae350_soc/ae350_soc.fs` with SHA-256 `3937428fe63aa77e5c7e1f5ff3358ae1aac1475d048fc3766ff4dae46175db23`, bus Fmax 125.60 MHz and pixel Fmax 83.03 MHz, is reproduced byte for byte by the script with the committed forks; the agent loaded it in one-wire mode and `video_test` printed `TinyNES VIDEO OK FRAMES=600 PERIOD=16666 COPY=2253 FB=27270 VBL=600` and exited 0. The user saw the moving square but a distorted picture, which they will show later, and closed the cycle without accepting it; the cause of the distortion is not investigated. `tools/designs/ae350_soc.json` gained `video.sv` so sweeps build again, the README documents the video unit, its tests and the toolchain knob, and DEV-015, DEV-016, BRD-011, BRD-012 and TOOL-020 are new. In the Apicula fork `tests/test_ae350_tap_directions.py` expects 453 decided output taps and now finds 495 with none wrong, a stale count from its earlier port-map commit `d8eb183` that was left unchanged. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should start from the user's photograph of the distorted picture and locate the fault, using the `TINY_NES_SOC_DIAG=3` build to tell the palette from the frame buffers and pixel pipeline, and get the user's acceptance of the `video_test` picture before FCEUmm's frames are sent to it; the GB20 fault (DEV-016), the 1-bit block RAM fault (TOOL-020) and the stale Apicula test count remain open in the toolchain forks.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/video_test/Makefile
+- firmware/apps/video_test/main.c
+- firmware/include/tinynes.h
+- fpga/ae350_soc/ae350_soc.cst
+- fpga/ae350_soc/ae350_soc.sdc
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/exts_uart.sv
+- fpga/ae350_soc/video.sv
+- tests/ae350_soc_tb.sv
+- tests/video_tb.sv
+- tools/build_ae350_soc.sh
+- tools/designs/ae350_soc.json
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: FAIL
+
+---

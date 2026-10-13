@@ -109,7 +109,7 @@ alter BL616 firmware or the FPGA's configuration flash.
 | ROM | `0x80000000` | 32 KiB block-RAM boot ROM (`ahb_boot_rom.sv`) holding the firmware image |
 | RAM (64-bit) | `0x60000000` | 64 KiB block RAM (`ahb_ram.sv`) holding the firmware's data and stack |
 | RAM (64-bit) | `0x40000000` | 32 MiB SDRAM on the dock's J9 module (`ahb_sdram.sv`); a data access to any address on this port outside the two RAMs gets an AHB ERROR, and an instruction fetch reads zero |
-| EXTS (uncached) | `0xe8000000` | UART data `+0x00`, UART status `+0x04`, ID `0x544e3031` ("TN01") `+0x08`, scratch `+0x0c`, UART receive `+0x10` (`exts_uart.sv`) |
+| EXTS (uncached) | `0xe8000000` | UART data `+0x00`, UART status `+0x04`, ID `0x544e3031` ("TN01") `+0x08`, scratch `+0x0c`, UART receive `+0x10` (`exts_uart.sv`); HDMI video from `+0x10000` (`video.sv`, below) |
 
 The clocks are the same as in the UART gate: the core runs at 750 MHz and the
 buses at 75 MHz. The UART is the same FPGA UART, transmitting on U15 and
@@ -199,12 +199,23 @@ the bitstream `build/ae350_soc/ae350_soc.fs`:
 bash tools/build_ae350_soc.sh
 ```
 
+The build needs the forks of nextpnr and Apicula on their `epic/gw5ast138c`
+branches, which add a timing model for the AE350's AHB ports, measured from
+the vendor's timing reports, so the bus paths into and out of the A25 are
+timed. The A25's bus dies when its clock reaches it through global clock
+branch `GB20`, and works through `GB10`; the cause is not yet known. Until it
+is, the script sets `NPNR_GOWIN_CLK_FIRST=bus_clk`, a temporary knob in the
+nextpnr fork that routes the bus clock first so that it takes `GB10`, and
+fails if nextpnr did not apply it. A sweep of `ae350_soc` (below) needs the
+same variable set.
+
 The testbench drives each AHB port directly. `TEST=0` covers the ROM, the RAM's
 byte lanes, ERROR responses and zero-reading fetches, the EXTS registers, the
 CPU UART, the UART receiver (byte order, senders 5% fast and slow, glitches,
 missing stop bits, overrun and the status bits), and the SDRAM controller
 against `tests/sdram_model.sv`, a W9825G6KH-6 model that checks command
-order and timing. `TEST=1` covers the `NOBOOT` report and the CPU taking the
+order and timing, and that video transfers reach the video unit beside the
+UART registers. `TEST=1` covers the `NOBOOT` report and the CPU taking the
 UART over:
 
 ```sh
@@ -404,6 +415,75 @@ them. With RGB565 the stage's walk right, from frame 720, runs at about
 removed), before `BLIT` was timed; on the PC it was 1.8 times as slow as
 FCEUmm.
 
+### HDMI video
+
+`fpga/ae350_soc/video.sv` drives the board's HDMI port with 1280x720 at
+60 Hz (CEA-861 timing, 74.25 MHz pixel clock, positive syncs), as DVI. It
+shows a 256x240 frame buffer at three times its size, 768x720, centred
+between black side bars. Until a program turns the frame buffers on it shows
+eight colour bars made by the fabric. There are two frame buffers of 8-bit
+palette indices, a 768-entry palette and a 3-bit colour emphasis for each
+line, all in block RAM. A pixel's palette index follows FCEUmm's: the pixel
+itself when its line's emphasis is 0, otherwise 256 + 64 x emphasis + the
+pixel's low six bits. Offsets are from `0xe8000000`, and
+`firmware/include/tinynes.h` names them:
+
+| Offset | Access | Contents |
+|---|---|---|
+| `0x10000` | read, write | CTRL: bit 0 shows the frame buffers, bit 1 picks the buffer; both take effect at the next vertical blank |
+| `0x10004` | read | STATUS: bit 0 in vertical blank, bit 1 the buffer shown, bit 2 the frame buffers are shown |
+| `0x10008` | read | FRAMES: vertical blanks since reset |
+| `0x1000c` | read | ID `0x544e5631` ("TNV1") |
+| `0x11000 + 4i` | write | Palette entry i, red in bits 23:16, green 15:8, blue 7:0 |
+| `0x12000 + 4(256b + y)` | write | Emphasis, bits 2:0, of line y of buffer b |
+| `0x20000 + 0x10000b + 256y + x` | write | Pixel (x, y) of buffer b, as bytes, halfwords or words |
+
+Registers, palette and emphasis take 32-bit transfers only; any other access,
+including a read of a write-only area, gets an AHB ERROR. Every other transfer
+completes with no wait state. The 371.25 MHz serial clock comes from two PLLs
+fed by the 50 MHz oscillator, and a `CLKDIV` in the right side's clock block
+beside the TMDS pins divides it by five for the pixel clock. The build fails
+unless the pixel clock meets 74.25 MHz. The TMDS encoder is TinyTang's
+(`fpga/hdmi_test/hdmi_test.v`, MIT).
+
+Each byte lane of each frame buffer is written as eight 4Kx4 arrays, so that
+each maps to one block RAM in 4-bit mode. Left to itself, synthesis picks
+1-bit mode, and Apicula's 1-bit mode reads back as zero on this chip.
+
+`tests/video_tb.sv` tests the unit on its own: registers and error responses,
+then whole frames decoded from the TMDS words and compared pixel by pixel with
+a model of the bars and of both frame buffers with palette and emphasis, the
+sync timing and the buffer flip. It takes several minutes:
+
+```sh
+mkdir -p build/video_tb
+iverilog -g2012 -s video_tb -o build/video_tb/tb fpga/ae350_soc/video.sv tests/video_tb.sv
+vvp -n build/video_tb/tb
+```
+
+`firmware/apps/video_test/` loads its own palette and emphasis, then for 600
+frames copies a test picture into the buffer not shown, draws a moving white
+square on it, and flips buffers at the next vertical blank:
+
+```sh
+make -C firmware/apps/video_test
+python3 tools/load_ae350.py build/firmware/apps/video_test/video_test.elf \
+  --run-timeout 60 --expect 'TinyNES VIDEO OK'
+```
+
+```text
+TinyNES VIDEO OK FRAMES=<n> PERIOD=<us> COPY=<us> FB=<KB/s> VBL=<n>
+```
+
+`PERIOD` is the mean time per frame, `COPY` the mean time to write a whole
+frame buffer with 32-bit stores, `FB` that rate and `VBL` the vertical blanks
+the fabric counted meanwhile. On the board it reports
+`FRAMES=600 PERIOD=16666 COPY=2253 FB=27270 VBL=600`, and the moving square
+can be seen. The picture is distorted, though, and the fault is not yet
+found. `TINY_NES_SOC_DIAG=3` builds the SoC with the palette bypassed, each
+pixel coloured from its palette index alone (`build/ae350_soc_index/`), to
+tell palette faults from frame buffer faults.
+
 ## Build sweeps
 
 `tools/sweep.py` builds design variants over many nextpnr seeds in parallel
@@ -430,7 +510,8 @@ nextpnr options. Results go to `build/sweep/<design>-<time>/` as
 
 The board pin and AE350 clock facts come from the project reference library
 and the Tang-PSX/Tang-Phosphor hardware reports cited there. The RTL here is
-original MIT-licensed code. CERN's colibri and its SystemVerilog port are
+original MIT-licensed code, apart from the TMDS encoder in `video.sv`, which
+is TinyTang's, also MIT. CERN's colibri and its SystemVerilog port are
 design practice references; their modules are not included.
 
 FCEUmm descends from BERO's

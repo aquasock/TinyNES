@@ -39,6 +39,7 @@ module exts_uart #(
     input  wire        hsel,
     input  wire        hwrite,
     input  wire [31:0] hwdata,
+    input  wire        hready_in, // the EXTS port's HREADY
     output reg  [31:0] hrdata,
     output reg         hready,
     output reg         hresp,
@@ -239,7 +240,7 @@ module exts_uart #(
             error_second <= 1'b0;
             if (hready) begin
                 hresp <= 1'b0;
-                if (hsel && htrans[1]) begin
+                if (hready_in && hsel && htrans[1]) begin
                     target <= decode(haddr, hwrite);
                     write <= hwrite;
                     pending <= 1'b1;

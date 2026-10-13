@@ -4,7 +4,8 @@
 // port at 0x60000000 (ahb_ram), has the dock's 32 MiB SDRAM on J9 at
 // 0x40000000 on the same port (ahb_sdram), and sends and receives on the
 // FPGA UART at 2,000,000 baud 8N1 through registers in the EXTS window
-// (exts_uart).
+// (exts_uart), and drives the HDMI port at 1280x720 60 Hz from frame buffers
+// and a palette in the EXTS window at 0xe8010000 (video).
 //
 // If the CPU has written nothing to the UART 2^NOBOOT_BITS bus clocks after
 // reset (about 1.8 s), fabric reports instead, about once a second until the
@@ -35,7 +36,12 @@ module ae350_soc_top #(
     output wire [1:0]  sdram_ba,
     output wire [12:0] sdram_a,
     output wire [1:0]  sdram_dqm,
-    inout  wire [15:0] sdram_dq
+    inout  wire [15:0] sdram_dq,
+
+    output wire        tmds_clk_p,
+    output wire        tmds_clk_n,
+    output wire [2:0]  tmds_d_p,
+    output wire [2:0]  tmds_d_n
 );
     wire pll_locked;
     wire bus_clk;
@@ -148,6 +154,7 @@ module ae350_soc_top #(
     wire [1:0] exts_trans;
     wire exts_write;
     wire [31:0] exts_rdata;
+    wire [2:0] exts_size;
     wire exts_ready;
     wire exts_resp;
 
@@ -209,23 +216,233 @@ module ae350_soc_top #(
     wire fb_ready;
     wire cpu_owns;
 
+    // The EXTS window: address bit 17 or 16 set selects video (0xe8010000 to
+    // 0xe803ffff; elsewhere in the window it aliases), anything else the
+    // UART registers, which decode the full address. The open flow has no
+    // timing model for the AE350's ports, so each path to or from them has
+    // at most one LUT: HREADY is the AND of the two slaves' registered
+    // HREADYs, HRESP their OR (each is high only during its own ERROR), and
+    // read data a mux on a registered select.
+    wire video_hit = exts_addr[17] | exts_addr[16];
+    reg data_video = 1'b0;
+    wire [31:0] uart_rdata, video_rdata;
+    wire uart_ready, uart_resp, video_ready, video_resp;
+    always @(posedge bus_clk or negedge resetn)
+        if (!resetn)
+            data_video <= 1'b0;
+        else if (exts_ready)
+            data_video <= video_hit;
+    assign exts_rdata = data_video ? video_rdata : uart_rdata;
+    assign exts_ready = uart_ready & video_ready;
+    assign exts_resp = uart_resp | video_resp;
+
     exts_uart #(.UART_DIV2(UART_DIV2), .DROP_CPU_TX(CPU_TX_DROP)) regs (
         .clk(bus_clk),
         .resetn(resetn),
         .haddr(exts_addr),
         .htrans(exts_trans),
-        .hsel(exts_sel),
+        .hsel(exts_sel && !video_hit),
+        .hready_in(exts_ready),
         .hwrite(exts_write),
         .hwdata(exts_wdata),
-        .hrdata(exts_rdata),
-        .hready(exts_ready),
-        .hresp(exts_resp),
+        .hrdata(uart_rdata),
+        .hready(uart_ready),
+        .hresp(uart_resp),
         .fb_valid(fb_valid),
         .fb_data(fb_data),
         .fb_ready(fb_ready),
         .cpu_owns(cpu_owns),
         .tx(uart_tx),
         .rx(uart_rx)
+    );
+
+    // HDMI: 50 MHz -> 27 MHz -> 371.25 MHz serial clock (hdmi_pll), divided
+    // by 5 to the 74.25 MHz pixel clock. 50 * 27 = 1350 MHz VCO / 50; 27 * 55
+    // = 1485 MHz VCO / 4.
+    wire clk27;
+    wire pix_clk5;
+    wire pix_clk;
+    PLL #(
+        .FCLKIN("50"),
+        .IDIV_SEL(1),
+        .FBDIV_SEL(1),
+        .MDIV_SEL(27),
+        .ODIV0_SEL(50),
+        .CLKOUT0_EN("TRUE")
+    ) hdmi_pll27 (
+        .CLKIN(sys_clk),
+        .CLKFB(1'b0),
+        .RESET(1'b0),
+        .PLLPWD(1'b0),
+        .RESET_I(1'b0),
+        .RESET_O(1'b0),
+        .FBDSEL(6'b0),
+        .IDSEL(6'b0),
+        .MDSEL(7'b0),
+        .MDSEL_FRAC(3'b0),
+        .ODSEL0(7'b0),
+        .ODSEL0_FRAC(3'b0),
+        .ODSEL1(7'b0),
+        .ODSEL2(7'b0),
+        .ODSEL3(7'b0),
+        .ODSEL4(7'b0),
+        .ODSEL5(7'b0),
+        .ODSEL6(7'b0),
+        .DT0(4'b0),
+        .DT1(4'b0),
+        .DT2(4'b0),
+        .DT3(4'b0),
+        .ICPSEL(6'b0),
+        .LPFRES(3'b0),
+        .LPFCAP(2'b0),
+        .PSSEL(3'b0),
+        .PSDIR(1'b0),
+        .PSPULSE(1'b0),
+        .ENCLK0(1'b1),
+        .ENCLK1(1'b0),
+        .ENCLK2(1'b0),
+        .ENCLK3(1'b0),
+        .ENCLK4(1'b0),
+        .ENCLK5(1'b0),
+        .ENCLK6(1'b0),
+        .SSCPOL(1'b0),
+        .SSCON(1'b0),
+        .SSCMDSEL(7'b0),
+        .SSCMDSEL_FRAC(3'b0),
+        .LOCK(),
+        .CLKOUT0(clk27),
+        .CLKOUT1(),
+        .CLKOUT2(),
+        .CLKOUT3(),
+        .CLKOUT4(),
+        .CLKOUT5(),
+        .CLKOUT6(),
+        .CLKFBOUT()
+    );
+    PLL #(
+        .FCLKIN("27"),
+        .IDIV_SEL(1),
+        .FBDIV_SEL(1),
+        .MDIV_SEL(55),
+        .ODIV0_SEL(4),
+        .CLKOUT0_EN("TRUE")
+    ) hdmi_pll (
+        .CLKIN(clk27),
+        .CLKFB(1'b0),
+        .RESET(1'b0),
+        .PLLPWD(1'b0),
+        .RESET_I(1'b0),
+        .RESET_O(1'b0),
+        .FBDSEL(6'b0),
+        .IDSEL(6'b0),
+        .MDSEL(7'b0),
+        .MDSEL_FRAC(3'b0),
+        .ODSEL0(7'b0),
+        .ODSEL0_FRAC(3'b0),
+        .ODSEL1(7'b0),
+        .ODSEL2(7'b0),
+        .ODSEL3(7'b0),
+        .ODSEL4(7'b0),
+        .ODSEL5(7'b0),
+        .ODSEL6(7'b0),
+        .DT0(4'b0),
+        .DT1(4'b0),
+        .DT2(4'b0),
+        .DT3(4'b0),
+        .ICPSEL(6'b0),
+        .LPFRES(3'b0),
+        .LPFCAP(2'b0),
+        .PSSEL(3'b0),
+        .PSDIR(1'b0),
+        .PSPULSE(1'b0),
+        .ENCLK0(1'b1),
+        .ENCLK1(1'b0),
+        .ENCLK2(1'b0),
+        .ENCLK3(1'b0),
+        .ENCLK4(1'b0),
+        .ENCLK5(1'b0),
+        .ENCLK6(1'b0),
+        .SSCPOL(1'b0),
+        .SSCON(1'b0),
+        .SSCMDSEL(7'b0),
+        .SSCMDSEL_FRAC(3'b0),
+        .LOCK(),
+        .CLKOUT0(pix_clk5),
+        .CLKOUT1(),
+        .CLKOUT2(),
+        .CLKOUT3(),
+        .CLKOUT4(),
+        .CLKOUT5(),
+        .CLKOUT6(),
+        .CLKFBOUT()
+    );
+
+    reg [7:0] hdmi_reset_count = 8'd255;
+    reg hdmi_resetn = 1'b0;
+    always @(posedge sys_clk) begin
+        if (hdmi_reset_count != 8'd0)
+            hdmi_reset_count <= hdmi_reset_count - 1'b1;
+        else
+            hdmi_resetn <= 1'b1;
+    end
+
+    CLKDIV #(.DIV_MODE("5")) pix_div (
+        .CLKOUT(pix_clk),
+        .HCLKIN(pix_clk5),
+        .RESETN(hdmi_resetn),
+        .CALIB(1'b0)
+    );
+
+    reg [2:0] pix_reset_sync = 3'b111;
+    always @(posedge pix_clk or negedge hdmi_resetn)
+        if (!hdmi_resetn)
+            pix_reset_sync <= 3'b111;
+        else
+            pix_reset_sync <= {pix_reset_sync[1:0], 1'b0};
+    wire pix_reset = pix_reset_sync[2];
+
+    wire [9:0] tmds_ch [0:2];   // blue, green, red
+    video screen (
+        .clk(bus_clk),
+        .resetn(resetn),
+        .haddr(exts_addr[17:0]),
+        .htrans(exts_trans),
+        .hsel(exts_sel && video_hit),
+        .hwrite(exts_write),
+        .hsize(exts_size),
+        .hwdata(exts_wdata),
+        .hready_in(exts_ready),
+        .hrdata(video_rdata),
+        .hready(video_ready),
+        .hresp(video_resp),
+        .pix_clk(pix_clk),
+        .pix_reset(pix_reset),
+        .tmds_blue(tmds_ch[0]),
+        .tmds_green(tmds_ch[1]),
+        .tmds_red(tmds_ch[2])
+    );
+
+    wire [3:0] tmds;   // {clock lane, red, green, blue}
+    genvar lane;
+    generate
+        for (lane = 0; lane < 3; lane = lane + 1) begin : hdmi_ser
+            OSER10 ser (
+                .Q(tmds[lane]),
+                .D0(tmds_ch[lane][0]), .D1(tmds_ch[lane][1]), .D2(tmds_ch[lane][2]),
+                .D3(tmds_ch[lane][3]), .D4(tmds_ch[lane][4]), .D5(tmds_ch[lane][5]),
+                .D6(tmds_ch[lane][6]), .D7(tmds_ch[lane][7]), .D8(tmds_ch[lane][8]),
+                .D9(tmds_ch[lane][9]),
+                .PCLK(pix_clk),
+                .FCLK(pix_clk5),
+                .RESET(pix_reset)
+            );
+        end
+    endgenerate
+    assign tmds[3] = pix_clk;
+    ELVDS_OBUF tmds_buf [3:0] (
+        .I(tmds),
+        .O({tmds_clk_p, tmds_d_p}),
+        .OB({tmds_clk_n, tmds_d_n})
     );
 
     AE350_SOC cpu (
@@ -274,6 +491,7 @@ module ae350_soc_top #(
         .EXTS_HSEL(exts_sel),
         .EXTS_HTRANS(exts_trans),
         .EXTS_HWRITE(exts_write),
+        .EXTS_HSIZE(exts_size),
         .EXTS_HWDATA(exts_wdata),
         .EXTS_HRDATA(exts_rdata),
         .EXTS_HREADYIN(exts_ready),

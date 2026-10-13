@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  *
  * Registers the fabric decodes in the AE350's uncached EXTS window
- * (fpga/ae350_soc/exts_uart.sv), the memory map, the A25 cache controls and
+ * (fpga/ae350_soc/exts_uart.sv and video.sv), the memory map, the A25 cache controls and
  * the boot ROM's UART load protocol. Shared by the boot ROM and the runtime.
  */
 #ifndef TINYNES_H
@@ -31,6 +31,30 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 #define TN_UART_RX_FRAME   0x10u /* a byte had no stop bit; sticky */
 #define TN_UART_RX_VALID   0x100u /* TN_UART_RX bits 7:0 hold a byte */
 #define TN_ID_VALUE        0x544e3031u /* "TN01" */
+
+/* HDMI video (fpga/ae350_soc/video.sv): 1280x720 60 Hz showing a 256x240
+ * frame buffer at 3x, or fabric colour bars until TN_VIDEO_ENABLE is set.
+ * CTRL changes take effect at the next vertical blank; STATUS reports what
+ * is being shown. Palette, emphasis and frame buffers are write-only; the
+ * palette index of a pixel is the pixel itself when its line's emphasis is
+ * 0, else 256 + emphasis * 64 + (pixel & 63). */
+#define TN_VIDEO_CTRL    TN_REG(0x10000) /* read and write */
+#define TN_VIDEO_STATUS  TN_REG(0x10004) /* read */
+#define TN_VIDEO_FRAMES  TN_REG(0x10008) /* read: vertical blanks */
+#define TN_VIDEO_ID      TN_REG(0x1000c) /* read: TN_VIDEO_ID_VALUE */
+#define TN_VIDEO_PALETTE(i)     TN_REG(0x11000 + 4 * (i)) /* 0xRRGGBB */
+#define TN_VIDEO_EMPHASIS(b, y) TN_REG(0x12000 + 4 * (256 * (b) + (y)))
+#define TN_VIDEO_FB(b) ((volatile uint8_t *)(0xe8020000u + 0x10000u * (b)))
+#define TN_VIDEO_FB32(b) ((volatile uint32_t *)(0xe8020000u + 0x10000u * (b)))
+
+#define TN_VIDEO_ENABLE    0x1u /* CTRL: show the frame buffers */
+#define TN_VIDEO_BUFFER    0x2u /* CTRL: the buffer to show (STATUS: shown) */
+#define TN_VIDEO_VBLANK    0x1u /* STATUS */
+#define TN_VIDEO_SHOWING   0x4u /* STATUS: the frame buffers are shown */
+#define TN_VIDEO_ID_VALUE  0x544e5631u /* "TNV1" */
+#define TN_VIDEO_WIDTH     256u
+#define TN_VIDEO_HEIGHT    240u
+#define TN_VIDEO_PALETTE_SIZE 768u
 
 #define TN_UART_BAUD 2000000u
 #define TN_CORE_HZ   750000000u

@@ -6,11 +6,14 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 src="$root/fpga/ae350_soc"
 # TINY_NES_SOC_DIAG=1 holds the A25 in reset; 2 lets it run but drops its
 # UART bytes. Either way the fabric's NOBOOT report is the only output.
+# 3 makes the video unit colour each pixel from its palette index instead of
+# the palette, to tell palette faults from frame-buffer faults.
 case "${TINY_NES_SOC_DIAG:-0}" in
     0) synth_param=""; default_out="$root/build/ae350_soc" ;;
     1) synth_param="chparam -set CPU_HOLD 1 ae350_soc_top"; default_out="$root/build/ae350_soc_hold" ;;
     2) synth_param="chparam -set CPU_TX_DROP 1 ae350_soc_top"; default_out="$root/build/ae350_soc_drop" ;;
-    *) echo "TINY_NES_SOC_DIAG must be 0, 1 or 2" >&2; exit 2 ;;
+    3) synth_param="chparam -set DEBUG_INDEX 1 video"; default_out="$root/build/ae350_soc_index" ;;
+    *) echo "TINY_NES_SOC_DIAG must be 0, 1, 2 or 3" >&2; exit 2 ;;
 esac
 out="${TINY_NES_BUILD_DIR:-$default_out}"
 suite="${OSS_CAD_SUITE:-$HOME/oss-cad-suite}"
@@ -25,6 +28,10 @@ family=GW5AST-138C
 source "$suite/environment"
 export PYTHONHOME="$suite"
 export PYTHONPATH="$apycula:$pydeps:${PYTHONPATH:-}"
+# Temporary: the A25 bus dies when its clock reaches the AE350 through global
+# branch GB20, and works through GB10. The nextpnr fork's experimental knob
+# routes bus_clk first so it takes GB10. Remove once the GB20 fault is fixed.
+export NPNR_GOWIN_CLK_FIRST="${NPNR_GOWIN_CLK_FIRST:-bus_clk}"
 
 [[ -x "$nextpnr" ]] || { echo "missing open nextpnr: $nextpnr" >&2; exit 2; }
 [[ -f "$apycula/apycula/$family.msgpack.xz" ]] || {
@@ -40,7 +47,7 @@ cd "$root"
 echo "Yosys synthesis"
 yosys -Q -T -q -l "$out/synth.log" -p "
     read_verilog -lib $suite/share/yosys/gowin/cells_xtra_gw5a.v
-    read_verilog -sv $src/ahb_boot_rom.sv $src/ahb_ram.sv $src/ahb_sdram.sv $src/exts_uart.sv $src/ae350_soc.sv
+    read_verilog -sv $src/ahb_boot_rom.sv $src/ahb_ram.sv $src/ahb_sdram.sv $src/exts_uart.sv $src/video.sv $src/ae350_soc.sv
     $synth_param
     synth_gowin -family gw5a -top ae350_soc_top
     write_json $out/ae350_soc.json
@@ -60,6 +67,10 @@ echo "nextpnr placement and routing"
         tail -80 "$out/nextpnr.log" >&2
         exit 1
     }
+grep -q "routing '$NPNR_GOWIN_CLK_FIRST' first" "$out/nextpnr.log" || {
+    echo "nextpnr did not route $NPNR_GOWIN_CLK_FIRST first (needs the fork's NPNR_GOWIN_CLK_FIRST knob)" >&2
+    exit 1
+}
 
 echo "Apicula bitstream packing"
 "$suite/py3bin/python3" - "$out" <<'PY'
@@ -77,6 +88,14 @@ timing = json.loads((out / "timing.json").read_text())["fmax"]["bus_clk"]
 if timing["constraint"] < 75 or timing["achieved"] < 75:
     raise SystemExit(f"75 MHz AHB bus timing failed: {timing}")
 print(f"Bus Fmax {timing['achieved']:.2f} MHz")
+# The HDMI pixel clock must have been timed at its real rate, not a default.
+pixel = [t for t in json.loads((out / "timing.json").read_text())["fmax"].values()
+         if abs(t["constraint"] - 74.25) < 0.05]
+if not pixel:
+    raise SystemExit("HDMI pixel clock was not constrained at 74.25 MHz")
+if min(t["achieved"] for t in pixel) < 74.25:
+    raise SystemExit(f"74.25 MHz HDMI pixel clock timing failed: {pixel}")
+print(f"Pixel Fmax {min(t['achieved'] for t in pixel):.2f} MHz")
 PY
 "$suite/py3bin/python3" -m apycula.gowin_pack \
     -d "$family" \

@@ -143,6 +143,27 @@ module ODDR #(
         Q0 <= d1;
 endmodule
 
+// Stand-ins for the HDMI serialisers and output buffers, which only exist in
+// the vendor's libraries; the video unit's own testbench checks the TMDS words.
+module OSER10 (
+    input  wire D0, D1, D2, D3, D4, D5, D6, D7, D8, D9,
+    input  wire PCLK,
+    input  wire FCLK,
+    input  wire RESET,
+    output wire Q
+);
+    assign Q = D0;
+endmodule
+
+module ELVDS_OBUF (
+    input  wire I,
+    output wire O,
+    output wire OB
+);
+    assign O = I;
+    assign OB = !I;
+endmodule
+
 module ae350_soc_tb #(
     // 0: every port, register and UART path, the receiver included. 1: the
     // NOBOOT report and the CPU taking the UART over from it.
@@ -158,6 +179,8 @@ module ae350_soc_tb #(
     wire tx;
     reg rx = 1'b1;
     always #6.667 clk = ~clk;
+    reg pix_clk = 1'b0;
+    always #6.734 pix_clk = ~pix_clk; // 74.25 MHz
 
     wire sdram_clk;
     wire sdram_cs_n;
@@ -181,7 +204,11 @@ module ae350_soc_tb #(
         .sdram_ba(sdram_ba),
         .sdram_a(sdram_a),
         .sdram_dqm(sdram_dqm),
-        .sdram_dq(sdram_dq)
+        .sdram_dq(sdram_dq),
+        .tmds_clk_p(),
+        .tmds_clk_n(),
+        .tmds_d_p(),
+        .tmds_d_n()
     );
 
     sdram_model chip (
@@ -565,6 +592,53 @@ module ae350_soc_tb #(
         end
     endtask
 
+    // The video unit and the UART registers share the EXTS port: transfers to
+    // each, back to back and after each other's ERROR responses.
+    task test_video;
+        begin
+            ext_m.clear();
+            ext_m.push(32'he801000c, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8000008, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8010000, 1'b1, 3'd2, 32'd3, 1'b0);
+            ext_m.push(32'he8010000, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he800000c, 1'b1, 3'd2, 32'ha5a5a5a5, 1'b0);
+            ext_m.push(32'he8011000, 1'b0, 3'd2, 0, 1'b0); // 5
+            ext_m.push(32'he800000c, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he9000008, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8010000, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8020001, 1'b1, 3'd0, 32'h00007700, 1'b0);
+            ext_m.push(32'he8011004, 1'b1, 3'd2, 32'h00123456, 1'b0); // 10
+            ext_m.push(32'he803fffe, 1'b1, 3'd1, 32'hbeef0000, 1'b0);
+            ext_m.push(32'he8010000, 1'b1, 3'd2, 32'd0, 1'b0);
+            ext_m.push(32'he8010000, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8040000, 1'b0, 3'd2, 0, 1'b0);
+            ext_m.push(32'he8000008, 1'b0, 3'd2, 0, 1'b0); // 15
+            ext_m.run();
+            ext_m.expect_ok(0, 32'h544e5631);
+            ext_m.expect_ok(1, 32'h544e3031);
+            ext_m.expect_write_ok(2);
+            ext_m.expect_ok(3, 32'd3);
+            ext_m.expect_write_ok(4);
+            ext_m.expect_error(5);
+            ext_m.expect_ok(6, 32'ha5a5a5a5);
+            ext_m.expect_error(7);
+            ext_m.expect_ok(8, 32'd3);
+            ext_m.expect_write_ok(9);
+            ext_m.expect_write_ok(10);
+            ext_m.expect_write_ok(11);
+            ext_m.expect_write_ok(12);
+            ext_m.expect_ok(13, 32'd0);
+            ext_m.expect_error(14);
+            ext_m.expect_ok(15, 32'h544e3031);
+            if ({dut.screen.g_lane[1].g_bank[0].hi[0], dut.screen.g_lane[1].g_bank[0].lo[0]} !== 8'h77 ||
+                dut.screen.palette[1] !== 24'h123456 ||
+                {dut.screen.g_lane[2].g_bank[7].hi[4095], dut.screen.g_lane[2].g_bank[7].lo[4095]} !== 8'hef ||
+                {dut.screen.g_lane[3].g_bank[7].hi[4095], dut.screen.g_lane[3].g_bank[7].lo[4095]} !== 8'hbe)
+                $fatal(1, "video writes through EXTS did not land");
+            $display("PASS: EXTS video registers, palette and frame buffer beside the UART registers");
+        end
+    endtask
+
     task automatic read_status(input [31:0] expected);
         begin
             ext_m.clear();
@@ -748,6 +822,8 @@ module ae350_soc_tb #(
         force dut.exts_sel = ext_hsel;
         force dut.exts_write = ext_hwrite;
         force dut.exts_wdata = ext_hwdata;
+        force dut.exts_size = ext_hsize;
+        force dut.pix_clk = pix_clk;
 
         wait (dut.resetn);
         wait (dut.sdram.ready);
@@ -757,6 +833,7 @@ module ae350_soc_tb #(
             test_ram();
             test_sdram();
             test_registers();
+            test_video();
             test_uart_rx();
             // The second write waits for the first byte to leave the holding
             // register; the rest wait in turn while the line is sent.
