@@ -855,3 +855,35 @@ None.
 - User Test: PASS
 
 ---
+
+## 24 COMMIT Unreleased 2026-10-13T10:29:16-07:00
+
+#### Coming From:
+
+Unreleased e48fa9e
+
+#### Purpose:
+
+Measure what the open-flow build and Gowin's analysis say about the HDMI output stage's timing at the ends of the temperature range, as the user approved as Phase A of the HDMI fix cycle, and record the board and toolchain facts the user asked about.
+
+#### Outcome:
+
+The aquasock Apicula fork times GW5AST-138C cells at C1/I0, derived as 1.25 x the `.tm`'s C2/I1 table per DS1239E and not yet checked against Gowin's analysis, with family-generic routing delays and no IO, IOLOGIC or PLL timing, so nextpnr times nothing into or out of an OSER10 (TOOL-023). nextpnr's Gowin back end could not reload a routed design (an `array2d` assertion), so the seed-5 place and route was repeated with `--sdf` and routed all 33,687 nets as the board image did; the new `tools/hdmi_timing.py` read its delays and gave the encoder-to-OSER10 paths at least 10.52 ns of setup and 0.46 ns of hold slack at C1/I0, 0.32 ns of hold on the fork's fastest table, with the OSER10's own requirements unmodelled, the 371.25 MHz clock 9.86 ns from `hdmi_pll` to the OSER10s over general routing with no duty-cycle distortion modelled, PCLK 0.644 ns behind FCLK plus the CLKDIV's unmodelled delay, and six pixel-clock pins off the global network. The new `tools/gowin_hdmi_timing.sh` built the same RTL and constraints with Gowin EDA 1.9.11.03 headless, as a measurement only, in about a minute; in Gowin's placement, setup analysed at Slow 0.855 V 0 C and hold at Fast 0.945 V 85 C, the pixel clock reached 85.88 MHz with no violation, the encoder-to-OSER10 paths had 7.9 to 8.3 ns of setup and over 0.56 ns of hold slack, the OSER10 reset from `pix_reset_sync` failed recovery against the serial clock by up to 5.80 ns, a one-time release at power-up, no FCLK-to-PCLK check was made, and the bus clock failed at 61.65 MHz. Every timed data path into the OSER10s thus has margin at both ends in both flows, leaving the serial clock's waveform after 9.86 ns of general routing and the OSER10s' own requirements as the lead for DEV-018. The user asked whether the board has a temperature sensor: BRD-013 records that Sipeed lists none, a fixed 5 V fan connector and two ADC inputs, beside DEV-019. TOOL-023 and BRD-013 are new, DEV-018 is revised, and the README describes both tools. No image was built for the board. The core-syntax audit passed.
+
+#### Next Steps:
+
+Phase B, approved by the user: decode how Gowin's build routes the serial clock, move the HDMI PLLs beside the HDMI bank if the fork can route that, send the TMDS clock lane through a fourth OSER10, release the OSER10s' reset in the serial clock's domain, then sweep, build, report the open-flow numbers of `tools/hdmi_timing.py` to the user, and accept only if the `DIAG=1` player stays clean with the package surface heated to 55 to 60 C.
+
+#### Files Modified:
+
+- README.md
+- tools/gowin_hdmi_timing.sh
+- tools/hdmi_timing.py
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

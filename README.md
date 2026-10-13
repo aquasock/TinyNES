@@ -457,6 +457,17 @@ python3 -u tools/load_ae350.py --tinytang build/firmware/apps/nes_diag/nes_bench
   --file "<cartridge.nes>" --run-timeout 0 | tee build/diag/session.log
 ```
 
+`tools/hdmi_timing.py <routed.json> <design.sdf>` works out the HDMI output
+stage that nextpnr does not time on this chip (no IOLOGIC model): the paths
+from the TMDS encoder registers into the OSER10s, the serial and pixel
+clocks' delays to them, the clock lane, and the pixel-clock pins off the
+global network, at the build's speed grade and scaled to the fork's other
+tables. It takes nextpnr's `--write` and `--sdf` outputs; a run with the
+build script's arguments and seed reproduces the build's routing.
+`tools/gowin_hdmi_timing.sh` builds the same RTL with Gowin EDA, headless,
+as a measurement only, to read the vendor's slow- and fast-model timing of
+that stage in `build/gowin_hdmi/impl/pnr/ae350_soc.tr`.
+
 ### TinyDesk over a running game
 
 Once the player has its cartridge it prints `TinyNES LINK` and sets bit 0
