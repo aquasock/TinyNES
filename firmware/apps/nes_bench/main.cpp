@@ -43,7 +43,13 @@
 // and receives one more image in the boot ROM's load protocol
 // (firmware/boot/load.c, tinynes.h) at that address, holding "TNR1", the
 // cartridge's length and the .nes file, from tools/load_ae350.py --file or
-// TinyTang's ae350run. The Wii
+// TinyTang's ae350run. Once it has the cartridge it prints
+//   TinyNES LINK
+// and turns the UART to link mode (desk_link.sv, tinynes.h): from then on
+// its text goes out in TinyTang's frames, and TinyTang draws TinyDesk's layer
+// over the game, which a tap of HOME on controller 1 or F12 shows and hides.
+// The game keeps running behind the desktop, with sound, but gets no
+// controller input while it is shown. The Wii
 // Classic Controllers on PMOD0's first two buses (fpga/ae350_soc/wii_pads.sv)
 // are players 1 and 2 in place of the script, the game runs until HOME and
 // SELECT are held together on either controller, and the report lines come
@@ -481,6 +487,9 @@ int main()
 		printf("TinyNES NES BAD CART\n");
 		return 1;
 	}
+	printf("TinyNES LINK\n");
+	fflush(stdout);
+	TN_UART_CTRL = TN_UART_LINK_MODE;
 #else
 	const size_t rom_size = (size_t)(nes_rom_end - nes_rom);
 #endif
@@ -584,6 +593,9 @@ int main()
 		joypads = read_pad(0, held1) | (uint32_t)read_pad(1, held2) << 8;
 		if (quit_held(held1) || quit_held(held2))
 			break;
+		// The desktop is over the game: its pointer has the controller.
+		if (TN_LINK_STATUS & TN_LINK_SHOWN)
+			joypads = 0;
 		const uint32_t audio_level = TN_AUDIO_LEVEL(TN_AUDIO_STATUS);
 #else
 		joypads = pad_for(f);

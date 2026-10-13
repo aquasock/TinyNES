@@ -109,7 +109,7 @@ alter BL616 firmware or the FPGA's configuration flash.
 | ROM | `0x80000000` | 32 KiB block-RAM boot ROM (`ahb_boot_rom.sv`) holding the firmware image |
 | RAM (64-bit) | `0x60000000` | 64 KiB block RAM (`ahb_ram.sv`) holding the firmware's data and stack |
 | RAM (64-bit) | `0x40000000` | 32 MiB SDRAM on the dock's J9 module (`ahb_sdram.sv`), its top 128 KiB the video frame buffers; a data access to any address on this port outside the two RAMs gets an AHB ERROR, and an instruction fetch reads zero |
-| EXTS (uncached) | `0xe8000000` | UART data `+0x00`, UART status `+0x04`, ID `0x544e3031` ("TN01") `+0x08`, scratch `+0x0c`, UART receive `+0x10` (`exts_uart.sv`); HDMI video from `+0x10000` (`video.sv`, below) |
+| EXTS (uncached) | `0xe8000000` | UART data `+0x00`, UART status `+0x04`, ID `0x544e3031` ("TN01") `+0x08`, scratch `+0x0c`, UART receive `+0x10`, UART mode `+0x14`, link status `+0x18` (`exts_uart.sv`, `desk_link.sv`); HDMI video from `+0x10000` (`video.sv`, below) |
 
 The clocks are the same as in the UART gate: the core runs at 750 MHz and the
 buses at 75 MHz. The UART is the same FPGA UART, transmitting on U15 and
@@ -122,7 +122,7 @@ Reading `+0x10` takes the oldest byte, returned as `0x100` plus the byte, or
 | Bit | Meaning |
 |---|---|
 | 0 | The transmitter can take a byte |
-| 1 | The transmitter is idle: the last byte has left the pin |
+| 1 | The transmitter is idle: the last byte has left the pin, and in link mode no text is waiting |
 | 2 | A received byte is waiting |
 | 3 | A byte arrived to a full buffer and was lost; stays set until 1 is written to it |
 | 4 | A byte had no stop bit; stays set until 1 is written to it |
@@ -433,6 +433,79 @@ and the cartridge. From the shell:
 
 ```sh
 FILE="/root/data/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/open/nes.tdsh
+```
+
+### TinyDesk over a running game
+
+Once the player has its cartridge it prints `TinyNES LINK` and sets bit 0
+of the UART mode register, link mode. The UART then speaks TinyTang's frame
+protocol, `0xAA len_hi len_lo type payload` with the length counting the
+type byte, so TinyTang's desk layer can draw TinyDesk over the game the way
+it does over its patched nestang core. One tap of HOME on controller 1, or
+F12 on a keyboard TinyTang reads, swaps the picture between the game and
+TinyDesk; the game keeps running behind the desktop, with its sound, and
+gets no controller input while the desktop is shown. TinyTang needs no
+change for either toggle; its `ae350run` hands the UART back to the desk
+layer when it sees `TinyNES LINK` and follows the program's text in frames
+until `TinyNES EXIT`.
+
+In link mode (`fpga/ae350_soc/desk_link.sv`) received bytes go to a frame
+parser and never to the receive buffer, so a program image is never taken
+for a frame and a frame never reaches the CPU. It answers the core ID
+request `0x01` with `0x4e`, an ID TinyTang sends no PMOD declarations to,
+and takes `0x08` (overlay, bit 0), `0x13 x y` (the layer's cursor), `0x14`
+(cells from the cursor, 5 bytes each: the character's low 7 bits, then a
+big-endian 15-bit `{b, g, r}` foreground and background) and `0x15` (the
+layer's enable, bit 0); other types are skipped by their length. It sends,
+a whole frame at a time:
+
+| Frame | When | Payload |
+|---|---|---|
+| `0x01` | asked | `0x4e` |
+| `0x03` | every 20 ms when it changes, and every 500 ms | controller 1 as TinyTang's pad word, then a zero word: D-pad up `0x010`, down `0x020`, left `0x040`, right `0x080`, the Classic's B as `0x100`, its Y as `0x001`, and LB `0x400` for 260 ms after a tap of HOME (pressed and released with nothing else pressed) |
+| `0x20` | after a line feed, 128 bytes, or 2 ms without a byte | the CPU's text |
+
+TinyTang flips its overlay on LB's rising edge and reads the newest report
+about every 40 ms, so LB is held for 13 reports. While the desktop is shown
+the same word moves its pointer and clicks. The CPU's bytes wait while a
+frame of text is queued or sent. A write to the mode register completes
+only once everything before it has been sent, including text still
+buffered, which it sends at once, and the boot ROM writes 0 to it first
+thing, so a program that exits in link mode leaves the ROM in loader mode
+with its last line sent. The link status register at `+0x18` has bit 0 set
+while the layer is shown (link, overlay and enable on), bits 1 and 2 the
+overlay and the enable, bit 3 a lost cell write, and the frames received
+and cells written in bits 15:8 and 31:16.
+
+The layer (`video.sv`) is 80x45 cells of 16x16 pixels, each an 8x8 glyph
+drawn twice its size, and replaces the whole 1280x720 picture, side bars
+and colour bars included, from the vertical blank after it is turned on.
+Cells are handed from the bus clock to the pixel clock like palette writes,
+and the cell store and the font are block RAM on the pixel clock only. The
+font is Daniel Hepper's public-domain font8x8 (`font8x8_basic.h`), which
+`tools/fetch_font8x8.sh` fetches at commit `8e279d2` and
+`tools/gen_desk_font.py` writes as `fpga/ae350_soc/desk_font.hex`; TinyTang
+maps box-drawing characters to ASCII before sending them.
+
+`tools/load_ae350.py` follows a program into link mode too, unwrapping its
+text frames and dropping the joypad reports. `tests/desk_link_tb.sv` runs
+the UART and the link together with an AHB master, a UART sender and a
+receiver that reads the line as frames: loader mode untouched, the core ID,
+cells from the cursor with those off the grid dropped, other frame types
+and bad lengths skipped, the overlay and enable, the joypad word, a HOME tap
+and HOME with `-`, text cut at line feeds, 128 bytes and quiet, and leaving
+link mode with text buffered. Planted faults in the length byte, the
+routing of received bytes, the mode write's wait, the busy status, the tap,
+the cell packing, the cursor, the length check, the refresh and the quiet
+flush each failed it. `tests/video_tb.sv` checks the layer pixel by pixel
+over the colour bars and over the picture, the picture back after it, and a
+cell rewritten while it is shown:
+
+```sh
+mkdir -p build/desk_link_tb
+iverilog -g2012 -s desk_link_tb -o build/desk_link_tb/tb \
+  fpga/ae350_soc/exts_uart.sv fpga/ae350_soc/desk_link.sv tests/desk_link_tb.sv
+vvp -n build/desk_link_tb/tb
 ```
 
 The programs contain the core, and the benchmark also the cartridge image,
@@ -746,7 +819,10 @@ The board pin and AE350 clock facts come from the project reference library
 and the Tang-PSX/Tang-Phosphor hardware reports cited there. The RTL here is
 original MIT-licensed code, apart from the TMDS encoder in `video.sv`, which
 is TinyTang's, also MIT; `tools/fs_to_bin.py` is likewise TinyTang's MIT
-converter, copied with its notice. CERN's colibri and its SystemVerilog port are
+converter, copied with its notice. The desk layer's font,
+`fpga/ae350_soc/desk_font.hex`, is generated from Daniel Hepper's font8x8,
+which is in the public domain and is itself based on public-domain VGA
+fonts by Marcel Sondaar and IBM. CERN's colibri and its SystemVerilog port are
 design practice references; their modules are not included.
 
 FCEUmm descends from BERO's

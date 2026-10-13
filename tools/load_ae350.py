@@ -12,6 +12,11 @@ A program that prints "TinyNES WANT <address> <bytes>" is sent --file the
 same way, as a second image at that address holding "TNR1", the file's
 length and the file (nes_bench's PLAY=1 build takes its cartridge so).
 
+After a "TinyNES LINK" line the board's UART is in link mode
+(fpga/ae350_soc/desk_link.sv): its text comes in TinyTang's frames,
+0xAA len_hi len_lo type payload, as type 0x20, which are unwrapped here,
+and the link's other frames (the joypad report, 0x03) are dropped.
+
 In one-wire mode the port is the debug bridge's FPGA UART, /dev/ttyUSB1. In
 two-wire mode, --tinytang, the port is TinyTang's USB console: the board is
 asked whether its shell is at a prompt, and its `fpgapipe` command then
@@ -48,6 +53,7 @@ EM_RISCV = 243
 FILE_MAGIC = b"TNR1"
 PROBE = b"\x1b[?77n"
 PROBE_REPLY = re.compile(rb"\x1b\[\?77;(\d+)n")
+TEXT_FRAME = 0x20
 
 
 class LoadError(Exception):
@@ -90,6 +96,29 @@ class Board:
     def __init__(self, link):
         self.link = link
         self.text = bytearray()
+        self.framed = False
+        self.frames = bytearray()
+
+    def unframe(self):
+        """Move whole text frames' payloads from frames to text."""
+        buf = self.frames
+        while True:
+            start = buf.find(0xAA)
+            if start < 0:
+                buf.clear()
+                return
+            del buf[:start]
+            if len(buf) < 3:
+                return
+            length = buf[1] << 8 | buf[2]
+            if buf[1] >= 8 or length == 0:
+                del buf[:1]
+                continue
+            if len(buf) < 3 + length:
+                return
+            if buf[3] == TEXT_FRAME:
+                self.text.extend(buf[4:3 + length])
+            del buf[:3 + length]
 
     def check_line(self, line):
         if line.startswith((b"BAD", b"NOBOOT ")):
@@ -98,10 +127,21 @@ class Board:
     def lines(self, deadline):
         """Complete lines received before the deadline."""
         while time.monotonic() < deadline:
-            self.text.extend(self.link.read(max(1, self.link.in_waiting)))
+            data = self.link.read(max(1, self.link.in_waiting))
+            if self.framed:
+                self.frames.extend(data)
+                self.unframe()
+            else:
+                self.text.extend(data)
             while b"\n" in self.text:
                 line, _, rest = self.text.partition(b"\n")
                 self.text = bytearray(rest)
+                if not self.framed and line.startswith(b"TinyNES LINK"):
+                    # Everything after this line is framed.
+                    self.framed = True
+                    self.frames.extend(self.text)
+                    self.text = bytearray()
+                    self.unframe()
                 yield line.rstrip(b"\r")
 
     def wait_line(self, prefix, timeout, echo):

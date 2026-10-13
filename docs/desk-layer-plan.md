@@ -1,10 +1,12 @@
 # TinyDesk over a running game: design for the next cycle
 
-Status on 2026-10-13: **design only, nothing implemented.** The user chose
-option A below and asked that the game keep running behind the desktop. The
-concrete design in *Design* was presented and the user asked for an agent
-handoff before confirming it, so the next agent should present it again for
-approval before building (`.ai/core.md`, Standard Workflow step 1).
+Status on 2026-10-13: **implemented and passed on the board** (core-log
+entry 21, TinyTang `ccbf8a7`). The user chose option A below and asked that
+the game keep running behind the desktop. The design was built as written,
+with three details settled during the cycle: the joypad report is also
+resent every 500 ms, LB is held for 260 ms after a HOME tap so one of
+TinyTang's 40 ms reads sees it, and the cell store is five 9-bit block RAM
+slices. README.md, *TinyDesk over a running game*, describes the result.
 
 ## Goal
 

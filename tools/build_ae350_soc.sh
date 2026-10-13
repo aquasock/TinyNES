@@ -22,10 +22,11 @@ apycula="${APICULA_FORK:-$(dirname "$root")/apicula-mathieufro}"
 pydeps="${PYDEPS:-$HOME/tools/pydeps}"
 device=GW5AST-LV138PG484AC1/I0
 family=GW5AST-138C
-# Placement decides pixel-clock hold and bus-clock Fmax. With the I2S unit,
-# 12 of 16 seeds were clean in a sweep with bus_clk routed first; seed 12
-# had the most margin on both clocks and is repeatable.
-seed="${TINY_NES_SEED:-12}"
+# Placement decides pixel-clock hold and bus-clock Fmax. With the desk
+# layer, 6 of 16 seeds were clean in a sweep with bus_clk routed first, all
+# failures pixel-clock hold; seed 5 had the best margin on both clocks
+# together and is repeatable.
+seed="${TINY_NES_SEED:-5}"
 
 [[ -f "$suite/environment" ]] || { echo "missing open toolchain: $suite" >&2; exit 2; }
 # shellcheck disable=SC1090
@@ -51,7 +52,7 @@ cd "$root"
 echo "Yosys synthesis"
 yosys -Q -T -q -l "$out/synth.log" -p "
     read_verilog -lib $suite/share/yosys/gowin/cells_xtra_gw5a.v
-    read_verilog -sv $src/ahb_boot_rom.sv $src/ahb_ram.sv $src/ahb_sdram.sv $src/exts_uart.sv $src/video.sv $src/wii_pads.sv $src/i2s_out.sv $src/ae350_soc.sv
+    read_verilog -sv $src/ahb_boot_rom.sv $src/ahb_ram.sv $src/ahb_sdram.sv $src/exts_uart.sv $src/desk_link.sv $src/video.sv $src/wii_pads.sv $src/i2s_out.sv $src/ae350_soc.sv
     $synth_param
     synth_gowin -family gw5a -top ae350_soc_top
     write_json $out/ae350_soc.json
@@ -111,6 +112,14 @@ two_clock = sorted(n for n, c in video_rams.items()
 if two_clock:
     raise SystemExit(f"video block RAMs on two clocks: {two_clock[:4]}")
 print(f"Video block RAMs: {len(video_rams)}, each on one clock")
+# Only the 9-bit block RAM modes have been shown to read back correctly in
+# the video unit on this chip (core-log entry 14), so its stores, the desk
+# layer's included, must map to them.
+other_modes = sorted(n for n, c in cells.items() if n.startswith("screen.")
+                     and any(k.startswith("BIT_WIDTH") and int(v, 2) % 9
+                             for k, v in c["parameters"].items()))
+if other_modes:
+    raise SystemExit(f"video block RAMs not in 9-bit mode: {other_modes[:4]}")
 # The pixel clock must reach the spines only through the bridge pips measured
 # to clock (core-log entry 14): (27,96) and (81,96) SPINE26 <= CBRIDGEOUT_BOTTOM2.
 pix_route = design["modules"]["top"]["netnames"]["pix_clk"]["attributes"]["ROUTING"].split(";")

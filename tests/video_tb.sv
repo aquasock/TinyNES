@@ -4,7 +4,10 @@
 // pixel, with a model of the colour bars and of both frame buffers with
 // palette and emphasis. The frame buffers are a model of ahb_sdram's video
 // channel with a set latency. Also checks the sync timing, the buffer flip,
-// the line fetch addresses and the LATE count when fetches are too slow.
+// the line fetch addresses and the LATE count when fetches are too slow,
+// and the desk layer: every cell of the 80x45 grid written through its
+// handshake and the whole frame compared with a model of the font, over the
+// colour bars and over the picture, and the picture back without it.
 `timescale 1ns / 1ps
 
 module video_tb;
@@ -30,6 +33,10 @@ module video_tb;
     reg vvalid = 1'b0, vdone = 1'b0;
     reg [6:0] vindex = 7'd0;
     reg [15:0] vdata = 16'd0;
+    reg layer_on = 1'b0, cell_valid = 1'b0;
+    reg [11:0] cell_addr = 12'd0;
+    reg [36:0] cell_data = 37'd0;
+    wire cell_ready;
 
     video dut (
         .clk(clk), .resetn(resetn),
@@ -38,6 +45,8 @@ module video_tb;
         .hrdata(hrdata), .hready(hready), .hresp(hresp),
         .vstart(vstart), .vaddr(vaddr), .vvalid(vvalid), .vindex(vindex),
         .vdata(vdata), .vdone(vdone),
+        .layer_on(layer_on), .cell_valid(cell_valid), .cell_addr(cell_addr),
+        .cell_data(cell_data), .cell_ready(cell_ready),
         .pix_clk(pix_clk), .pix_reset(pix_reset),
         .tmds_blue(tmds_b), .tmds_green(tmds_g), .tmds_red(tmds_r)
     );
@@ -138,12 +147,30 @@ module video_tb;
     function [2:0] emph(input b, input [7:0] y);
         emph = y[1:0] == 2'd1 ? y[4:2] + b : 3'd0;
     endfunction
+    // The desk layer's cells and the font they are drawn in.
+    reg [7:0] font [0:1023];
+    initial $readmemh("fpga/ae350_soc/desk_font.hex", font);
+    function [36:0] desk_cell(input [11:0] i);
+        reg [14:0] fg, bg;
+        begin
+            fg = {i[4:0], 5'd31 - i[4:0], i[9:5]} ^ 15'h1234;
+            bg = {i[11:7], i[6:2], i[1:0], 3'd5};
+            desk_cell = {7'h20 + i[6:0] % 7'd96, fg, bg};
+        end
+    endfunction
+    function [23:0] rgb15(input [14:0] c);
+        rgb15 = {c[4:0], c[4:2], c[9:5], c[9:7], c[14:10], c[14:12]};
+    endfunction
     function [23:0] expected(input bars, input b, input [10:0] col, input [9:0] row);
         reg [7:0] nx, ny, p;
         reg [2:0] e, bar;
         reg [9:0] idx;
+        reg [36:0] c;
         begin
-            if (bars) begin
+            if (check_layer) begin
+                c = desk_cell(80 * (row / 16) + col / 16);
+                expected = font[{c[36:30], row[3:1]}][col[3:1]] ? rgb15(c[29:15]) : rgb15(c[14:0]);
+            end else if (bars) begin
                 bar = col / 160;
                 expected = {(bar == 0 || bar == 1 || bar == 4 || bar == 5) ? 8'd192 : 8'd16,
                             (bar == 0 || bar == 1 || bar == 2 || bar == 3) ? 8'd192 : 8'd16,
@@ -195,7 +222,7 @@ module video_tb;
     integer bp_lines = 0, col = 0, row = 0;
     reg seen_de_since_vs = 1'b0;
     integer vs_edges = 0;
-    reg checking = 1'b0, check_bars = 1'b0, check_buf = 1'b0;
+    reg checking = 1'b0, check_bars = 1'b0, check_buf = 1'b0, check_layer = 1'b0;
     integer mismatches = 0;
     integer raster_errors = 0;
 
@@ -430,6 +457,57 @@ module video_tb;
         end
         expect_error(1'b1, REGS + 32'h800, 3'd2);
 
+        // The desk layer. The font file is the one built in; 'A' is
+        // checked against font8x8's own rendering of it.
+        if ({font[8*65], font[8*65+1], font[8*65+2], font[8*65+3], font[8*65+4],
+             font[8*65+5], font[8*65+6], font[8*65+7]} !== 64'h0c1e33333f333300)
+            fail("font glyph A");
+        for (i = 0; i < 3600; i = i + 1) begin
+            @(negedge clk);
+            cell_valid = 1'b1;
+            cell_addr = i;
+            cell_data = desk_cell(i);
+            @(posedge clk);
+            while (!cell_ready) @(posedge clk);
+            @(negedge clk);
+            cell_valid = 1'b0;
+        end
+        layer_on = 1'b1;
+        wait_vsync;
+        check_layer = 1'b1;
+        check_frame(1'b1, 1'b0);
+        wr32(REGS, 32'd1);
+        do rd32(REGS + 32'h4, w); while (!w[2]);
+        check_frame(1'b0, 1'b0);
+        layer_on = 1'b0;
+        wait_vsync;
+        check_layer = 1'b0;
+        check_frame(1'b0, 1'b0);
+        // One cell rewritten while the layer is up.
+        layer_on = 1'b1;
+        @(negedge clk);
+        cell_valid = 1'b1;
+        cell_addr = 12'd0;
+        cell_data = {7'h41, 15'h7fff, 15'h0000};
+        @(posedge clk);
+        while (!cell_ready) @(posedge clk);
+        @(negedge clk);
+        cell_valid = 1'b0;
+        wait_vsync;
+        wait_vsync;
+        @(posedge pix_clk);
+        while (!(de && !prev_de)) @(posedge pix_clk);
+        // The first line of cell 0 shows glyph 'A' row 0, 0x0c: columns 2
+        // and 3 white, drawn at pixels 4 to 7.
+        for (i = 0; i < 16; i = i + 1) begin
+            if (rgb !== ((i / 2 == 2 || i / 2 == 3) ? 24'hffffff : 24'h000000)) begin
+                $display("cell 0 pixel %0d is %h", i, rgb);
+                fail("rewritten cell");
+            end
+            @(posedge pix_clk);
+        end
+        layer_on = 1'b0;
+
         if (raster_errors != 0) fail("raster timing");
         if (errors == 0)
             $display("PASS video_tb");
@@ -439,7 +517,7 @@ module video_tb;
     end
 
     initial begin
-        #400_000_000;
+        #700_000_000;
         $display("FAIL video_tb: timeout");
         $finish;
     end

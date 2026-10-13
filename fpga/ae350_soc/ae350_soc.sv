@@ -9,7 +9,9 @@
 // video channel, with its registers, palette and emphasis in the EXTS
 // window at 0xe8010000. Four Wii Classic Controllers on PMOD0 are read at
 // 0xe8040000 (wii_pads), and stereo I2S for a Pmod I2S2 on PMOD1 is fed
-// through a sample FIFO at 0xe8050000 (i2s_out).
+// through a sample FIFO at 0xe8050000 (i2s_out). In the UART's link mode
+// (desk_link) the line carries TinyTang's frames instead, and TinyDesk's
+// layer is drawn over the picture.
 //
 // If the CPU has written nothing to the UART 2^NOBOOT_BITS bus clocks after
 // reset (about 1.8 s), fabric reports instead, about once a second until the
@@ -237,6 +239,15 @@ module ae350_soc_top #(
     wire fb_ready;
     wire cpu_owns;
 
+    wire link, rx_link_valid, txt_valid, txt_ready, ln_valid, ln_ready;
+    wire link_idle, link_flush;
+    wire [7:0] rx_link_data, txt_data, ln_data;
+    wire [31:0] link_status;
+    wire [15:0] pad0_held;
+    wire layer_on, cell_valid, cell_ready;
+    wire [11:0] cell_addr;
+    wire [36:0] cell_data;
+
     // The EXTS window: 0xe8010000 selects video, 0xe8040000 selects the
     // Wii pads, 0xe8050000 the audio, and 0xe8000000 selects UART. The open flow has no
     // timing model for the AE350's ports, so each path to or from them has
@@ -275,8 +286,35 @@ module ae350_soc_top #(
         .fb_data(fb_data),
         .fb_ready(fb_ready),
         .cpu_owns(cpu_owns),
+        .link(link),
+        .rx_link_valid(rx_link_valid),
+        .rx_link_data(rx_link_data),
+        .txt_valid(txt_valid),
+        .txt_data(txt_data),
+        .txt_ready(txt_ready),
+        .ln_valid(ln_valid),
+        .ln_data(ln_data),
+        .ln_ready(ln_ready),
+        .link_idle(link_idle),
+        .link_flush(link_flush),
+        .link_status(link_status),
         .tx(uart_tx),
         .rx(uart_rx)
+    );
+
+    // The instance name sorts after "bus_clk" (DEV-016; see sound below).
+    desk_link desk (
+        .clk(bus_clk), .resetn(resetn), .link(link),
+        .rx_valid(rx_link_valid), .rx_data(rx_link_data),
+        .txt_valid(txt_valid), .txt_data(txt_data), .txt_ready(txt_ready),
+        .flush(link_flush),
+        .ln_valid(ln_valid), .ln_data(ln_data), .ln_ready(ln_ready),
+        .idle(link_idle),
+        .pad_held(pad0_held),
+        .cell_valid(cell_valid), .cell_addr(cell_addr), .cell_data(cell_data),
+        .cell_ready(cell_ready),
+        .layer_on(layer_on),
+        .status(link_status)
     );
 
     wire [3:0] pad_scl_in, pad_sda_in, pad_scl_low, pad_sda_low;
@@ -303,7 +341,8 @@ module ae350_soc_top #(
         .hsize(exts_size), .hwdata(exts_wdata), .hready_in(exts_ready),
         .hrdata(pads_rdata), .hready(pads_ready), .hresp(pads_resp),
         .scl_in(pad_scl_in), .sda_in(pad_sda_in),
-        .scl_low(pad_scl_low), .sda_low(pad_sda_low)
+        .scl_low(pad_scl_low), .sda_low(pad_sda_low),
+        .pad0_held(pad0_held)
     );
 
     // The instance name sorts after "bus_clk": Yosys names a flattened net
@@ -484,6 +523,11 @@ module ae350_soc_top #(
         .vindex(vid_index),
         .vdata(vid_data),
         .vdone(vid_done),
+        .layer_on(layer_on),
+        .cell_valid(cell_valid),
+        .cell_addr(cell_addr),
+        .cell_data(cell_data),
+        .cell_ready(cell_ready),
         .pix_clk(pix_clk),
         .pix_reset(pix_reset),
         .tmds_blue(tmds_ch[0]),

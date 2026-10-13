@@ -33,6 +33,10 @@
 //           read of DATA; identity bytes 4 and 5 in bits 31:16.
 //     +0xc  IDENT: identity bytes 0 to 3, byte 0 in bits 7:0.
 // Every transfer completes with no wait state.
+//
+// pad0_held gives controller 0's buttons to fabric (desk_link.sv): report
+// bytes 4 and 5, byte 4 in bits 7:0, active high, or 0 unless the controller
+// is present and a Classic Controller.
 module wii_pads #(
     parameter [31:0] ID_VALUE = 32'h544e5031, // "TNP1"
     parameter integer US_CLOCKS = 75,         // bus clocks per microsecond
@@ -55,7 +59,8 @@ module wii_pads #(
     input  wire [3:0]  scl_in,
     input  wire [3:0]  sda_in,
     output wire [3:0]  scl_low,  // pull the line low
-    output wire [3:0]  sda_low
+    output wire [3:0]  sda_low,
+    output reg  [15:0] pad0_held
 );
     reg [11:0] quarter = QUARTER_RESET;
     reg restart = 1'b0;
@@ -79,6 +84,12 @@ module wii_pads #(
             assign status_bits[n][7:2] = 6'd0;
         end
     endgenerate
+
+    always @(posedge clk or negedge resetn)
+        if (!resetn)
+            pad0_held <= 16'd0;
+        else
+            pad0_held <= status_bits[0][1:0] == 2'b11 ? ~data[0][47:32] : 16'd0;
 
     // DATA2's data half, taken when DATA is read.
     reg [15:0] taken [0:3];

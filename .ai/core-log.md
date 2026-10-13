@@ -745,3 +745,51 @@ Present the design in `docs/desk-layer-plan.md` to the user for approval and, if
 - User Test: N/A
 
 ---
+
+## 21 COMMIT Unreleased 2026-10-13T08:47:19-07:00
+
+#### Coming From:
+
+Unreleased 2146d46
+
+#### Purpose:
+
+Swap the HDMI picture between a running NES game and TinyDesk with one tap of HOME on the Wii controller or F12, the game running on behind the desktop, as the design in `docs/desk-layer-plan.md` that the user approved describes.
+
+#### Outcome:
+
+`fpga/ae350_soc/exts_uart.sv` gained a link mode, set by a new mode register at `0xe8000014` whose write completes only once everything before it has been sent: in it received bytes go to the new `fpga/ae350_soc/desk_link.sv` instead of the receive buffer, and CPU bytes become text frames. `desk_link.sv` parses TinyTang's 0xAA frames, answering core ID 0x01 with 0x4e and taking 0x08, 0x13, 0x14 and 0x15, and sends whole frames: the ID, the `0x03` joypad report from Wii pad 1 (new `pad0_held` output of `wii_pads.sv`) every 20 ms on change and every 500 ms, with LB held 260 ms after a HOME tap, and the CPU's text as type 0x20 frames cut at a line feed, 128 bytes or 2 ms of quiet; its status is at `0xe8000018`. `video.sv` draws the 80x45 layer of 16x16 cells over the whole picture from the next vertical blank, its cell store and font on the pixel clock only; the font is the public-domain font8x8, fetched at `8e279d2` by `tools/fetch_font8x8.sh` and written as `fpga/ae350_soc/desk_font.hex` by `tools/gen_desk_font.py` (PROV-008). Yosys first mapped the cell store to 4Kx4 DPB blocks, a mode never shown to work in the video unit, so it is now five 9-bit slices in DPX9B mode and `tools/build_ae350_soc.sh` fails on a video block RAM width that is not a multiple of 9. The boot ROM writes loader mode first, `nes_bench`'s `PLAY=1` player prints `TinyNES LINK` and sets link mode after its cartridge and gives the game no input while the layer is shown, and `tools/load_ae350.py` unwraps the text frames after that line; TinyTang `ccbf8a7` (its entry 49) makes `ae350run` hand the link back to the desk layer at `TinyNES LINK`. The new `tests/desk_link_tb.sv` passed its eight checks, and planted faults in the length byte, the receive routing, the mode write's wait, the busy status, the tap, the cell packing, the cursor, the length check, the refresh and the quiet flush each failed it, while removing the redundant loader-mode guards or the sender's one-clock gap did not; it crashed both installed vvp versions until its tasks were made static. `tests/video_tb.sv`, extended with the layer over the bars and over the picture, the picture after it and a rewritten cell, passed with no mismatch, as did both `ae350_soc_tb` modes and `tests/test_loader_host.py`. A 16-seed sweep with `NPNR_GOWIN_CLK_FIRST` enforced was 6 of 16 clean against 12 of 16 in entry 18, every failure pixel-clock hold on block RAM inputs; seed 5, now the default, built with every check passing at bus Fmax 80.85 MHz and pixel Fmax 86.17 MHz, `ae350_soc.fs` SHA-256 `998fb9ba66ce8155d309fe4615f4bd8cc489e697cc662f81f58e4f835a1efa41` and `ae350_soc.bin` `a9cd9a781c28fa024cd2ce30af9dd3a25e1a1817ce463cc4ecc289cf11ac9db6`, using 9.9 percent of the LUTs and 66 of 340 block RAMs. It was deployed in two-wire mode with `tools/deploy_tinytang.sh` beside the 840,580-byte stripped player `b7f70131`, and `video_test` on it printed `PIXELS=468378 WANT=468378 BITS=ffff` and `LATE=0` over 600 frames. The user double-clicked a `.nes` file, tapped HOME to bring TinyDesk over the running game and back, and reported that all tests passed. PROT-010 is now VERIFIED, PROV-008 is new, and TOOL-020, TOOL-022 and EMU-005 are revised; the README documents link mode, the frames, the layer and the tests. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should be proposed to the user; open items are the halved clean-seed rate from pixel-clock hold, which a register stage or placement constraint on the cell store's write path might restore, the HDMI loss and patterned glitch of entries 18 and 19, the DEV-016 workaround and the stale Apicula test count, battery saves, player 2, and the lead in TinyTang's PROT-010 that a core-ID probe during a linked game could drain the exit line.
+
+#### Files Modified:
+
+- README.md
+- docs/desk-layer-plan.md
+- firmware/apps/nes_bench/main.cpp
+- firmware/boot/main.c
+- firmware/include/tinynes.h
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/desk_font.hex
+- fpga/ae350_soc/desk_link.sv
+- fpga/ae350_soc/exts_uart.sv
+- fpga/ae350_soc/video.sv
+- fpga/ae350_soc/wii_pads.sv
+- scripts/open/nes.tdsh
+- tests/desk_link_tb.sv
+- tests/video_tb.sv
+- tools/build_ae350_soc.sh
+- tools/designs/ae350_soc.json
+- tools/fetch_font8x8.sh
+- tools/gen_desk_font.py
+- tools/load_ae350.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

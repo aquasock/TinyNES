@@ -75,6 +75,9 @@ int main(void)
 	uint32_t start, uncached_cycles, cached_cycles;
 	int bad;
 
+	/* A program that left the UART in link mode restarts the ROM; its
+	 * last text is sent before this write completes. */
+	TN_UART_CTRL = 0;
 	tn_put_str("\r\nTinyNES AE350 boot ROM\r\n");
 	test_registers(&regs);
 

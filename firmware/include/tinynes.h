@@ -23,6 +23,8 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 #define TN_ID           TN_REG(0x08) /* read: TN_ID_VALUE */
 #define TN_SCRATCH      TN_REG(0x0c) /* read and write */
 #define TN_UART_RX      TN_REG(0x10) /* read: pops the oldest received byte */
+#define TN_UART_CTRL    TN_REG(0x14) /* read and write: TN_UART_LINK_MODE */
+#define TN_LINK_STATUS  TN_REG(0x18) /* read: the link's state */
 
 #define TN_UART_TX_READY   0x01u /* the transmit holding register is free */
 #define TN_UART_TX_IDLE    0x02u /* and the last byte has left the pin */
@@ -31,6 +33,22 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 #define TN_UART_RX_FRAME   0x10u /* a byte had no stop bit; sticky */
 #define TN_UART_RX_VALID   0x100u /* TN_UART_RX bits 7:0 hold a byte */
 #define TN_ID_VALUE        0x544e3031u /* "TN01" */
+
+/* Link mode (fpga/ae350_soc/desk_link.sv): the UART carries TinyTang's
+ * frames. Received bytes go to the link's frame parser, never to
+ * TN_UART_RX, and bytes written to TN_UART_DATA are sent as text frames, a
+ * line at a time; the link answers TinyTang's core ID request, reports Wii
+ * controller 1 as TinyTang's joypad word, a tap of HOME as LB, and draws
+ * TinyDesk's layer over the picture. A write to TN_UART_CTRL completes once
+ * everything written before it has been sent. The boot ROM always starts in
+ * loader mode. */
+#define TN_UART_LINK_MODE  0x1u
+#define TN_LINK_SHOWN      0x1u /* STATUS: the layer is over the picture */
+#define TN_LINK_OVERLAY    0x2u
+#define TN_LINK_ENABLE     0x4u
+#define TN_LINK_LOST       0x8u /* a cell write was lost; sticky */
+#define TN_LINK_FRAMES(s)  (((s) >> 8) & 0xffu)
+#define TN_LINK_CELLS(s)   ((s) >> 16)
 
 /* HDMI video (fpga/ae350_soc/video.sv): 1280x720 60 Hz showing a 256x240
  * frame buffer at 3x, or fabric colour bars until TN_VIDEO_ENABLE is set.

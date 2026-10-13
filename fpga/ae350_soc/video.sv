@@ -47,13 +47,23 @@
 //
 // Pixel side (pix_clk, 74.25 MHz): CEA-861 1280x720p60 timing, positive
 // syncs. The TMDS encoder is TinyTang's fpga/hdmi_test/hdmi_test.v's (MIT).
+//
+// The desk layer (desk_link.sv): 80x45 cells of 16x16 pixels, each an 8x8
+// glyph of the font in FONT_FILE (desk_font.hex) drawn twice its size in a
+// foreground and a background colour. While layer_on is set, taken at the
+// next vertical blank like CTRL, the layer replaces the whole picture, side
+// bars and colour bars included. Cells are written from the bus side one at
+// a time (cell_valid, cell_ready) and handed to the pixel side, where the
+// cell store and the font are kept, as palette writes are.
 module video #(
     parameter [31:0] ID_VALUE = 32'h544e5631, // "TNV1"
     // Frame buffer 0's SDRAM byte address, bits 24:17 (bits 16:0 are 0):
     // the top 128 KiB of the 32 MiB.
     parameter [24:17] FB_BASE = 8'hff,
     // Diagnostic: colour each pixel from its palette index, not the palette.
-    parameter DEBUG_INDEX = 0
+    parameter DEBUG_INDEX = 0,
+    // The desk layer's font, relative to the repository root.
+    parameter FONT_FILE = "fpga/ae350_soc/desk_font.hex"
 ) (
     input  wire        clk,
     input  wire        resetn,
@@ -75,6 +85,13 @@ module video #(
     input  wire [6:0]  vindex,
     input  wire [15:0] vdata,
     input  wire        vdone,
+
+    // The desk layer, on clk.
+    input  wire        layer_on,
+    input  wire        cell_valid,
+    input  wire [11:0] cell_addr,
+    input  wire [36:0] cell_data,  // {character, foreground, background}
+    output wire        cell_ready,
 
     input  wire        pix_clk,
     input  wire        pix_reset,
@@ -139,6 +156,21 @@ module video #(
     reg [23:0] hs_data = 24'd0;
     reg [1:0] hs_ack_sync = 2'b00;
     wire hs_busy = hs_req != hs_ack_sync[1];
+
+    // A cell write handed to the pixel side the same way.
+    reg c_req = 1'b0, c_ack = 1'b0;
+    reg [11:0] c_addr = 12'd0;
+    reg [36:0] c_data = 37'd0;
+    reg [1:0] c_ack_sync = 2'b00;
+    assign cell_ready = c_req == c_ack_sync[1];
+    always @(posedge clk) begin
+        c_ack_sync <= {c_ack_sync[0], c_ack};
+        if (cell_valid && cell_ready) begin
+            c_req <= !c_req;
+            c_addr <= cell_addr;
+            c_data <= cell_data;
+        end
+    end
 
     wire accept = hready_in && hsel && htrans[1];
     wire word = hsize == 3'd2 && haddr[1:0] == 2'b00;
@@ -293,8 +325,38 @@ module video #(
             emphasis[hs_addr[8:0]] <= hs_data[8:0];
     end
 
+    // The desk layer's cell store and font, both on pix_clk only. The store
+    // is five 9-bit slices so that it maps to block RAM in 9-bit mode, as the
+    // palette and emphasis do; that mode is the one shown to work on this
+    // chip (core-log entry 14, TOOL-020).
+    reg [8:0] cells0 [0:4095];
+    reg [8:0] cells1 [0:4095];
+    reg [8:0] cells2 [0:4095];
+    reg [8:0] cells3 [0:4095];
+    reg [8:0] cells4 [0:4095];
+    wire [44:0] c_wide = {8'd0, c_data};
+    reg [7:0] font [0:1023];
+    initial $readmemh(FONT_FILE, font);
+    reg [2:0] c_req_sync = 3'b000;
+    wire c_take = c_req_sync[2] != c_req_sync[1];
+    reg [1:0] layer_sync = 2'b00;
+    reg layer_shown = 1'b0;
+    always @(posedge pix_clk) begin
+        c_req_sync <= {c_req_sync[1:0], c_req};
+        if (c_take) begin
+            cells0[c_addr] <= c_wide[8:0];
+            cells1[c_addr] <= c_wide[17:9];
+            cells2[c_addr] <= c_wide[26:18];
+            cells3[c_addr] <= c_wide[35:27];
+            cells4[c_addr] <= c_wide[44:36];
+            c_ack <= c_req_sync[1];
+        end
+        layer_sync <= {layer_sync[0], layer_on};
+    end
+
     reg [10:0] hcnt = 11'd0;
     reg [9:0] vcnt = 10'd0;
+    reg [11:0] cell_row = 12'd0;
     reg [7:0] nx = 8'd0, ny = 8'd0;   // the NES pixel at (hcnt, vcnt)
     reg [1:0] hsub = 2'd0, vsub = 2'd0;
     wire h_last = hcnt == H_TOTAL - 1;
@@ -320,7 +382,9 @@ module video #(
             vsub <= 2'd0;
             shown_buf <= 1'b0;
             shown_en <= 1'b0;
+            layer_shown <= 1'b0;
             pix_vblank <= 1'b0;
+            cell_row <= 12'd0;
         end else begin
             hcnt <= h_next;
             if (h_next == X0) begin
@@ -334,6 +398,11 @@ module video #(
             end
             if (h_last) begin
                 vcnt <= v_next;
+                // The first cell of the cell row the next line is in.
+                if (v_next == 10'd0)
+                    cell_row <= 12'd0;
+                else if (v_next[3:0] == 4'd0)
+                    cell_row <= cell_row + 12'd80;
                 if (v_next == 10'd0) begin
                     ny <= 8'd0;
                     vsub <= 2'd0;
@@ -358,6 +427,7 @@ module video #(
                 if (v_next == V_ACTIVE) begin
                     shown_buf <= ctrl_sync[1];
                     shown_en <= ctrl_sync[0];
+                    layer_shown <= layer_sync[1];
                     pix_vblank <= 1'b1;
                     if (ctrl_sync[0]) begin
                         fr_line <= 8'd0;
@@ -372,9 +442,9 @@ module video #(
     end
 
     // Stage 0: the raster position, above. Stage 1: the line-buffer pixel
-    // and the line's emphasis. Stage 2: the palette index. Stage 3: the
-    // colour. Stage 4: the colour or bars, registered. The encoders register
-    // stage 4.
+    // and the line's emphasis; the layer's cell. Stage 2: the palette index;
+    // the cell's glyph row. Stage 3: the colour; the layer's colour. Stage 4:
+    // the colour, bars or layer, registered. The encoders register stage 4.
     wire de0 = hcnt < H_ACTIVE && vcnt < V_ACTIVE;
     wire pic0 = hcnt >= X0 && hcnt < X0 + 768 && vcnt < V_ACTIVE;
     wire hs0 = hcnt >= H_ACTIVE + H_FP && hcnt < H_ACTIVE + H_FP + H_SYNC;
@@ -384,13 +454,34 @@ module video #(
                       hcnt < 5 * BAR ? 3'd4 : hcnt < 6 * BAR ? 3'd5 :
                       hcnt < 7 * BAR ? 3'd6 : 3'd7;
     wire [15:0] lb_word = lb[{ny[0], nx[7:1]}];
+    wire [11:0] cell0 = cell_row + {5'd0, hcnt[10:4]};
 
-    // {de, pic, hs, vs, en, bar} per stage.
-    reg [7:0] ctl1 = 8'd0, ctl2 = 8'd0, ctl3 = 8'd0;
+    // {layer, de, pic, hs, vs, en, bar} per stage.
+    reg [8:0] ctl1 = 9'd0, ctl2 = 9'd0, ctl3 = 9'd0;
     reg [7:0] pixel1 = 8'd0;
     reg [2:0] emph1 = 3'd0;
     reg [9:0] index2 = 10'd0;
     reg [23:0] rgb3 = 24'd0;
+    reg [44:0] cell1 = 45'd0;
+    reg [2:0] row1 = 3'd0, col1 = 3'd0, col2 = 3'd0;
+    reg [29:0] colours2 = 30'd0;
+    reg [7:0] glyph2 = 8'd0;
+    reg [23:0] lay3 = 24'd0;
+
+    // A 15-bit {b, g, r} colour as 24-bit RGB.
+    function [23:0] rgb15(input [14:0] c);
+        rgb15 = {c[4:0], c[4:2], c[9:5], c[9:7], c[14:10], c[14:12]};
+    endfunction
+
+    always @(posedge pix_clk) begin
+        cell1 <= {cells4[cell0], cells3[cell0], cells2[cell0], cells1[cell0], cells0[cell0]};
+        row1 <= vcnt[3:1];
+        col1 <= hcnt[3:1];
+        glyph2 <= font[{cell1[36:30], row1}];
+        colours2 <= cell1[29:0];
+        col2 <= col1;
+        lay3 <= glyph2[col2] ? rgb15(colours2[29:15]) : rgb15(colours2[14:0]);
+    end
 
     always @(posedge pix_clk) begin
         pixel1 <= nx[0] ? lb_word[15:8] : lb_word[7:0];
@@ -415,7 +506,7 @@ module video #(
             pixel_count <= 20'd0;
             seen1 <= 8'd0;
             seen0 <= 8'd0;
-        end else if (ctl1[6] && ctl1[3]) begin
+        end else if (ctl1[6] && ctl1[3]) begin  // pic and en
             if (pixel1 != 8'd0)
                 pixel_count <= pixel_count + 1'b1;
             seen1 <= seen1 | pixel1;
@@ -424,7 +515,7 @@ module video #(
     end
 
     always @(posedge pix_clk) begin
-        ctl1 <= {de0, pic0, hs0, vs0, shown_en, bar0};
+        ctl1 <= {layer_shown, de0, pic0, hs0, vs0, shown_en, bar0};
         ctl2 <= ctl1;
         ctl3 <= ctl2;
         index2 <= emph1 == 3'd0 ? {2'b00, pixel1} :
@@ -437,7 +528,9 @@ module video #(
     wire g_on = bar3 == 3'd0 || bar3 == 3'd1 || bar3 == 3'd2 || bar3 == 3'd3;
     wire b_on = bar3 == 3'd0 || bar3 == 3'd2 || bar3 == 3'd4 || bar3 == 3'd6;
     wire de3 = ctl3[7], pic3 = ctl3[6], hs3 = ctl3[5], vs3 = ctl3[4], en3 = ctl3[3];
-    wire [23:0] colour3 = !en3 ? {r_on ? 8'd192 : 8'd16, g_on ? 8'd192 : 8'd16,
+    wire layer3 = ctl3[8];
+    wire [23:0] colour3 = layer3 ? lay3 :
+                          !en3 ? {r_on ? 8'd192 : 8'd16, g_on ? 8'd192 : 8'd16,
                                   b_on ? 8'd192 : 8'd16} :
                           pic3 ? rgb3 : 24'd0;
 

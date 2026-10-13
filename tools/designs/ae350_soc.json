@@ -6,6 +6,7 @@
         "fpga/ae350_soc/ahb_ram.sv",
         "fpga/ae350_soc/ahb_sdram.sv",
         "fpga/ae350_soc/exts_uart.sv",
+        "fpga/ae350_soc/desk_link.sv",
         "fpga/ae350_soc/video.sv",
         "fpga/ae350_soc/wii_pads.sv",
         "fpga/ae350_soc/i2s_out.sv",
