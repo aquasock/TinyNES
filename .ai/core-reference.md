@@ -279,9 +279,10 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Where is colibri, and what are its terms? | PROV | PROV-003 |
 | Where did Nestopia come from, and what are its terms? | PROV | PROV-006 |
 | Where does FCEUmm come from, and what are its terms? | PROV | PROV-007 |
-| How fast does an NES emulator run on the A25, and is it correct? | EMU | EMU-001, EMU-002, EMU-003 |
+| How fast does an NES emulator run on the A25, and is it correct? | EMU | EMU-001, EMU-002, EMU-003, EMU-004 |
 | Which NES core is faster on the A25, and why was Nestopia dropped? | EMU | EMU-002 |
-| Where does FCEUmm's frame time go on the A25, and what made it faster? | EMU | EMU-003 |
+| Where does FCEUmm's frame time go on the A25, and what made it faster? | EMU | EMU-003, EMU-004 |
+| How does FCEUmm's picture reach HDMI, and how fast does the game run with it? | EMU | EMU-004 |
 | Which silicon revision is this board, and which revision is the core image? | PSX | PSX-001 |
 | How much logic and block RAM does the device have? | PSX | PSX-002 |
 | Which FPGA pins carry the core UART, and where is the board's clock? | PSX | PSX-003 |
@@ -455,6 +456,7 @@ TOOL-021: "gw_sh runs headless with LD_PRELOAD of the system libfreetype and QT_
 EMU-001: "libretro Nestopia 135dfa6 runs Castlevania on the A25 with checksums matching a PC build, at 23.16 ms a frame against 16.64 ms: 71.8 percent of full speed, with a 0.78 s start"
 EMU-002: "libretro FCEUmm ac0d00a runs Castlevania on the A25 with checksums matching a PC build, at 19.07 ms a frame: 87.2 percent of full speed and 1.2 times Nestopia (1.8 times on the PC); it is the core TinyNES keeps"
 EMU-003: "8.23 ms of FCEUmm's 19.14 ms XRGB8888 frame on the A25 is the 8-bit to XRGB8888 conversion; RGB565 cuts it to 5.01 ms and the frame to 15.85 ms, 104.9 percent; -O3 is slower and the prefetch and write-around bits do not exist"
+EMU-004: "With its own driver in place of libretro.c, FCEUmm's core draws straight into the SDRAM frame buffers and Castlevania runs on HDMI at 10.82 ms a frame (max 12.02), 153.7 percent, every frame shown at the next vertical blank, checksums matching the PC"
 ```
 
 ---
@@ -2600,7 +2602,20 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   sources:
     - "This project's firmware/apps/nes_bench/main.cpp (environment, video_refresh, BLIT, NES_MCACHE), Makefile (WANT_32BPP, MCACHE), firmware/rt/rt.mk (OPT)"
     - "libretro/libretro-fceumm ac0d00a (PROV-007): Makefile.common WANT_32BPP, src/drivers/libretro/libretro.c retro_run_blit and retro_run"
-  verification: "Measured on this board on 2026-10-12 (core-log entry 12): five runs, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, each printing TinyNES EXIT 0 and the figures above; the RGB565 frames dumped on the PC at 600 and 1,800 show the gate and the castle hall in correct colours; the user accepted the result. Only one run per build, so differences under about 0.3 percent are within noise."
+  verification: "Measured on this board on 2026-10-12 (core-log entry 12): five runs, loaded by the agent in one-wire mode with the ae350_soc image of core-log entry 9, each printing TinyNES EXIT 0 and the figures above; the RGB565 frames dumped on the PC at 600 and 1,800 show the gate and the castle hall in correct colours; the user accepted the result. Only one run per build, so differences under about 0.3 percent are within noise. Revised 2026-10-12 (core-log entry 15): the display path this record calls not built now exists and removes BLIT entirely (EMU-004); nes_bench no longer has WANT_32BPP or BLIT, its libretro driver having been replaced."
+
+- record_id: EMU-004
+  kind: EXTERNAL
+  topic_id: EMU
+  title: "FCEUmm's core drawing straight into the SDRAM frame buffers runs Castlevania on HDMI at 153.7 percent of full speed"
+  status: VERIFIED
+  verified_date: 2026-10-12
+  statement: "FCEUmm's emulation core at ac0d00a (PROV-007) needs from its driver only FCEUD_SetPalette, FCEUD_PrintError, FCEUD_Message, FCEUD_DispMessage, GetKeyboard and the globals dendy, extrascanlines, normal_scanlines, overclocked, overclock_enabled, skip_7bit_overclocking, swapDuty, totalscanlines and vblankscanlines. Its PPU writes each frame as 8-bit palette indices to XBuf, line y at XBuf + 256y for lines 0 to 240 (240 standing for the lines not shown), each at most 272 bytes (34 tiles) from its start, so a frame needs 61,712 bytes, and each line's colour emphasis to XDBuf, the same along a line; WritePalette sets palette entries 0 to 767 through FCEUD_SetPalette, 256 + 64 x emphasis + (pixel & 63) for an emphasised line, the layout the video unit uses. With nes_bench's own driver in place of src/drivers/libretro/libretro.c, XBuf pointed at the SDRAM frame buffer not shown each frame, the D-cache written back and the frame shown at the next vertical blank, EMU-002's Castlevania image and script averaged 10,824 us a frame (minimum 3,992, maximum 12,016) against the 16,639 us period: 153.7 percent, no frame over, with 615 us to hand each frame to the video unit, LATE 0 and no frame shown later than the next vertical blank. The start took 64,194 us and the program was 753,044 bytes. Every one of its 16 checksum lines matched the PC build of the same program, which averaged about 180 us a frame and gave the same checksums on two runs."
+  consequence: "nes_bench is a working NES display path at a steady 60 frames a second with about a third of each frame spare: the conversion of EMU-003 is gone, and the walk right that ran at the limit now peaks at 12.0 ms. The sound is still emulated and mixed at 48 kHz inside FCEUI_Emulate and not played, the controller is still a script, and the run stops after 1,800 frames. The driver sets option_ramstate 1 (fill $00), volume 150 and 48 kHz, the libretro driver's defaults, which were also the rates of the earlier rows: that driver's sound-rate hint was never answered, so it kept 48 kHz. Its VIDEO checksum covers the 8-bit picture and each line's emphasis, so it is not comparable with the earlier RGB565 checksums."
+  sources:
+    - "This project's firmware/apps/nes_bench/main.cpp (the driver and benchmark) and Makefile (the core without libretro.c and libretro_dipswitch.c)"
+    - "libretro/libretro-fceumm ac0d00a: src/driver.h, src/fceu.c FCEUI_Emulate and option_ramstate, src/video.c XBuf, src/ppu.c DoLine and RefreshLine, src/palette.c WritePalette, src/drivers/libretro/libretro.c (the symbols it gave the core, retro_load_game and resolve_samplerate_hint)"
+  verification: "Measured on this board on 2026-10-12 (core-log entry 15): one run loaded by the agent in one-wire mode with the ae350_soc image 1b9ad22e of core-log entry 14, printing TinyNES EXIT 0 and the figures above while the user watched the game on HDMI and accepted it; the PC build's dumped frames at 60, 600, 1,200 and 1,800 show the title, the gate, the courtyard and the castle hall in correct colours."
 ```
 
 ---

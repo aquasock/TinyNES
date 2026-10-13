@@ -343,16 +343,17 @@ python3 -m unittest tests/test_loader_host.py
 
 ### NES emulator benchmark
 
-`firmware/apps/nes_bench/` runs the libretro FCEUmm core with no video, sound
-or controller, on a cartridge image built into the program, and times each
-`retro_run` against the NES frame period. `tools/fetch_fceumm.sh` clones
-commit `ac0d00a7fc01166f84c7bac01d1084ebfd2b865e` into `third_party/`, which
-git ignores, and checks that it is unmodified. The Makefile includes the
-core's own `Makefile.common` and builds it as upstream does for unix, but
-without the NTSC filter and HD texture packs, which run only when their
-options are chosen, and with RGB565 frames in place of XRGB8888, which halve
-the frame's SDRAM writes; `WANT_32BPP=1` restores XRGB8888. The cartridge
-image is the user's own and is never committed:
+`firmware/apps/nes_bench/` runs FCEUmm's NES emulation core on a cartridge
+image built into the program, with a scripted controller, shows the game on
+HDMI and times each emulated frame against the NES frame period.
+`tools/fetch_fceumm.sh` clones commit
+`ac0d00a7fc01166f84c7bac01d1084ebfd2b865e` into `third_party/`, which git
+ignores, and checks that it is unmodified. The Makefile includes the core's
+own `Makefile.common` and builds it as upstream does for unix, but without
+the NTSC filter, the HD texture packs and FCEUmm's libretro driver
+(`src/drivers/libretro/libretro.c`): `main.cpp` takes the driver's place, so
+the core's own 8-bit picture is shown as it is. The cartridge image is the
+user's own and is never committed:
 
 ```sh
 tools/fetch_fceumm.sh
@@ -367,59 +368,70 @@ for local use only and stay in `build/`. `MCACHE=<mask>` builds a program
 that sets those `mcache_ctl` bits for its run, and `OPT=<flags>` replaces
 `-O2` (an `rt.mk` setting); such builds want their own `BUILD=<dir>`.
 
-The harness answers the libretro environment with no system or save files,
-the pixel format the core asks for (RGB565 or XRGB8888) and RAM filled with
-`0x00` at power-on, so every run is the same. It describes the built-in image
-through `GET_GAME_INFO_EXT`, as RetroArch does, because FCEUmm otherwise
-reads the game from its path. It plays a controller script, by default 1,800
-frames of Castlevania: Start at frame 120, then walking right through the
-first stage from frame 720 with whips and jumps. `FRAMES=<n>` and
-`INPUT="<first>+<frames>=<button> ..."` replace them at build time. On the
-PC, `NES_DUMP=<dir>` saves the checked frames as PPM images. It prints:
+The driver gives the core the few callbacks and settings it needs from a
+driver, with power-on RAM filled with `0x00` so every run is the same and
+the libretro driver's sound settings (48 kHz, volume 150), loads the
+built-in image and calls `FCEUI_Emulate` once a frame. On the AE350 it
+points the core's picture buffer at the SDRAM frame buffer not being shown,
+so the PPU draws straight into it; FCEUmm's palette, 768 entries with the
+colour-emphasis tables, goes to the video unit's palette as the core sets
+it; and after each frame it writes the D-cache back, writes any line whose
+emphasis changed and asks for the buffer at the next vertical blank. It
+starts the next frame once that one is on screen, so the game runs at 60
+frames a second while the emulation keeps up, and the last frame stays up.
+It plays a controller script, by default 1,800 frames of Castlevania: Start
+at frame 120, then walking right through the first stage from frame 720
+with whips and jumps. `FRAMES=<n>` and `INPUT="<first>+<frames>=<button> ..."`
+replace them at build time. On the PC, `NES_DUMP=<dir>` saves the checked
+frames as PPM images. It prints:
 
 ```text
 TinyNES NES CORE=fceumm ROM=<bytes> CRC=<crc32> START=<us>
 TinyNES NES CACHE MICM=<micm_cfg> MDCM=<mdcm_cfg> I=<bytes>/<ways>/<line> D=<bytes>/<ways>/<line> MCTL=<mcache_ctl>
-TinyNES NES F=<frame> AVG=<us> MAX=<us> BLIT=<us> VIDEO=<crc> AUDIO=<crc>
-TinyNES NES FRAMES=<n> AVG=<us> MIN=<us> MAX=<us> BLIT=<us> OVER=<n> SPEED=<x.y>%
+TinyNES NES F=<frame> AVG=<us> MAX=<us> SHOW=<us> VIDEO=<crc> AUDIO=<crc>
+TinyNES NES FRAMES=<n> AVG=<us> MIN=<us> MAX=<us> SHOW=<us> OVER=<n> SPEED=<x.y>% LATE=<n> MISSED=<n>
 TinyNES NES VIDEO=<crc> AUDIO=<crc>
 ```
 
-`START` is `retro_init` and `retro_load_game`. `CACHE` (AE350 only) decodes
-the A25's cache configuration registers and reads back `mcache_ctl`. An `F=`
-line covers the 120 frames before it. `BLIT` is the part of the frame
-average that the core spends turning its 8-bit picture into the output
-frame, timed from its request for a frontend framebuffer, which the harness
-refuses, to its video callback. `VIDEO` is a CRC-32 of every 60th frame and
-`AUDIO` of every frame's samples, both taken outside the timed calls; the
-core emulates and mixes the sound (32 kHz, its default low quality) inside
-`retro_run`, but nothing plays it. `OVER` counts frames slower than the NES
-frame period and `SPEED` is that period over the average frame time.
-Matching `VIDEO` and `AUDIO` on the board and the PC show the A25 emulates
-the same frames.
+`START` is initialising the core and loading the game. `CACHE` (AE350 only)
+decodes the A25's cache configuration registers and reads back
+`mcache_ctl`. An `F=` line covers the 120 frames before it. The frame times
+are `FCEUI_Emulate` alone, which emulates the frame and mixes its sound;
+nothing plays the sound. `SHOW` is the mean time to hand a frame to the
+video unit (0 on the PC). `VIDEO` is a CRC-32 of the picture and each
+line's emphasis of every 60th frame and `AUDIO` of every frame's samples,
+both taken outside the timed calls. `OVER` counts frames slower than the
+NES frame period and `SPEED` is that period over the average frame time.
+`LATE` counts lines the video unit showed before their SDRAM fetch ended and
+`MISSED` frames shown later than the vertical blank after they were asked
+for; the program fails if `LATE` is not 0. Matching `VIDEO` and `AUDIO` on
+the board and the PC show the A25 emulates the same frames.
 
 Results with Castlevania (USA) (Rev A) on the board, against a 16.64 ms
 frame period, with 32 KiB 4-way caches of 32-byte lines; every run's 16
-checksum lines match the PC build of the same program:
+checksum lines match the PC build of the same program. The rows above the
+last used FCEUmm's libretro driver, whose `BLIT` was its conversion of the
+8-bit picture into the frame format it asked for:
 
-| Build | Frame average (range) | `BLIT` | Slow frames | `SPEED` |
+| Build | Frame average (range) | `BLIT` or `SHOW` | Slow frames | `SPEED` |
 |---|---|---|---|---|
 | Nestopia `135dfa6`, XRGB8888 | 23.16 ms (14.36 to 25.28) | not timed | 1,717 | 71.8% |
-| FCEUmm, XRGB8888 | 19.14 ms (12.36 to 20.41) | 8.23 ms | 1,715 | 86.9% |
-| FCEUmm, XRGB8888, `MCACHE=0x600` | 19.09 ms (12.34 to 20.14) | 8.23 ms | 1,715 | 87.1% |
-| FCEUmm, XRGB8888, `MCACHE=0x2000` | 19.20 ms (12.36 to 20.50) | 8.23 ms | 1,718 | 86.6% |
-| FCEUmm, XRGB8888, `OPT=-O3` | 19.40 ms (12.44 to 20.47) | 8.25 ms | 1,715 | 85.7% |
-| FCEUmm, RGB565 (default) | 15.85 ms (9.09 to 17.06) | 5.01 ms | 607 | 104.9% |
+| FCEUmm libretro, XRGB8888 | 19.14 ms (12.36 to 20.41) | 8.23 ms | 1,715 | 86.9% |
+| FCEUmm libretro, XRGB8888, `MCACHE=0x600` | 19.09 ms (12.34 to 20.14) | 8.23 ms | 1,715 | 87.1% |
+| FCEUmm libretro, XRGB8888, `MCACHE=0x2000` | 19.20 ms (12.36 to 20.50) | 8.23 ms | 1,718 | 86.6% |
+| FCEUmm libretro, XRGB8888, `OPT=-O3` | 19.40 ms (12.44 to 20.47) | 8.25 ms | 1,715 | 85.7% |
+| FCEUmm libretro, RGB565 | 15.85 ms (9.09 to 17.06) | 5.01 ms | 607 | 104.9% |
+| FCEUmm, own driver, on HDMI (default) | 10.82 ms (3.99 to 12.02) | 0.62 ms | 0 | 153.7% |
 
-On the PC the core takes about 0.20 ms a frame, of which `BLIT` is 0.016 ms;
-on the A25, writing the frame to the SDRAM is most of `BLIT`, and the rest of
-the frame is about 10.9 ms. `mcache_ctl` reads back `0x3` with the prefetch
-(`0x600`) or write-around (`0x2000`) bits set, so the A25 here does not have
-them. With RGB565 the stage's walk right, from frame 720, runs at about
-16.6 ms a frame, at the limit. The Nestopia row is the program of commit
-`a9c21fa` built with `CORE=nestopia` (and `tools/fetch_nestopia.sh`, since
-removed), before `BLIT` was timed; on the PC it was 1.8 times as slow as
-FCEUmm.
+The last run showed every frame at the next vertical blank (`LATE=0
+MISSED=0`), started in 64 ms against the libretro build's 102 ms, and its
+program is 753 KB against 1.67 MB. `SHOW` is mostly writing the D-cache back.
+`mcache_ctl` reads back `0x3` with the prefetch (`0x600`) or write-around
+(`0x2000`) bits set, so the A25 here does not have them. The Nestopia row is
+the program of commit `a9c21fa` built with `CORE=nestopia` (and
+`tools/fetch_nestopia.sh`, since removed), before `BLIT` was timed; on the
+PC it was 1.8 times as slow as FCEUmm. The libretro rows are the program of
+commit `a331d15`.
 
 ### HDMI video
 

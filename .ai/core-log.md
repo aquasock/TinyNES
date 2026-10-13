@@ -527,3 +527,35 @@ The next cycle should propose sending FCEUmm's 8-bit frames and palette to the v
 - User Test: PASS
 
 ---
+
+## 15 COMMIT Unreleased 2026-10-12T22:42:08-07:00
+
+#### Coming From:
+
+Unreleased 5d14d74
+
+#### Purpose:
+
+Show FCEUmm's own 8-bit frames on HDMI by having its core draw straight into the SDRAM frame buffers, as the user approved, removing the RGB565 conversion that kept the NES benchmark at the frame limit.
+
+#### Outcome:
+
+FCEUmm's core needs only four FCEUD callbacks, GetKeyboard and nine timing globals from its driver, and its PPU writes lines 0 to 240 of `XBuf`, each at most 272 bytes from its start, with each line's emphasis in `XDBuf` and its palette set as entries 0 to 767 in the video unit's layout, so `firmware/apps/nes_bench/main.cpp` now replaces FCEUmm's `libretro.c` with its own driver: it sets the power-on RAM fill, sound rate and volume of the libretro driver's defaults, loads the built-in image, points `XBuf` at the SDRAM frame buffer not shown before each `FCEUI_Emulate`, sends palette writes to the video unit, writes the D-cache back and any changed line emphasis after each frame, asks for the buffer at the next vertical blank and starts the next frame once it is shown, reporting `SHOW`, `LATE` and `MISSED` where `BLIT` was, and the Makefile builds the core without `libretro.c` and `libretro_dipswitch.c`. The libretro driver had never been answered on its sound-rate hint and ran at 48 kHz, which the new driver keeps, and the README's earlier 32 kHz is corrected. The PC build gave the same checksums on two runs and its dumped frames show the title, gate, courtyard and castle hall in correct colours. On the board, with the image of entry 14 (`1b9ad22e`) loaded by the agent in one-wire mode, the 753,044-byte program started in 64,194 us and played 1,800 frames of the Castlevania script at an average of 10,824 us (3,992 to 12,016) against 16,639 us, `OVER=0 SPEED=153.7% LATE=0 MISSED=0` with `SHOW` 615 us, and all 16 checksum lines matched the PC build; the user watched the game on HDMI, said it looked perfect and accepted the result. EMU-004 is new, EMU-003 is revised and the README's benchmark section describes the new driver and output. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should propose making the benchmark a playable NES for user approval: sound output, which the core already mixes at 48 kHz, a real controller in place of the script, and a run that does not stop after 1,800 frames.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

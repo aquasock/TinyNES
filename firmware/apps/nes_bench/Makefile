@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: MIT
 #
-# Headless NES emulator benchmark: the libretro FCEUmm core, fetched by
-# tools/fetch_fceumm.sh, with a cartridge image built in.
+# NES emulator benchmark: FCEUmm's emulation core, fetched by
+# tools/fetch_fceumm.sh, driven by main.cpp in place of FCEUmm's libretro
+# driver, with a cartridge image built in; on the AE350 it shows the game on
+# HDMI.
 #
 #   make ROM=<file.nes>         AE350 program, build/firmware/apps/nes_bench/
 #   make ROM=<file.nes> host    the same program for this PC, in host/ there
@@ -20,22 +22,21 @@ ifeq ($(wildcard $(FCEU_DIR)/Makefile.common),)
 $(error FCEUmm not found in $(FCEU_DIR): run tools/fetch_fceumm.sh)
 endif
 # Upstream's unix build (Makefile.libretro) without the NTSC filter and
-# HD texture packs, which run only when their options are chosen, and with
-# RGB565 frames: half the SDRAM writes of upstream's XRGB8888, which
-# WANT_32BPP=1 restores.
+# HD texture packs, and without its libretro driver, whose place main.cpp
+# takes: the core's 8-bit picture is shown as it is, with no conversion.
 CORE_DIR    := $(FCEU_DIR)/src
-WANT_32BPP  ?= 0
 HAVE_NTSC   := 0
 HAVE_HDPACK := 0
 include $(FCEU_DIR)/Makefile.common
 
-LIB_SOURCES  := $(SOURCES_C)
+LIB_SOURCES  := $(filter-out $(CORE_DIR)/drivers/libretro/libretro.c \
+                             $(CORE_DIR)/drivers/libretro/libretro_dipswitch.c,$(SOURCES_C))
 LIB_CPPFLAGS := $(COREDEFINES) -DNDEBUG $(INCFLAGS)
 
 APP_DEFS := $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
             $(if $(INPUT),-DNES_INPUT='"$(INPUT)"') \
             $(if $(MCACHE),-DNES_MCACHE=$(MCACHE))
-CPPFLAGS += -I$(LIBRETRO_COMM_DIR)/include $(APP_DEFS)
+CPPFLAGS += $(APP_DEFS)
 
 include ../../rt/rt.mk
 
