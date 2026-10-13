@@ -4,7 +4,7 @@
 
 ## Purpose
 
-TinyNES is a port of the nestopia libretro core to TinyTang running on the AE350.
+TinyNES is a port of the fceumm libretro core to TinyTang running on the AE350.
 
 ---
 
