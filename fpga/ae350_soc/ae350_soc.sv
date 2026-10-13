@@ -535,23 +535,30 @@ module ae350_soc_top #(
         .tmds_red(tmds_ch[2])
     );
 
+    // The TMDS clock lane is serialised like the data lanes, five bits high
+    // and five low per pixel, so that all four leave the same kind of
+    // output register on the same two clocks.
+    wire [9:0] tmds_ch_clk = 10'b0000011111;
     wire [3:0] tmds;   // {clock lane, red, green, blue}
     genvar lane;
     generate
-        for (lane = 0; lane < 3; lane = lane + 1) begin : hdmi_ser
+        for (lane = 0; lane < 4; lane = lane + 1) begin : hdmi_ser
+            wire [9:0] d;
+            if (lane == 3) begin : clock_lane
+                assign d = tmds_ch_clk;
+            end else begin : data_lane
+                assign d = tmds_ch[lane];
+            end
             OSER10 ser (
                 .Q(tmds[lane]),
-                .D0(tmds_ch[lane][0]), .D1(tmds_ch[lane][1]), .D2(tmds_ch[lane][2]),
-                .D3(tmds_ch[lane][3]), .D4(tmds_ch[lane][4]), .D5(tmds_ch[lane][5]),
-                .D6(tmds_ch[lane][6]), .D7(tmds_ch[lane][7]), .D8(tmds_ch[lane][8]),
-                .D9(tmds_ch[lane][9]),
+                .D0(d[0]), .D1(d[1]), .D2(d[2]), .D3(d[3]), .D4(d[4]),
+                .D5(d[5]), .D6(d[6]), .D7(d[7]), .D8(d[8]), .D9(d[9]),
                 .PCLK(pix_clk),
                 .FCLK(pix_clk5),
                 .RESET(pix_reset)
             );
         end
     endgenerate
-    assign tmds[3] = pix_clk;
     ELVDS_OBUF tmds_buf [3:0] (
         .I(tmds),
         .O({tmds_clk_p, tmds_d_p}),

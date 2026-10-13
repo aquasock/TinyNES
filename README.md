@@ -661,9 +661,15 @@ names them:
 Registers and palette and emphasis take 32-bit transfers only; any other
 access, including a read of a write-only area or of the old frame-buffer
 window at `0x20000`, gets an AHB ERROR. The 371.25 MHz serial clock comes
-from two PLLs fed by the 50 MHz oscillator, and a `CLKDIV` in the right
-side's clock block beside the TMDS pins divides it by five for the pixel
-clock. The build fails unless the pixel clock meets 74.25 MHz. The TMDS
+from two PLLs on the right edge (`PLL_R[1]` and `PLL_R[3]`) fed by the 50 MHz
+oscillator, and a `CLKDIV` in the right side's clock block beside the TMDS
+pins divides it by five for the pixel clock; all four TMDS lanes, the clock
+lane included (`1111100000` per pixel), leave through OSER10s on those two
+clocks. With the serial-clock PLL at `PLL_L[3]` its clock crossed the die on
+9.86 ns of general routing and the picture broke up with lines and lost
+signal once the FPGA was warm (about 41 C on the package); at `PLL_R[3]` the
+route is 2.12 ns and the picture held at 62 C (core reference DEV-018). The
+build fails unless the pixel clock meets 74.25 MHz. The TMDS
 encoder is TinyTang's (`fpga/hdmi_test/hdmi_test.v`, MIT).
 
 `tests/video_tb.sv` tests the unit on its own with a model of the SDRAM's

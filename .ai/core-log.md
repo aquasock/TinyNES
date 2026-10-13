@@ -887,3 +887,36 @@ Phase B, approved by the user: decode how Gowin's build routes the serial clock,
 - User Test: N/A
 
 ---
+
+## 25 COMMIT Unreleased 2026-10-13T11:00:47-07:00
+
+#### Coming From:
+
+Unreleased cf55509
+
+#### Purpose:
+
+Cure the heat-dependent HDMI fault of DEV-018 by shortening the serial clock's route and serialising the clock lane, as Phase B of the cycle the user approved, and show the user the open-flow timing of the new output stage.
+
+#### Outcome:
+
+`fpga/ae350_soc/ae350_soc.cst` moves `hdmi_pll` from PLL_L[3] to PLL_R[3], row 81 beside the CLKDIV's HCLK block, and `hdmi_pll27` from PLL_L[1] to PLL_R[1], and `fpga/ae350_soc/ae350_soc.sv` sends the TMDS clock lane through a fourth OSER10 with `1111100000` per pixel instead of driving it from the pixel clock; both SoC testbench modes passed. The planned release of the OSER10 reset in the serial clock's domain was left out, because it would need fabric flip-flops on the 371.25 MHz clock and the release happens once at power-up. A 16-seed sweep with `NPNR_GOWIN_CLK_FIRST` enforced was 8 of 16 clean against 6 before, all failures pixel-clock hold, with the serial clock's route 15 to 20 pips instead of 35 to 40, and seed 10, now the default, built with every check passing at bus Fmax 83.14 MHz and pixel Fmax 86.93 MHz, `ae350_soc.fs` SHA-256 `6b0c433a5c7e0783d6a06e557f9878ffb9cfac4d432072f2acf8b5dbb62640a8` and `ae350_soc.bin` `bafc2cf2ea79fc9e36a948b948afda62df07b9c5698da738d46eaaeb516ddfcf`. A `--sdf` re-run routed all 33,748 nets identically, and `tools/hdmi_timing.py` gave the serial clock 2.12 ns from the PLL to the OSER10s against 9.86 ns, encoder-to-OSER10 hold slack 0.756 ns against 0.46 (0.521 against 0.317 on the fork's fastest table), setup slack 10.45 ns, and three pixel-clock pins off the global network against six; the agent showed the user these figures. The image was deployed in two-wire mode with `tools/deploy_tinytang.sh` and `video_test` printed `PIXELS=468378 WANT=468378 BITS=ffff` and `LATE=0`. At the user's request both Pmods were unplugged, and the `DIAG=1` player of entry 22 ran Castlevania's title screen for 308 s while the user heated the package with a hair dryer to 57 C and then 62 C, where the old image had failed at about 41 C, and the picture stayed perfect with every internal check clean; the user then let it cool, and the session ended when the board's USB disconnected. In the session's first second the sound FIFO dropped 344 samples, with none after, like the overflow entry 18 left unexplained. DEV-018, BRD-011 and TOOL-023 are revised, and the README describes the HDMI clocking. The core-syntax audit passed.
+
+#### Next Steps:
+
+Repeat the heat test to 55 to 60 C with the Wii controller on PMOD0 and the I2S2 on PMOD1, which would settle that the PLL move and not the missing Pmod load cured the fault and let DEV-018 be closed; then the next cycle should be proposed to the user, with the startup sound FIFO overflow, the OSER10 reset's recovery against the serial clock, the halved clean-seed rate and the other items of entry 21 open.
+
+#### Files Modified:
+
+- README.md
+- fpga/ae350_soc/ae350_soc.cst
+- fpga/ae350_soc/ae350_soc.sv
+- tools/build_ae350_soc.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

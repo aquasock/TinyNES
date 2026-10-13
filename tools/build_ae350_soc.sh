@@ -22,11 +22,12 @@ apycula="${APICULA_FORK:-$(dirname "$root")/apicula-mathieufro}"
 pydeps="${PYDEPS:-$HOME/tools/pydeps}"
 device=GW5AST-LV138PG484AC1/I0
 family=GW5AST-138C
-# Placement decides pixel-clock hold and bus-clock Fmax. With the desk
-# layer, 6 of 16 seeds were clean in a sweep with bus_clk routed first, all
-# failures pixel-clock hold; seed 5 had the best margin on both clocks
-# together and is repeatable.
-seed="${TINY_NES_SEED:-5}"
+# Placement decides pixel-clock hold and bus-clock Fmax. With the HDMI PLLs
+# at PLL_R[1] and PLL_R[3], 8 of 16 seeds were clean in a sweep with bus_clk
+# routed first, all failures pixel-clock hold; seed 10 had the best margin on
+# both clocks together and the fewest pixel-clock pins off the global
+# network, and is repeatable.
+seed="${TINY_NES_SEED:-10}"
 
 [[ -f "$suite/environment" ]] || { echo "missing open toolchain: $suite" >&2; exit 2; }
 # shellcheck disable=SC1090

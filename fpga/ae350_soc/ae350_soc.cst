@@ -120,10 +120,13 @@ IO_PORT "sdram_dq[13]" IO_TYPE=LVCMOS33;
 IO_PORT "sdram_dq[14]" IO_TYPE=LVCMOS33;
 IO_PORT "sdram_dq[15]" IO_TYPE=LVCMOS33;
 
-// HDMI port (TinyTang fpga/desktop/desktop.cst). The two HDMI PLLs sit where
-// TinyTang's open-flow HDMI cores put them.
-INS_LOC "hdmi_pll27" PLL_L[1];
-INS_LOC "hdmi_pll" PLL_L[3];
+// HDMI port (TinyTang fpga/desktop/desktop.cst). The serial-clock PLL sits
+// at PLL_R[3], row 81 beside the CLKDIV's HCLK block, so the 371.25 MHz
+// clock crosses four columns to the OSER10s; at PLL_L[3] it crossed the die
+// on 9.86 ns of general routing and the picture failed when warm (DEV-018).
+// Its 27 MHz reference PLL is on the same side.
+INS_LOC "hdmi_pll27" PLL_R[1];
+INS_LOC "hdmi_pll" PLL_R[3];
 // The serialisers' clock divider, in the right side's HCLK block beside the
 // TMDS pins (block 1, lane 0); left to the placer it can land in block 0,
 // from where the pixel clock does not route.
