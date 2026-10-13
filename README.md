@@ -193,7 +193,10 @@ Makefiles look in `~/tools/xpack-riscv-none-elf-gcc-15.2.0-1`; set `RISCV_BIN`
 or `CROSS` to use another installation. The boot ROM links only `libgcc`,
 with no C library. The build script compiles it into
 `build/firmware/boot/boot.hex`, which Yosys loads into the ROM, then builds
-the bitstream `build/ae350_soc/ae350_soc.fs`:
+the bitstream `build/ae350_soc/ae350_soc.fs` for one-wire SRAM loads, and
+packs it with `tools/fs_to_bin.py` into `build/ae350_soc/ae350_soc.bin`, the
+same bits eight to a byte, which TinyTang's `tangload` loads from the SD card
+in two-wire mode:
 
 ```sh
 bash tools/build_ae350_soc.sh
@@ -260,7 +263,26 @@ python3 tools/load_ae350.py build/firmware/apps/rt_test/rt_test.elf \
 
 It fails on a `BAD` or `NOBOOT` line, a non-zero exit, or a missing
 `--expect` line, and prints `PASS` otherwise. `--port`, `--baud`,
-`--timeout`, `--run-timeout` and `--retries` change its defaults.
+`--timeout`, `--run-timeout` and `--retries` change its defaults;
+`--run-timeout 0` follows the program until it exits or Ctrl-C.
+
+In two-wire mode the BL616 runs TinyTang and holds the FPGA UART, so both
+the image and the programs go through it. `tools/deploy_tinytang.sh` puts
+`build/ae350_soc/ae350_soc.bin` on the SD card as
+`/cores/console138k/tinynes.bin` with TinyTang's `tinytang_put.py` and loads
+it with `tangload`, after turning the desk layer off so its display frames
+do not reach the AE350's UART. `load_ae350.py --tinytang` then uses
+TinyTang's USB console, `/dev/ttyACM0`: it checks the shell is at a prompt
+with the console status probe and runs TinyTang's `fpgapipe`, which passes
+the console's bytes to the FPGA UART and back unchanged until the tool
+closes the port. The load protocol is the same as in one-wire mode. TinyTang
+must be checked out beside this repository, or named with `TINYTANG_DIR`:
+
+```sh
+tools/deploy_tinytang.sh
+python3 tools/load_ae350.py --tinytang build/firmware/apps/rt_test/rt_test.elf \
+  --expect 'TinyNES RT OK' --expect 'TinyNES SDRAM OK'
+```
 
 The protocol, defined in `firmware/include/tinynes.h` and implemented in
 `firmware/boot/load.c`, is little-endian:
@@ -365,6 +387,21 @@ make -C firmware/apps/nes_bench ROM=<file.nes>          # AE350 program
 make -C firmware/apps/nes_bench ROM=<file.nes> host     # the same for the PC
 python3 tools/load_ae350.py build/firmware/apps/nes_bench/nes_bench.elf --run-timeout 600
 build/firmware/apps/nes_bench/host/nes_bench
+```
+
+`PLAY=1` builds the playable version into
+`build/firmware/apps/nes_play/` (AE350 only). The Wii Classic Controllers on
+PMOD0's first two buses are players 1 and 2: the D-pad or the left stick
+for the directions, B for the NES's A, Y for its B, `-` for Select and `+`
+for Start; A and X do nothing. A controller that is absent or not a Classic reads as
+nothing pressed. The game runs until HOME and `-` are held together, prints
+`TinyNES NES PLAY PAD1=<state> PAD2=<state>` (`classic`, `other` or
+`absent`) at the start and its `F=` lines once a minute, and ends with the
+usual summary:
+
+```sh
+make -C firmware/apps/nes_bench ROM=<file.nes> PLAY=1
+python3 tools/load_ae350.py --tinytang build/firmware/apps/nes_play/nes_bench.elf --run-timeout 0
 ```
 
 The programs contain the core and the cartridge image, so they are GPL builds
@@ -618,7 +655,8 @@ nextpnr options. Results go to `build/sweep/<design>-<time>/` as
 The board pin and AE350 clock facts come from the project reference library
 and the Tang-PSX/Tang-Phosphor hardware reports cited there. The RTL here is
 original MIT-licensed code, apart from the TMDS encoder in `video.sv`, which
-is TinyTang's, also MIT. CERN's colibri and its SystemVerilog port are
+is TinyTang's, also MIT; `tools/fs_to_bin.py` is likewise TinyTang's MIT
+converter, copied with its notice. CERN's colibri and its SystemVerilog port are
 design practice references; their modules are not included.
 
 FCEUmm descends from BERO's

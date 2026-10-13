@@ -36,6 +36,15 @@
 // counts frames slower than the NES frame period, SPEED is that period
 // over the average frame time. On the PC, NES_DUMP=<dir> in the environment
 // also saves the CHECK frames there as <frame>.ppm.
+//
+// Built with PLAY=1 (AE350 only) it is a playable NES instead: the Wii
+// Classic Controllers on PMOD0's first two buses (fpga/ae350_soc/wii_pads.sv)
+// are players 1 and 2 in place of the script, the game runs until HOME and
+// SELECT are held together on either controller, and the report lines come
+// once a minute and at the end:
+//   TinyNES NES PLAY PAD1=<state> PAD2=<state>
+// where <state> is classic, other or absent. A controller that is absent or
+// not a Classic Controller reads as nothing pressed.
 
 #include <cstdint>
 #include <cstdio>
@@ -100,6 +109,18 @@ void FCEUD_DispMessage(int, unsigned, const char *s) { printf("fceumm %s\n", s);
 }
 
 #define NES_CORE "fceumm"
+#ifdef NES_PLAY
+#ifndef __riscv
+#error "PLAY=1 reads the AE350's controllers; there is no PC build of it"
+#endif
+// 0: until HOME and SELECT are held.
+#ifndef NES_FRAMES
+#define NES_FRAMES 0
+#endif
+#ifndef NES_REPORT
+#define NES_REPORT 3600
+#endif
+#endif
 #ifndef NES_FRAMES
 #define NES_FRAMES 1800
 #endif
@@ -215,6 +236,70 @@ bool parse_input(const char *s)
 	return true;
 }
 
+#ifdef NES_PLAY
+// Classic Controller buttons as the pad registers give them: DATA2's low
+// half, report bytes 4 and 5, active low (WII-001, tinynes.h).
+const uint16_t WII_B = 1u << 14, WII_Y = 1u << 13, WII_LEFT = 1u << 9,
+	       WII_UP = 1u << 8,
+	       WII_RIGHT = 1u << 7, WII_DOWN = 1u << 6, WII_SELECT = 1u << 4,
+	       WII_HOME = 1u << 3, WII_START = 1u << 2;
+// The left stick's 6-bit axes centre near 32; this far off centre it
+// counts as the D-pad.
+const unsigned STICK = 12;
+
+const char *pad_state(unsigned n)
+{
+	const uint32_t s = TN_PAD_STATUS(n);
+	if (!(s & TN_PAD_PRESENT))
+		return "absent";
+	return s & TN_PAD_CLASSIC ? "classic" : "other";
+}
+
+// One controller as an NES pad. The NES's B and A are the Classic's Y and
+// B, the lower-left pair, as the user chose; its A and X do nothing.
+// Opposite directions together, which an NES pad cannot press, read as
+// neither.
+uint8_t read_pad(unsigned n, uint16_t &held)
+{
+	held = 0;
+	if ((TN_PAD_STATUS(n) & (TN_PAD_PRESENT | TN_PAD_CLASSIC)) !=
+	    (TN_PAD_PRESENT | TN_PAD_CLASSIC))
+		return 0;
+	const uint32_t lo = TN_PAD_DATA(n);	// captures DATA2 for the next read
+	held = (uint16_t)~TN_PAD_DATA2(n);
+	const unsigned lx = lo & 63u, ly = lo >> 8 & 63u;
+
+	uint8_t joy = 0;
+	if (held & WII_B)
+		joy |= JOY_A;
+	if (held & WII_Y)
+		joy |= JOY_B;
+	if (held & WII_SELECT)
+		joy |= JOY_SELECT;
+	if (held & WII_START)
+		joy |= JOY_START;
+	if (held & WII_UP || ly > 32 + STICK)
+		joy |= JOY_UP;
+	if (held & WII_DOWN || ly < 32 - STICK)
+		joy |= JOY_DOWN;
+	if (held & WII_LEFT || lx < 32 - STICK)
+		joy |= JOY_LEFT;
+	if (held & WII_RIGHT || lx > 32 + STICK)
+		joy |= JOY_RIGHT;
+	if ((joy & (JOY_UP | JOY_DOWN)) == (JOY_UP | JOY_DOWN))
+		joy &= (uint8_t)~(JOY_UP | JOY_DOWN);
+	if ((joy & (JOY_LEFT | JOY_RIGHT)) == (JOY_LEFT | JOY_RIGHT))
+		joy &= (uint8_t)~(JOY_LEFT | JOY_RIGHT);
+	return joy;
+}
+
+bool quit_held(uint16_t held)
+{
+	return (held & (WII_HOME | WII_SELECT)) == (WII_HOME | WII_SELECT);
+}
+#endif
+
+#ifndef NES_PLAY
 uint8_t pad_for(unsigned frame)
 {
 	uint8_t mask = 0;
@@ -224,6 +309,7 @@ uint8_t pad_for(unsigned frame)
 			mask |= presses[i].buttons;
 	return mask;
 }
+#endif
 
 #ifdef __riscv
 uint8_t *frame_buffer(unsigned b) { return TN_VIDEO_FB(b); }
@@ -340,6 +426,13 @@ int main()
 			TN_VIDEO_EMPHASIS(b, y) = 0;
 	const uint32_t late0 = TN_VIDEO_LATE;
 	unsigned missed = 0;
+#ifdef NES_PLAY
+	if (TN_PAD_ID != TN_PAD_ID_VALUE) {
+		printf("TinyNES NES BAD PAD ID=%08lx\n", (unsigned long)TN_PAD_ID);
+		return 1;
+	}
+	printf("TinyNES NES PLAY PAD1=%s PAD2=%s\n", pad_state(0), pad_state(1));
+#endif
 #else
 	const char *dump = getenv("NES_DUMP");
 #endif
@@ -351,10 +444,17 @@ int main()
 	uint32_t video_crc = 0, audio_crc = 0;
 	uint64_t total = 0, low = UINT64_MAX, high = 0, part = 0, part_high = 0;
 	uint64_t show_total = 0, part_show = 0;
-	unsigned over = 0, part_frames = 0, back = 1;
+	unsigned over = 0, part_frames = 0, back = 1, played = 0;
 
-	for (unsigned f = 0; f < frames; f++) {
+	for (unsigned f = 0; frames == 0 || f < frames; f++) {
+#ifdef NES_PLAY
+		uint16_t held1, held2;
+		joypads = read_pad(0, held1) | (uint32_t)read_pad(1, held2) << 8;
+		if (quit_held(held1) || quit_held(held2))
+			break;
+#else
 		joypads = pad_for(f);
+#endif
 		XBuf = frame_buffer(back);
 
 		uint8_t *pixels;
@@ -388,6 +488,7 @@ int main()
 		s = 0;
 #endif
 		back ^= 1;
+		played = f + 1;
 
 		total += t;
 		part += t;
@@ -430,13 +531,16 @@ int main()
 #else
 	const unsigned late = 0, missed = 0;
 #endif
-	const uint64_t avg = total / frames;
+	const unsigned n = played ? played : 1;
+	const uint64_t avg = total / n ? total / n : 1;
+	if (!played)
+		low = 0;
 	const unsigned speed = (unsigned)(budget * 1000u / avg);
 	printf("TinyNES NES FRAMES=%u AVG=%llu MIN=%llu MAX=%llu SHOW=%llu "
-	       "OVER=%u SPEED=%u.%u%% LATE=%u MISSED=%u\n", frames,
+	       "OVER=%u SPEED=%u.%u%% LATE=%u MISSED=%u\n", played,
 	       (unsigned long long)to_us(avg), (unsigned long long)to_us(low),
 	       (unsigned long long)to_us(high),
-	       (unsigned long long)to_us(show_total / frames), over, speed / 10,
+	       (unsigned long long)to_us(show_total / n), over, speed / 10,
 	       speed % 10, late, missed);
 	printf("TinyNES NES VIDEO=%08lx AUDIO=%08lx\n", (unsigned long)video_crc,
 	       (unsigned long)audio_crc);

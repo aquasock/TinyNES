@@ -127,5 +127,10 @@ PY
         exit 1
     }
 
-sha256sum "$out/ae350_soc.fs"
-echo "Ready to SRAM load: $out/ae350_soc.fs"
+# One-wire SRAM loads take the text .fs; TinyTang's tangload in two-wire mode
+# takes the same bits packed eight to a byte as a .bin on the SD card.
+"$suite/py3bin/python3" "$root/tools/fs_to_bin.py" "$out/ae350_soc.fs" -o "$out/ae350_soc.bin" >/dev/null
+
+sha256sum "$out/ae350_soc.fs" "$out/ae350_soc.bin"
+echo "Ready to SRAM load (one-wire): $out/ae350_soc.fs"
+echo "Ready to tangload (two-wire):  $out/ae350_soc.bin"

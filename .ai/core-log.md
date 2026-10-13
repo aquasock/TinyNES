@@ -599,3 +599,39 @@ Make FCEUmm playable by feeding the pad registers into its input callbacks and r
 - User Test: PASS
 
 ---
+
+## 17 COMMIT Unreleased 2026-10-13T00:37:19-07:00
+
+#### Coming From:
+
+Unreleased ba2a269
+
+#### Purpose:
+
+Make FCEUmm playable with the Wii Classic Controllers and move deployment to two-wire mode, as the user directed, by loading the FPGA image with TinyTang's tangload and the AE350 programs through a new TinyTang pass-through.
+
+#### Outcome:
+
+At the user's direction `tools/build_ae350_soc.sh` now also writes `ae350_soc.bin`, packed by `tools/fs_to_bin.py`, which is TinyTang's MIT converter copied with credit; the rebuild reproduced the cycle-16 seed-3 `ae350_soc.fs` byte for byte as `4d1b27e8` and gave a 4,666,860-byte `.bin`, SHA-256 `ec3f0593f16be1748742510c9bb2c8b820ffd2edfc399b55e87af5d0c71e4bab`, exactly one eighth of its bits. The user declined a speed comparison with one-wire. TinyTang `9061ead`, its entry 46, adds the shell command `fpgapipe`, which passes the USB console through to the FPGA UART until the host drops DTR, and the BL616 was reflashed with it over two-wire and power-cycled. `tools/deploy_tinytang.sh` puts the `.bin` on the card with TinyTang's `tinytang_put.py`, turns the desk layer off so its frames do not reach the AE350's UART, and runs `tangload`, 17 s in all; `tools/load_ae350.py --tinytang` raises DTR, checks the console is at a prompt with the status probe, runs `fpgapipe` and then the unchanged load protocol, `--run-timeout 0` follows a program until it exits, and Ctrl-C closes cleanly. `nes_bench` built with `PLAY=1` into `build/firmware/apps/nes_play/` reads PMOD0 buses 1 and 2 as players 1 and 2 and runs until HOME and `-` are held; after the first run the user chose the Classic's B as the NES's A and Y as its B with A and X unused. The default benchmark's PC checksums were unchanged at `VIDEO=f2160661 AUDIO=b2bc0018`. On the board `rt_test` loaded through `fpgapipe` at 185.9 KB/s and passed, the shell answered at its prompt afterwards, and three play runs loaded at 186.5 KB/s and averaged 11.34 to 11.53 ms a frame, maximum 12.50 ms, with no frame over the period, `LATE=0`, `MISSED=0` and exit 0. The user played Castlevania on HDMI, called it perfect and confirmed every button. TOOL-022 and EMU-005 are new, and the README documents the two-wire flow, the `.bin` and the play build. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should propose sound output for user approval: FCEUmm already mixes 48 kHz samples inside the frame, about 4 ms of each frame is spare, and the output path, HDMI audio in `video.sv` or an I2S module on PMOD1 since PMOD0 now carries the controllers, needs its source recorded first. The second controller bus is untested on hardware, and the DEV-016 workaround and the stale Apicula test count remain open.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+- tools/build_ae350_soc.sh
+- tools/deploy_tinytang.sh
+- tools/fs_to_bin.py
+- tools/load_ae350.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

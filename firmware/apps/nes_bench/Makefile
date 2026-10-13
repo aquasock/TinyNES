@@ -9,6 +9,8 @@
 #   make ROM=<file.nes> host    the same program for this PC, in host/ there
 #
 # FRAMES=<n> and INPUT="<script>" replace the defaults in main.cpp.
+# PLAY=1 builds the playable version instead (AE350 only), with the Wii
+# Classic Controllers as players 1 and 2, in build/firmware/apps/nes_play/.
 # MCACHE=<mask> sets those mcache_ctl bits for the run (AE350 only), and
 # OPT=<flags> replaces -O2 (rt.mk); give such builds their own BUILD=<dir>.
 # The programs contain the core and are GPL-2.0 (third_party/fceumm/Copying);
@@ -33,7 +35,11 @@ LIB_SOURCES  := $(filter-out $(CORE_DIR)/drivers/libretro/libretro.c \
                              $(CORE_DIR)/drivers/libretro/libretro_dipswitch.c,$(SOURCES_C))
 LIB_CPPFLAGS := $(COREDEFINES) -DNDEBUG $(INCFLAGS)
 
-APP_DEFS := $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
+ifeq ($(PLAY),1)
+BUILD ?= $(abspath ../../../build/firmware/apps/nes_play)
+endif
+APP_DEFS := $(if $(filter 1,$(PLAY)),-DNES_PLAY) \
+            $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
             $(if $(INPUT),-DNES_INPUT='"$(INPUT)"') \
             $(if $(MCACHE),-DNES_MCACHE=$(MCACHE))
 CPPFLAGS += $(APP_DEFS)
