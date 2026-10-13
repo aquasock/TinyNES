@@ -920,3 +920,33 @@ Repeat the heat test to 55 to 60 C with the Wii controller on PMOD0 and the I2S2
 - User Test: PASS
 
 ---
+
+## 26 COMMIT Unreleased 2026-10-13T11:52:41-07:00
+
+#### Coming From:
+
+Unreleased 046c2f0
+
+#### Purpose:
+
+Correct the project-control records that read this project's HDMI fault as peculiar to TinyNES, after the user saw TinyTang's open-flow desktop image glitch while the board was hot, and re-check the source cited behind the HDMI pin record.
+
+#### Outcome:
+
+TinyTang's core-log entry 50 records that the user saw the card's open-flow desktop image glitch while the Tang was hot and recover on cooling, and TinyTang commit a6db9eb applies this project's temperature fix to that core as an unproven candidate, so `DEV-018` was revised in place: its statement no longer says the user's other cores never show the fault and instead names the desktop core's hot-board glitch, with nestang and Tang-Phosphor untested hot; its consequence moves the lead from TinyNES running its die hotter to the shared open-flow HDMI clocking margin itself, records that the desktop core now carries the same unbuilt fix, and keeps the Pmod heat test and the OSER10 reset's recovery failure against the serial clock open; a source citing TinyTang's `.ai/core-log.md` entry 50 and `fpga/desktop/desktop.cst` at `a6db9eb` was added, and the revision was noted in verification. `BRD-011`'s source citation to TinyTang's `fpga/desktop/desktop.cst` was re-read at `a6db9eb` and its TMDS pins are unchanged, which its verification now says. `TOOL-017` claimed nothing about the clock network needs changing for HDMI; that claim is now scoped to the dark-HDMI fault it was found for, since the later thermal fault required the HDMI PLL move and the CLKDIV's pinned site, and TinyTang's `a6db9eb` applies the same arrangement to the desktop core. The risk note in `docs/desk-layer-plan.md` said the HDMI loss was unexplained; it now names the serial clock's long general route and `DEV-018` as the cause cured in entry 25, leaving only the patterned glitch of entry 19 open. No build, deployment or hardware test applies to this cycle. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+Resume when the user requests it; the open work is unchanged. The heat test of the seed-10 image with the Wii controller on PMOD0 and the I2S2 on PMOD1 would close `DEV-018`, beside the OSER10 reset's recovery against the serial clock, the halved clean-seed rate, the startup sound FIFO overflow, the DEV-016 workaround and the stale Apicula test count. On the TinyTang side the desktop core's thermal fix is an unproven candidate, so a route that keeps its main `clk` on fabric with the pixel and serial clocks on valid HCLK resources has to be found before the card's desktop image is replaced.
+
+#### Files Modified:
+
+- docs/desk-layer-plan.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

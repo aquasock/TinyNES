@@ -103,7 +103,8 @@ TinyTang (`ae350run`):
 ## Risks
 
 - Two-clock block RAM (TOOL-020) is avoided by design but the new pixel-side
-  stores add placement pressure; the HDMI loss and patterned glitch recorded
-  in core-log entries 18 and 19 are still unexplained.
+  stores add placement pressure; the HDMI loss is now attributed to the serial
+  clock's long general route and cured in core-log entry 25 (DEV-018), while the
+  patterned glitch recorded in core-log entry 19 is still unexplained.
 - Getting the hand-over between loader and link mode wrong loses desk frames
   or corrupts a program load; the boot ROM must always return to loader mode.
