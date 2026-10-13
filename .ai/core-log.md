@@ -715,3 +715,33 @@ The next cycle should be proposed to the user; open items are the patterned glit
 - User Test: PASS
 
 ---
+
+## 20 COMMIT Unreleased 2026-10-13T02:16:00-07:00
+
+#### Coming From:
+
+Unreleased 97dcd60
+
+#### Purpose:
+
+Record, for an agent handoff, the investigation and the design for swapping between TinyDesk and a running NES game with a tap of HOME or F12, which the user asked for as the next cycle.
+
+#### Outcome:
+
+The user asked that one tap of HOME on the Wii controller or F12 swap the picture between TinyDesk and the NES game. TinyTang draws TinyDesk inside the FPGA core with its desk-layer frames, which the TinyNES core does not carry, so two options were put to the user: giving the TinyNES core its own desk layer (A) or swapping cores with an FCEUmm save state, 10 to 15 s a swap (B). The user chose A, confirmed it is how TinyTang's patched nestang core works, and asked that the game keep running behind the desktop as nestang's does. Reading TinyTang `121d334` showed that its F12 handling flips the overlay, that its desk task also flips it on a rising edge of LB (`0x400`) in a core's `0x03` joypad report and drives the desktop pointer from the same word, so a TinyNES core that reports the Wii pad that way with a HOME tap as LB needs no TinyTang change for either toggle; the cell format and frames are recorded as PROT-010. TinyTang's desk-layer HDL and nestang's font are GPL-3.0-only, so TinyNES must write its own. The resulting design, a loader and link mode for UART1 so program images never reach the frame parser, a frame parser answering core ID `0x4E`, a joypad and framed-text sender, an 80x45 layer and public-domain font held on the pixel clock, the player setting link mode after its cartridge and gating its input while the overlay is up, and `ae350run` handing over the UART on `TinyNES LINK`, is in `docs/desk-layer-plan.md`. It was presented to the user, who asked for this handoff before confirming it; nothing was built or deployed. The core-syntax audit passed.
+
+#### Next Steps:
+
+Present the design in `docs/desk-layer-plan.md` to the user for approval and, if approved, implement it as one cycle across TinyNES and TinyTang with its simulations, a seed sweep with `NPNR_GOWIN_CLK_FIRST` enforced, and the board tests the document lists; the HDMI loss and patterned glitch of entries 18 and 19 remain open.
+
+#### Files Modified:
+
+- docs/desk-layer-plan.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

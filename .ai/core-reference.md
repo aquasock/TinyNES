@@ -218,6 +218,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Why can a ROM load end in a black screen with no error? | PROT | PROT-007 |
 | What shows on screen between a core loading and the desktop painting? | PROT | PROT-008 |
 | Why are there marks down the left edge of the desktop layer? | PROT | PROT-009 |
+| Which frames draw TinyDesk's layer on a core, and how does the BL616 toggle it from a controller? | PROT | PROT-010 |
 | Why can't a modern keyboard work on the USB-A ports? | NEST | NEST-001, NEST-002 |
 | How does Tang-Control draw and navigate its OSD? | TCTL | TCTL-001 |
 | How does Tang-Control configure the OTG connector? | TCTL | TCTL-002 |
@@ -375,6 +376,7 @@ PROT-006: "The core sends its joypad state as response 0x03 every 20 ms when it 
 PROT-007: "A ROM stream into a core that is not running is discarded with no error on either side and surfaces as a black screen; the fpga ID probe between the loads is the only detection"
 PROT-008: "A loaded core comes out of reset with the overlay asserted, and while the desktop's wide layer is still disabled the compositor shows the core's legacy 32x28 text page instead - whose store, gowin_dpb_menu.v, is never initialised, so its power-on contents are what appears; the font is initialised, which is why the garbage reads as glyphs; osd clear blanks the page (28 rows of 32 spaces) and is issued after the fpga probe in boot.tdsh and boot-cart.tdsh"
 PROT-009: "hdmi.sv's cx/cy name the pixel sent on the next clock and the stock rgb path is one register deep to match; the wide layer's deeper pipeline must address the store that many pixels ahead, wrapping at frame_width, or pixels 0-2 of each line show the previous line's blanking, which reads cell 0, and cell (0,0)'s glyph column is painted down the left edge"
+PROT-010: "TinyTang draws its desk layer with 0x13 x y (cursor), 0x14 cells of 5 bytes (7-bit ASCII, then big-endian 15-bit {b,g,r} foreground and background) and 0x15 bit 0 (enable), shown only with the overlay 0x08 on; F12 flips the overlay, and so does a rising edge of LB 0x400 in the core's joypad report 0x03, whose word also drives the desktop pointer"
 NEST-001: "nestang's FPGA USB host is low-speed only, 1.5 Mbps, on two GPIO wires with external 15K pull-downs and a 12 MHz clock; its signalling engine is a 1072-byte ROM program"
 NEST-002: "nestang wires only .game_snes from the FPGA host; the keyboard outputs key_modifiers and key1..key4 are unconnected, so a keyboard enumerates and is discarded"
 TCTL-001: "Tang-Control's OSD is the BL616's work: overlay_cursor and overlay_printf are commands 0x04 and 0x05, and navigation is literal bit tests on the joypad word"
@@ -1330,6 +1332,19 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "third_party/patches/0002-desktop-text-layer.patch: the original three-stage textdisp_wide addressed by cx"
     - "third_party/patches/0007-wide-layer-alignment.patch: the look-ahead and registered address"
   verification: "Seen on this board on 2026-10-04: dashes at the left edge in the top-left cell's colour, green with 'r' at cell (0,0), absent once help scrolled a line starting with a space into row 0, and white after a reboot with 'b' of 'boot:' there, matching that glyph's column-0 rows 0 and 6 in a photograph. The streamed testbench failed 445264 of 922881 visible pixels on the old module and passes all of them on the fixed one, and fails again with the look-ahead off by one. With 0007 deployed the user reports the left edge clean with 'r' at cell (0,0) and again after a reboot."
+
+- record_id: PROT-010
+  kind: EXTERNAL
+  topic_id: PROT
+  title: "TinyTang's desk layer frames, and the controller and F12 toggles a core must support"
+  status: SOURCED
+  verified_date: 2026-10-13
+  statement: "TinyTang's firmware draws TinyDesk on a core that carries the desk layer with three frames in the 0xAA format of PROT-001: 0x13 x y moves the layer's write cursor; 0x14 writes cells from the cursor, advancing across the 80x45 grid, 5 bytes a cell: the character's low 7 bits (box-drawing characters are mapped to ASCII by td_ascii_fallback before sending), then the foreground and the background, each a big-endian 16-bit word holding 15-bit {b[4:0], g[4:0], r[4:0]}; 0x15 b, bit 0 enabling the layer. The layer shows only while the overlay, 0x08 bit 0, is also on, and then replaces the whole picture. F12 on a keyboard flips the overlay (tang_osd_toggle). The desk task also reads the core's unprompted joypad report, frame 0x03 with two big-endian 16-bit words, and flips the overlay on a rising edge of LB (0x400) in the first word; while the desktop is shown, the same word moves the desktop pointer with up 0x010, down 0x020, left 0x040 and right 0x080 and clicks with A 0x100 and B 0x001. After tangload the firmware asks the new core for its ID (0x01, answered 0x01 <id>), sends PMOD declarations through the 0x10 register protocol only to IDs 0x50 and 0x54, and resends the layer enable a few times."
+  consequence: "This is the contract docs/desk-layer-plan.md builds on to show TinyDesk over a running game on the TinyNES core: the core must parse those frames, answer the ID with an ID other than 0x50 and 0x54, and send the Wii pad as the 0x03 word with a HOME tap as LB; TinyTang needs no change for the toggles. TinyTang's own implementations (fpga/desktop/textdisp_wide.sv, desktop_link.v) and nestang's font are GPL-3.0-only, so TinyNES writes its own."
+  sources:
+    - "aquasock/TinyTang 121d334: ports/bl616/tang_fpga_link.h (FPGA_CMD_*), tang_osd_desk.c (send_cursor, send_cells, flush_row, bgr5, desk_poll pad_toggle, tang_osd_desk_set, tang_osd_desk_core_reloaded), tang_pad.h (TANG_PAD_*), fpga_frames.c (FPGA_RESP_JOYPAD), phosphor/pmod_sockets.cpp (s_socket_cores)"
+    - "aquasock/TinyTang third_party/patches/README.md, 0003-desktop-layer-wiring.patch: the layer shown only with the overlay"
+  verification: "Read from the source on 2026-10-13 (core-log entry 20); not yet exercised against a TinyNES core."
 
 - record_id: NEST-001
   kind: EXTERNAL
