@@ -680,3 +680,38 @@ If the HDMI loss returns, the next cycle should first run the board with the I2S
 - User Test: PASS
 
 ---
+
+## 19 COMMIT Unreleased 2026-10-13T02:06:43-07:00
+
+#### Coming From:
+
+Unreleased 710d52e
+
+#### Purpose:
+
+Make a `.nes` file opened on TinyTang's desktop play on TinyNES and return to the desktop, as the user approved, with the play build taking its cartridge from the card instead of having one built in.
+
+#### Outcome:
+
+`firmware/apps/nes_bench/main.cpp` built with `PLAY=1` no longer links a cartridge: it allocates a 2 MiB buffer, prints `TinyNES WANT <address> <bytes>` and receives one more image in the load protocol through the boot ROM's own `firmware/boot/load.c`, compiled into the program unchanged, holding `TNR1`, the length and the `.nes` file, and fails with `TinyNES NES BAD CART` if none arrives in 30 s. `tools/load_ae350.py --file` answers that request, and from the PC it sent Castlevania (USA) (Rev A) in 0.71 s and the game started with good video and audio. TinyTang `121d334` (its entry 48) adds `ae350run`, which does the same from the card, and a TinyDesk rule that runs `/root/scripts/open/<ext>.tdsh` with `FILE` set for an opened file. `scripts/open/nes.tdsh` loads the core, runs `ae350run /root/ae350/tinynes-play.elf "$FILE"` and reloads the desktop core, and `tools/deploy_tinytang.sh` now installs the player stripped of debug sections, 840,516 bytes with SHA-256 `414aa0530c2d440e595ae57cc5405f7016b028579a259463bec64e371876e303`, and the script beside the unchanged seed-12 image `2cbcc063`, and no longer turns the desk layer off, which had left the screen blank after the first test's return until the user typed. Started from the shell, the launcher loaded the 625,292-byte player and Castlevania (USA) (Rev 1) from `/root/data/nes`, CRC `12a6cb14`, which ran 2,400 frames at 156.8 percent with `LATE=0`, `MISSED=0`, no underrun or drop, exited 0 and returned to the desktop core; the user then double-clicked a `.nes` file on the desktop, played, returned to the desktop and passed the cycle. The default benchmark and PC builds are unchanged. During the cycle the user saw the picture and sound turn glitchy, with a repeating pattern, after a PC-driven run whose tool had closed the port while the game kept running; the cause is not investigated and it is recorded with the HDMI fault of entry 18. TOOL-022 and EMU-005 are revised and the README describes the cartridge request, `--file` and playing from the desktop. The core-syntax audit passed.
+
+#### Next Steps:
+
+The next cycle should be proposed to the user; open items are the patterned glitch and the HDMI loss of entry 18, which should first be tried with the I2S2 removed and with another seed, battery saves to the card, player 2, and the 30-second cartridge wait and 300-second silence limit if a slow card or a quiet program ever trips them.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+- scripts/open/nes.tdsh
+- tools/deploy_tinytang.sh
+- tools/load_ae350.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

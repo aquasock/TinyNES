@@ -7,17 +7,25 @@
 #
 #   make ROM=<file.nes>         AE350 program, build/firmware/apps/nes_bench/
 #   make ROM=<file.nes> host    the same program for this PC, in host/ there
+#   make PLAY=1                 the playable program, build/firmware/apps/nes_play/
 #
 # FRAMES=<n> and INPUT="<script>" replace the defaults in main.cpp.
 # PLAY=1 builds the playable version instead (AE350 only), with the Wii
-# Classic Controllers as players 1 and 2, in build/firmware/apps/nes_play/.
+# Classic Controllers as players 1 and 2 and the sound on the I2S2; it has
+# no cartridge built in and takes one over the UART when it starts.
 # MCACHE=<mask> sets those mcache_ctl bits for the run (AE350 only), and
 # OPT=<flags> replaces -O2 (rt.mk); give such builds their own BUILD=<dir>.
 # The programs contain the core and are GPL-2.0 (third_party/fceumm/Copying);
 # with the cartridge image built in they are for local use only.
 
 APP     := nes_bench
+ifeq ($(PLAY),1)
+# The boot ROM's receiver, unchanged, takes the cartridge.
+SOURCES := main.cpp ../../boot/load.c
+CPPFLAGS += -I../../boot
+else
 SOURCES := main.cpp rom.S
+endif
 
 FCEU_DIR := $(abspath ../../../third_party/fceumm)
 ifeq ($(wildcard $(FCEU_DIR)/Makefile.common),)
@@ -49,8 +57,10 @@ CPPFLAGS += $(APP_DEFS)
 
 include ../../rt/rt.mk
 
+ifneq ($(PLAY),1)
 ASFLAGS += -DNES_ROM_FILE='"$(BUILD)/rom.nes"'
 $(call objects,rom.S): $(BUILD)/rom.nes
+endif
 
 # Copied so that the image path may hold spaces, and only when it changes.
 $(BUILD)/rom.nes: FORCE

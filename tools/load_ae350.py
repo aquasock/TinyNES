@@ -8,6 +8,10 @@ prints the program's output until it exits. Fails if the ROM or the program
 prints a line starting with BAD, the ROM reports NOBOOT, the program exits
 with a nonzero code, or an --expect prefix never appears.
 
+A program that prints "TinyNES WANT <address> <bytes>" is sent --file the
+same way, as a second image at that address holding "TNR1", the file's
+length and the file (nes_bench's PLAY=1 build takes its cartridge so).
+
 In one-wire mode the port is the debug bridge's FPGA UART, /dev/ttyUSB1. In
 two-wire mode, --tinytang, the port is TinyTang's USB console: the board is
 asked whether its shell is at a prompt, and its `fpgapipe` command then
@@ -41,6 +45,7 @@ PT_LOAD = 1
 EM_RISCV = 243
 # TinyTang's console status probe and its reply; 1 is the shell prompt
 # (TinyTang ports/bl616/tdsh_bl616.h).
+FILE_MAGIC = b"TNR1"
 PROBE = b"\x1b[?77n"
 PROBE_REPLY = re.compile(rb"\x1b\[\?77;(\d+)n")
 
@@ -183,12 +188,19 @@ def main():
     parser.add_argument("--run-timeout", type=float, default=30.0,
                         help="seconds the program may run; 0 for no limit")
     parser.add_argument("--retries", type=int, default=5)
+    parser.add_argument("--file", help="sent when the program asks for one "
+                        "with a TinyNES WANT line")
     parser.add_argument("--expect", action="append", default=[],
                         help="an output line must start with this; repeatable")
     args = parser.parse_args()
 
     try:
         base, image, entry = read_image(args.elf)
+        payload = None
+        if args.file:
+            with open(args.file, "rb") as f:
+                data = f.read()
+            payload = FILE_MAGIC + struct.pack("<I", len(data)) + data
     except (OSError, LoadError) as error:
         print(f"FAIL: {error}")
         return 1
@@ -217,6 +229,20 @@ def main():
         for line in board.lines(time.monotonic() + run_limit):
             print(line.decode("ascii", "replace"))
             board.check_line(line)
+            if line.startswith(b"TinyNES WANT "):
+                if payload is None:
+                    raise LoadError("the program wants a file; give --file")
+                fields = line.split()
+                address, room = int(fields[2], 16), int(fields[3], 16)
+                if len(payload) > room:
+                    raise LoadError(f"{args.file}: {len(payload)} bytes, "
+                                    f"room for {room}")
+                start = time.monotonic()
+                load(board, address, payload, address, args.retries)
+                seconds = time.monotonic() - start
+                print(f"sent {len(payload)} bytes at {address:#x} in "
+                      f"{seconds:.2f} s")
+                continue
             expected = [p for p in expected if not line.startswith(p)]
             if line.startswith(b"TinyNES EXIT "):
                 code = line.split()[2].decode()

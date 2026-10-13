@@ -37,7 +37,13 @@
 // over the average frame time. On the PC, NES_DUMP=<dir> in the environment
 // also saves the CHECK frames there as <frame>.ppm.
 //
-// Built with PLAY=1 (AE350 only) it is a playable NES instead: the Wii
+// Built with PLAY=1 (AE350 only) it is a playable NES instead. It takes its
+// cartridge at start: it prints
+//   TinyNES WANT <address> <bytes>
+// and receives one more image in the boot ROM's load protocol
+// (firmware/boot/load.c, tinynes.h) at that address, holding "TNR1", the
+// cartridge's length and the .nes file, from tools/load_ae350.py --file or
+// TinyTang's ae350run. The Wii
 // Classic Controllers on PMOD0's first two buses (fpga/ae350_soc/wii_pads.sv)
 // are players 1 and 2 in place of the script, the game runs until HOME and
 // SELECT are held together on either controller, and the report lines come
@@ -166,7 +172,16 @@ void FCEUD_DispMessage(int, unsigned, const char *s) { printf("fceumm %s\n", s);
 	"1400+4=b 1500+4=b 1600+4=a 1700+4=b"
 #endif
 
+#ifdef NES_PLAY
+extern "C" {
+#include "load.h"
+}
+// The largest cartridge taken, and the payload's magic, "TNR1".
+const size_t CART_MAX = 2u << 20;
+const uint32_t CART_MAGIC = 0x31524e54u;
+#else
 extern "C" const unsigned char nes_rom[], nes_rom_end[];
+#endif
 
 namespace {
 
@@ -431,9 +446,44 @@ extern "C" void FCEUD_SetPalette(uint16_t index, uint8_t r, uint8_t g, uint8_t b
 #endif
 }
 
+#ifdef NES_PLAY
+// Ask for the cartridge and receive it into the heap; its bytes and length,
+// or nullptr if none came within 30 seconds or it was malformed.
+const uint8_t *receive_cart(size_t &size)
+{
+	uint8_t *buffer = static_cast<uint8_t *>(malloc(CART_MAX + 8));
+	if (!buffer)
+		return nullptr;
+	printf("TinyNES WANT %08lx %08lx\n", (unsigned long)(uintptr_t)buffer,
+	       (unsigned long)(CART_MAX + 8));
+	fflush(stdout);
+	tn_load_reset();
+	uint32_t got = 0;
+	for (int second = 0; second < 30 && !got; second++)
+		got = tn_load_poll(TN_CORE_HZ);
+	uint32_t magic, length;
+	memcpy(&magic, buffer, 4);
+	memcpy(&length, buffer + 4, 4);
+	if (got != (uintptr_t)buffer || magic != CART_MAGIC || length == 0 ||
+	    length > CART_MAX)
+		return nullptr;
+	size = length;
+	return buffer + 8;
+}
+#endif
+
 int main()
 {
+#ifdef NES_PLAY
+	size_t rom_size = 0;
+	const uint8_t *const nes_rom = receive_cart(rom_size);
+	if (!nes_rom) {
+		printf("TinyNES NES BAD CART\n");
+		return 1;
+	}
+#else
 	const size_t rom_size = (size_t)(nes_rom_end - nes_rom);
+#endif
 	const unsigned frames = NES_FRAMES;
 	const uint64_t budget = (uint64_t)((double)tick_hz / NES_FPS);
 

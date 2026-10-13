@@ -270,8 +270,10 @@ In two-wire mode the BL616 runs TinyTang and holds the FPGA UART, so both
 the image and the programs go through it. `tools/deploy_tinytang.sh` puts
 `build/ae350_soc/ae350_soc.bin` on the SD card as
 `/root/cores/console138k/tinynes.bin` with TinyTang's `tinytang_put.py` and loads
-it with `tangload`, after turning the desk layer off so its display frames
-do not reach the AE350's UART. `load_ae350.py --tinytang` then uses
+it with `tangload`, and also installs the NES player and its launcher (see
+*Playing from the desktop*). It leaves the desk layer as it is: whatever
+talks to the AE350 holds the UART meanwhile, and the boot ROM's loader skips
+any display frames the layer sent in between. `load_ae350.py --tinytang` then uses
 TinyTang's USB console, `/dev/ttyACM0`: it checks the shell is at a prompt
 with the console status probe and runs TinyTang's `fpgapipe`, which passes
 the console's bytes to the FPGA UART and back unchanged until the tool
@@ -390,7 +392,12 @@ build/firmware/apps/nes_bench/host/nes_bench
 ```
 
 `PLAY=1` builds the playable version into
-`build/firmware/apps/nes_play/` (AE350 only). The Wii Classic Controllers on
+`build/firmware/apps/nes_play/` (AE350 only). It has no cartridge built in:
+it prints `TinyNES WANT <address> <bytes>` and takes one more image in the
+load protocol at that address, `TNR1`, the cartridge's length and the `.nes`
+file, received by the boot ROM's own `firmware/boot/load.c` compiled into it,
+into a 2 MiB buffer. `load_ae350.py --file <rom>` answers it, as TinyTang's
+`ae350run` does on the board. The Wii Classic Controllers on
 PMOD0's first two buses are players 1 and 2: the D-pad or the left stick
 for the directions, B for the NES's A, Y for its B, `-` for Select and `+`
 for Start; A and X do nothing. A controller that is absent or not a Classic reads as
@@ -406,12 +413,31 @@ samples, the FIFO level range, the corrections and the time to send a
 frame's sound, and the program fails on any underrun or drop:
 
 ```sh
-make -C firmware/apps/nes_bench ROM=<file.nes> PLAY=1
-python3 tools/load_ae350.py --tinytang build/firmware/apps/nes_play/nes_bench.elf --run-timeout 0
+make -C firmware/apps/nes_bench PLAY=1
+python3 tools/load_ae350.py --tinytang build/firmware/apps/nes_play/nes_bench.elf \
+  --file <file.nes> --run-timeout 0
 ```
 
-The programs contain the core and the cartridge image, so they are GPL builds
-for local use only and stay in `build/`. `MCACHE=<mask>` builds a program
+### Playing from the desktop
+
+With no PC attached, a `.nes` file opened in TinyDesk's Files app or on its
+desktop plays. TinyTang runs `/root/scripts/open/<ext>.tdsh` for an opened
+file whose extension has one, with `FILE` set to its path, and
+`scripts/open/nes.tdsh` loads the TinyNES core, runs TinyTang's
+`ae350run /root/ae350/tinynes-play.elf "$FILE"`, which sends the player and
+then the cartridge from the card, follows the game to its end (HOME and `-`)
+and loads the desktop core again. `tools/deploy_tinytang.sh` installs the
+player without its debug sections (about 840 KB) and the script. A launch
+takes about ten seconds: the core, the 625 KB player at the link's 186 KB/s,
+and the cartridge. From the shell:
+
+```sh
+FILE="/root/data/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/open/nes.tdsh
+```
+
+The programs contain the core, and the benchmark also the cartridge image,
+so they are GPL builds for local use only: they stay in `build/` and, for the
+player, on the user's own card. `MCACHE=<mask>` builds a program
 that sets those `mcache_ctl` bits for its run, and `OPT=<flags>` replaces
 `-O2` (an `rt.mk` setting); such builds want their own `BUILD=<dir>`.
 
