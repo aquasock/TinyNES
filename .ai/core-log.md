@@ -980,3 +980,33 @@ DEV-018 is closed, so the next cycle should be proposed to the user from what re
 - User Test: PASS
 
 ---
+
+## 28 COMMIT Unreleased 2026-10-13T15:53:20-07:00
+
+#### Coming From:
+
+Unreleased 75afcf5
+
+#### Purpose:
+
+Carry TinyTang core-log entry 52 into this project's records: the desktop core's thermal fix is validated with its main PLL on the measured-good clock-plane wire, and the shared build recipe is recorded as not reproducing the card's image.
+
+#### Outcome:
+
+TinyTang's core-log entry 52 records that the card's desktop image came up distorted on a hot boot at about 55 C, that moving its main PLL from PLL_L[0] to PLL_R[0] puts `clk` onto the measured-good clock-plane wire TRPLL0CLK0 instead of the dead TLPLL0CLK0, and that the user then held the desktop picture clean to 60.4 C. Three records here were revised from it. `DEV-018` recorded the desktop core as carrying the same fix unproven; it now records the fix as proven on that board, naming TinyTang commit 9f3ddfb and the two temperatures. `DEV-009` gained the other half of its rule, in consequence and as a revision: a left-side PLL's plane wire is entered by the router and leaves the core dead, while the right side's TRPLL0CLK0 runs the same core. `TOOL-017`, this project's carried copy of the desktop core's record, now states the validated fix and adds that its own build recipe does not reproduce the card's image, because apycula's chipdb is an untracked build product and nothing on this machine regenerates the 2026-10-11 database; the evidence is that an era-matched rebuild, the fork at 93761f4 with that era's own nextpnr, gives `keyboard_link.clk` at 119.29 MHz against the recorded 145.69 and routes `clk` on global resources. That finding is what this project's entries 26 and 27 turned on, and it is now recorded where the desktop core's build is described. No build, deployment or hardware test applies to this cycle. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+Nothing is outstanding here; the desktop core's remaining work is TinyTang's, chiefly promoting the tested image to the card's desktop.bin and pinning or vendoring the chipdb so a build of record can be rebuilt. This project's own open work is unchanged: the OSER10 reset's recovery against the serial clock, the halved clean-seed rate, the startup sound FIFO overflow, the patterned glitch of entry 19, the DEV-016 workaround and the stale Apicula test count.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
