@@ -793,3 +793,35 @@ The next cycle should be proposed to the user; open items are the halved clean-s
 - User Test: PASS
 
 ---
+
+## 22 COMMIT Unreleased 2026-10-13T09:32:40-07:00
+
+#### Coming From:
+
+Unreleased 838f2ed
+
+#### Purpose:
+
+Find where in the video path the intermittent HDMI lines and signal loss that the user sees only on TinyNES arise, as the user approved, with a diagnostic player and no change to the FPGA image.
+
+#### Outcome:
+
+`firmware/apps/nes_bench/main.cpp` built with `PLAY=1 DIAG=1` (new in its Makefile, into `build/firmware/apps/nes_diag/`) plays as the normal player and, since the A25's cycle counter and the pixel clock both come from the 50 MHz oscillator, timestamps every vertical blank it sees while waiting and checks each period against 12,500,000 core cycles, compares the video unit's `PIXELS` and `BITS` with its own count of each frame it handed over, and prints a summary each second and a line at once for each press of X or Start on a controller; the normal player is unchanged, 562,248 bytes of code as before. The user reported that TinyTang's open-flow `desktop.bin`, nestang and Tang-Phosphor never show the fault on the same monitor and cable, that it happens with only a power cable as well as with the PC attached, perhaps 10 to 20 percent more with the PC, and that sound stays clean. On the seed-5 image of entry 21, loaded by the agent in two-wire mode with Castlevania (USA) (Rev 1), a 559 s session of 33,841 frames ran with the user marking lines with X at 88 to 117 s and reporting flicker and instability on a paused frame at about 143 s that cleared during the pause, and through it every period was 12,500,000 cycles within plus or minus 100, all 33,825 checked frames matched `PIXELS` and `BITS`, and `LATE`, `MISSED`, underruns and drops were 0; the program exited 0 at 141.5 percent speed. So the SDRAM, the line buffers, the pixel counters and the pixel clock's frequency and lock as seen per frame are ruled out, and the fault lies after the pixel stage. The routed design shows the 371.25 MHz serial clock crossing the die from `hdmi_pll` at PLL_L[3] on 23 E8 hops of general routing into the right side's HCLK, the serialisers' PCLK on global branch GB20, and the clock lane driven straight from `pix_clk`; a cooling test was not conclusive. The user asked whether the board has a temperature sensor: none is on record, and the FPGA's on-die ADCs, which have a temperature mode, cannot yet be configured by the open flow (DEV-019). DEV-018 records the defect and what is ruled out, and the README describes the diagnostic build. The core-syntax audit passed.
+
+#### Next Steps:
+
+The user will run a heating and cooling test with a contact sensor on the FPGA under the diagnostic player; then the proposed fix cycle compares the routed HDMI clocks of TinyTang's fault-free open-flow desktop core with TinyNES's, changes TinyNES's serialiser clocking to match or to the vendor's arrangement, and checks each candidate in long sessions with the diagnostic player while the user watches.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

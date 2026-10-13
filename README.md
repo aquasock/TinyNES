@@ -435,6 +435,28 @@ and the cartridge. From the shell:
 FILE="/root/data/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/open/nes.tdsh
 ```
 
+### Diagnosing the HDMI picture
+
+`make -C firmware/apps/nes_bench PLAY=1 DIAG=1` builds the player into
+`build/firmware/apps/nes_diag/` with checks of the video path that run while
+the game is played. The A25's cycle counter and the pixel clock both come
+from the 50 MHz oscillator, so every 1650x750 frame is exactly 12,500,000
+core cycles; the player timestamps each vertical blank it sees while waiting
+for a frame to be shown and checks the period. It also counts the non-zero
+pixels and the bits seen 1 and 0 of each frame it hands over and compares
+them with the video unit's `PIXELS` and `BITS` for that frame. Once a second
+it prints a `TinyNES DIAG S=` line with the frames, vertical blanks, period
+extremes, odd periods, matched and mismatched frames, late lines, missed
+frames, the slowest frame, the sound FIFO's range, underruns, drops and the
+link status, and at once a `MARK` line for each press of X on a controller
+and a `START` line for each Start, so faults seen on the screen can be marked
+in the log. Run it from the PC with the log kept:
+
+```sh
+python3 -u tools/load_ae350.py --tinytang build/firmware/apps/nes_diag/nes_bench.elf \
+  --file "<cartridge.nes>" --run-timeout 0 | tee build/diag/session.log
+```
+
 ### TinyDesk over a running game
 
 Once the player has its cartridge it prints `TinyNES LINK` and sets bit 0

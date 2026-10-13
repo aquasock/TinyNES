@@ -153,6 +153,8 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | How are the AE350's bus ports timed in the open flow? | DEV | DEV-015 |
 | Why does an open-flow AE350 image not boot when its placement changes, and what is NPNR_GOWIN_CLK_FIRST? | DEV | DEV-016 |
 | Why do flip-flops on one clock hold 0 in some placements, and how must an HCLK CLKDIV clock enter the clock plane? | DEV | DEV-017 |
+| Why does the TinyNES HDMI picture show thin lines and then lose signal, and what has been ruled out? | DEV | DEV-018 |
+| Does the FPGA have a temperature sensor, and can the open flow read it? | DEV | DEV-019 |
 | Is there a core with no emulator for TinyDesk to sit on? | DEV | DEV-005 |
 | Which FPGA pins are the JTAG programmer's? | BRD | BRD-001 |
 | Why does the SD card fail to mount? | BRD | BRD-002 |
@@ -331,6 +333,8 @@ DEV-014: "U-Boot names Andes mcache_ctl bits 9 and 10 as I- and D-cache prefetch
 DEV-015: "Gowin's timing analyser charges the AE350 AHB ports setups of -1.681 to 0.125 ns, holds to 0.094 ns and clock-to-out up to 1.859 ns; the Apicula and nextpnr forks now carry them as an AE350_SOC timing variant"
 DEV-016: "Open-flow AE350 images whose bus clock reaches the A25's row-0 taps through global branch GB20 do not boot, through GB10 they do; the build routes bus_clk first with a temporary nextpnr knob to keep it on GB10"
 DEV-017: "Clock-bridge pips (27,94) SPINE17 <= CBRIDGEOUT_BOTTOM0 and SPINE18 <= CBRIDGEOUT_BOTTOM2 clock nothing, SPINE26 <= CBRIDGEOUT_BOTTOM2 at (27,96) and (81,96) works; an HCLK CLKDIV enters at (54,88) SPINE18 (its TOP entry is dead); fork cd3893f and a build check enforce it"
+DEV-018: "Open defect: TinyNES's HDMI shows thin horizontal lines, then flicker and signal loss, intermittently and only on TinyNES; during it the frame period (12,500,000 core cycles +-100), PIXELS and BITS of every frame, LATE, MISSED and the audio FIFO were all correct, so the fault is after the pixel stage: palette, TMDS encoder, OSER10s and their clocks, pins"
+DEV-019: "The GW5AST-138C has two on-die ADCs, ADCLRC and ADCULC, with a temperature mode (ADCVALUE / 4 in degrees C); the aquasock Apicula fork places and routes them but cannot configure them, so the open flow cannot read the temperature yet"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
 BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
@@ -709,6 +713,32 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "Routed nextpnr JSON and Apicula-decoded bitstreams of the TinyNES ae350_soc seeds named (build/sweep_bits), and a Gowin IDE 1.9.11.03 build of the HDMI clock chain with 23 pinned flip-flops, decoded with gowin_unpack (TOOL-021)"
     - "This project's tools/build_ae350_soc.sh (pixel clock bridge check), fpga/ae350_soc/video.sv (BITS and PIXELS registers)"
   verification: "Measured on this board on 2026-10-12 (core-log entry 14) with agent-run SRAM loads in one-wire mode: the video unit's BITS register and video_test's PIXELS check, read over the UART, gave the stuck bits of every seed, and the user watched each picture on a monitor; a sweep with the TOP entry was dead on all 8 seeds, and the sweep with the fork at cd3893f passed on all 8 and on the unseeded image."
+
+- record_id: DEV-018
+  kind: DEVICE
+  topic_id: DEV
+  title: "Open defect: TinyNES's HDMI picture shows thin horizontal lines and loses signal, with the picture data and frame timing correct inside the FPGA"
+  status: INFERRED
+  verified_date: 2026-10-13
+  statement: "On TinyNES images since core-log entry 18, and on none of the user's other cores on the same monitor and cable (TinyTang's open-flow desktop.bin, nestang and Tang-Phosphor built with Gowin EDA), the HDMI picture intermittently shows thin horizontal lines of distortion and then flickers or cuts out, after anything from seconds to minutes, clearing by itself; it happens with only a USB-C power cable attached as well as with the PC driving the board, the user judging it 10 to 20 percent more frequent with the PC. Sound is unaffected. In a 559 s session of the seed-5 image (ae350_soc.bin a9cd9a78) with nes_bench's PLAY=1 DIAG=1 player, the user marked lines with X at 88 to 117 s and reported flicker and instability on a paused, still frame at about 143 s, which cleared during the pause; throughout, all 33,825 checked frames had PIXELS and BITS equal to the player's own count of the frame it handed over, every vertical-blank period measured against mcycle was 12,500,000 core cycles within +-100 (the polling), and LATE, MISSED, audio underruns and drops were 0. In that image the 371.25 MHz serial clock pix_clk5 runs from hdmi_pll at PLL_L[3] (X1Y81) across the die on 23 E8 hops of general routing to X181Y81's HCLK and the OSER10s' FCLK, the OSER10s' PCLK is pix_clk on global branch GB20 (the route DEV-017 forces), and the TMDS clock lane is pix_clk driven straight into its ELVDS_OBUF rather than through an OSER10."
+  consequence: "The SDRAM and its video channel, the line buffers, the pixel counters, the pixel clock's frequency and lock as seen per frame, and frame timing are ruled out; the fault is in the palette lookup, the TMDS encoder, the OSER10s and their FCLK and PCLK, or the pins. Lead, not finding: the FCLK and PCLK paths differ in kind and length, so their phase at the OSER10s depends on placement, temperature and supply noise; TinyTang's desktop core uses the same PLL sites without the fault, so its routed clocks are the comparison to make. A cooling test was not conclusive: the flicker cleared before air was applied. nes_bench's DIAG=1 build is the instrument for any change."
+  sources:
+    - "This project's firmware/apps/nes_bench/main.cpp (NES_DIAG: diag_wait, diag_edge, frame_sum) and the session log build/diag/session1.log (not committed)"
+    - "Routed nextpnr JSON of the seed-5 image (build/ae350_soc/ae350_soc-routed.json): ROUTING of pix_clk5 and pix_clk, NEXTPNR_BEL of hdmi_pll, pix_div and hdmi_ser[0..2]"
+  verification: "Observed on this board on 2026-10-13 (core-log entry 22), the user watching HDMI and marking the faults with the controller's X button while the player logged over two-wire. INFERRED: the location after the pixel stage follows from the checks that stayed clean; the cause is not found."
+
+- record_id: DEV-019
+  kind: DEVICE
+  topic_id: DEV
+  title: "The GW5AST-138C's on-die ADCs have a temperature mode, which the open flow cannot configure yet"
+  status: SOURCED
+  verified_date: 2026-10-13
+  statement: "Yosys's GW5A cell library declares ADCLRC and ADCULC, each with VSENCTL selecting the source (on ADCLRC 1 is adct, the temperature sensor), FSCAL_VALUE and OFFSET_VALUE calibration inputs with typical temperature-mode values 730 and -1180, ADCEN, CLK, DRSTN, ADCREQI and outputs ADCRDY and a signed 14-bit ADCVALUE, of which ADCVALUE / 4 is the temperature in degrees C in temperature mode. The aquasock Apicula fork at cd3893f places both on the GW5AST-138C, ADCLRC in the lower-right corner tile and ADCULC in the upper-left, with their port tables, but its chipdb.py notes that the .fse carries no ADC fuse table for this die and that gowin_pack refuses to configure one until an attribute sweep is run."
+  consequence: "TinyNES cannot read the FPGA's temperature in the open flow without first measuring the ADC's configuration fuses against Gowin EDA (TOOL-021) and teaching gowin_pack to set them, and then rebuilding the core; until then a contact sensor on the package is the way to measure it. No separate temperature sensor on the board is recorded."
+  sources:
+    - "oss-cad-suite share/yosys/gowin/cells_xtra_gw5a.v: modules ADCLRC, ADCULC and ADC"
+    - "aquasock/apicula epic/gw5ast138c cd3893f, apycula/chipdb.py: the comment above _adc_bel_sites, _adc_description_present"
+  verification: "Read from the sources on 2026-10-13 (core-log entry 22) after this file and an online search found no board sensor; not exercised on hardware."
 
 - record_id: BRD-001
   kind: BOARD

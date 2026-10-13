@@ -8,6 +8,7 @@
 #   make ROM=<file.nes>         AE350 program, build/firmware/apps/nes_bench/
 #   make ROM=<file.nes> host    the same program for this PC, in host/ there
 #   make PLAY=1                 the playable program, build/firmware/apps/nes_play/
+#   make PLAY=1 DIAG=1          it with HDMI diagnostics, build/firmware/apps/nes_diag/
 #
 # FRAMES=<n> and INPUT="<script>" replace the defaults in main.cpp.
 # PLAY=1 builds the playable version instead (AE350 only), with the Wii
@@ -47,9 +48,14 @@ LIB_SOURCES  += $(abspath fceu_settings.c)
 LIB_CPPFLAGS := $(COREDEFINES) -DNDEBUG $(INCFLAGS)
 
 ifeq ($(PLAY),1)
+ifeq ($(DIAG),1)
+BUILD ?= $(abspath ../../../build/firmware/apps/nes_diag)
+else
 BUILD ?= $(abspath ../../../build/firmware/apps/nes_play)
 endif
+endif
 APP_DEFS := $(if $(filter 1,$(PLAY)),-DNES_PLAY) \
+            $(if $(filter 1,$(DIAG)),-DNES_DIAG) \
             $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
             $(if $(INPUT),-DNES_INPUT='"$(INPUT)"') \
             $(if $(MCACHE),-DNES_MCACHE=$(MCACHE))

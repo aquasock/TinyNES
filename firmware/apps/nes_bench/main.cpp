@@ -72,6 +72,30 @@
 // and PUSHED, PLAYED and VBL the pairs sent, the pairs the DAC played and
 // the HDMI frames shown since the sound was enabled. The program fails if
 // UNDER or DROPS is not 0.
+//
+// Built with PLAY=1 DIAG=1 it also watches the video path while the game is
+// played, for finding faults that come and go. The A25's cycle counter and
+// the pixel clock both come from the 50 MHz oscillator, so every 1650x750
+// frame lasts exactly 12,500,000 core cycles; the player timestamps each
+// vertical blank it sees while waiting for a frame to be shown and checks
+// the period. It counts the non-zero pixels and the bits seen 1 and 0 of
+// every frame it hands over and compares them, one frame later, with the
+// video unit's PIXELS (nine per NES pixel) and BITS for the frame shown. It
+// prints, once a second,
+//   TinyNES DIAG S=<s> F=<frames> VBL=<n> PER=<min>..<max> ODD=<n>
+//       PIX=<ok>/<bad> LATE=<n> MISS=<n> EMU=<us> AUD=<min>-<max>
+//       UND=<n> DROP=<n> LINK=<status>
+// with VBL the vertical blanks, PER the extremes of the measured periods in
+// core cycles less 12,500,000, ODD the periods more than 5 us off, PIX the
+// frames whose PIXELS and BITS matched or did not, LATE and MISS as above,
+// EMU the slowest frame, AUD the sound FIFO's level range, UND and DROP its
+// underruns and dropped samples, and LINK the UART link's status (all over
+// that second), and at once
+//   TinyNES DIAG MARK <n> S=<s.ms> F=<frame>     X pressed on a controller
+//   TinyNES DIAG START S=<s.ms> F=<frame>        Start pressed
+//   TinyNES DIAG PIXBAD F=<frame> PIXELS=<n> WANT=<n> BITS=<x> WANT=<x>
+//   TinyNES DIAG PERIOD F=<frame> CYC=<cycles>
+// the last two at most three times a second each.
 
 #include <cstdint>
 #include <cstdio>
@@ -382,6 +406,166 @@ void send_audio(const int32_t *sound, int32_t count, uint32_t level,
 }
 #endif
 
+#ifdef NES_DIAG
+const uint64_t FRAME_CYCLES = 12500000u;     // 750 MHz / 60 Hz
+const uint64_t PERIOD_SLACK = 3750u;         // 5 us, the EXTS polling
+const uint16_t WII_X = 1u << 11;
+const unsigned EVENTS_PER_SECOND = 3;
+
+// A frame's non-zero pixels and the bits seen 1 (low byte) and 0 (high byte),
+// as the video unit's PIXELS / 9 and BITS give them.
+struct FrameSum {
+	uint32_t nonzero;
+	uint16_t bits;
+};
+
+FrameSum frame_sum(const uint8_t *fb)
+{
+	const uint32_t *w = reinterpret_cast<const uint32_t *>(fb);
+	uint32_t total = 0, lanes = 0, ones = 0, zeros = 0;
+	unsigned run = 0;
+	for (unsigned i = 0; i < WIDTH * HEIGHT / 4; i++) {
+		const uint32_t v = w[i];
+		ones |= v;
+		zeros |= ~v;
+		// Bit 7 of each byte lane set where that byte is not zero.
+		lanes += ((((v & 0x7f7f7f7fu) + 0x7f7f7f7fu) | v) & 0x80808080u) >> 7;
+		if (++run == 255 || i + 1 == WIDTH * HEIGHT / 4) {
+			total += (lanes & 0xff) + (lanes >> 8 & 0xff) +
+				 (lanes >> 16 & 0xff) + (lanes >> 24);
+			lanes = 0;
+			run = 0;
+		}
+	}
+	ones |= ones >> 16;
+	ones |= ones >> 8;
+	zeros |= zeros >> 16;
+	zeros |= zeros >> 8;
+	return {total, (uint16_t)((zeros & 0xff) << 8 | (ones & 0xff))};
+}
+
+struct Diag {
+	FrameSum expect[2] = {};
+	bool expect_valid[2] = {};
+	// The last vertical blank seen while waiting, if the one before it was
+	// too, and the buffer shown from it.
+	bool live = false;
+	uint32_t edge_frames = 0;
+	uint64_t edge_t = 0;
+	unsigned shown = 0;
+	// This second.
+	uint64_t second_t = 0;
+	unsigned seconds = 0, frames = 0, odd = 0, pix_ok = 0, pix_bad = 0;
+	unsigned missed = 0, events_pix = 0, events_period = 0;
+	int64_t per_min = INT64_MAX, per_max = INT64_MIN;
+	uint64_t emu_max = 0;
+	uint32_t level_min = UINT32_MAX, level_max = 0;
+	uint32_t vbl0 = 0, late0 = 0, under0 = 0, drops0 = 0, link = 0;
+	unsigned marks = 0;
+	uint16_t held_prev = 0;
+	uint64_t start_t = 0;
+};
+
+void diag_stamp(const Diag &d, uint64_t t, unsigned frame, const char *what)
+{
+	const uint64_t ms = to_us(t - d.start_t) / 1000u;
+	printf("TinyNES DIAG %s S=%llu.%03llu F=%u\n", what,
+	       (unsigned long long)(ms / 1000u), (unsigned long long)(ms % 1000u), frame);
+}
+
+// A vertical blank seen at t, FRAMES then f: check the period since the last
+// and the frame the video unit has just finished showing.
+void diag_edge(Diag &d, uint32_t f, uint64_t t, unsigned frame)
+{
+	if (d.live && f - d.edge_frames == 1) {
+		const int64_t dev = (int64_t)(t - d.edge_t) - (int64_t)FRAME_CYCLES;
+		if (dev < d.per_min)
+			d.per_min = dev;
+		if (dev > d.per_max)
+			d.per_max = dev;
+		if (dev > (int64_t)PERIOD_SLACK || dev < -(int64_t)PERIOD_SLACK) {
+			d.odd++;
+			if (d.events_period++ < EVENTS_PER_SECOND)
+				printf("TinyNES DIAG PERIOD F=%u CYC=%llu\n", frame,
+				       (unsigned long long)(t - d.edge_t));
+		}
+		if (d.expect_valid[d.shown]) {
+			const FrameSum &e = d.expect[d.shown];
+			const uint32_t pixels = TN_VIDEO_PIXELS, bits = TN_VIDEO_BITS & 0xffffu;
+			if (pixels == 9u * e.nonzero && bits == e.bits) {
+				d.pix_ok++;
+			} else {
+				d.pix_bad++;
+				if (d.events_pix++ < EVENTS_PER_SECOND)
+					printf("TinyNES DIAG PIXBAD F=%u PIXELS=%lu WANT=%lu "
+					       "BITS=%04lx WANT=%04x\n", frame,
+					       (unsigned long)pixels,
+					       (unsigned long)(9u * e.nonzero),
+					       (unsigned long)bits, e.bits);
+			}
+		}
+	}
+	d.live = true;
+	d.edge_frames = f;
+	d.edge_t = t;
+	d.shown = TN_VIDEO_STATUS & TN_VIDEO_BUFFER ? 1 : 0;
+}
+
+// Wait, as the plain player does, until the buffer asked for is shown, but
+// timestamp each vertical blank on the way. A frame that was already shown
+// on arrival (the emulation ran over) breaks the run of seen blanks.
+void diag_wait(Diag &d, uint32_t want, unsigned frame)
+{
+	const uint32_t mask = TN_VIDEO_SHOWING | TN_VIDEO_BUFFER;
+	if ((TN_VIDEO_STATUS & mask) == want) {
+		d.live = false;
+		return;
+	}
+	uint32_t f0 = TN_VIDEO_FRAMES;
+	for (;;) {
+		const uint32_t f = TN_VIDEO_FRAMES;
+		if (f == f0)
+			continue;
+		diag_edge(d, f, ticks(), frame);
+		f0 = f;
+		// STATUS and FRAMES cross from the pixel clock separately.
+		for (int i = 0; i < 64; i++)
+			if ((TN_VIDEO_STATUS & mask) == want)
+				return;
+	}
+}
+
+void diag_second(Diag &d, uint64_t t)
+{
+	const uint32_t vbl = TN_VIDEO_FRAMES, late = TN_VIDEO_LATE;
+	const uint32_t status = TN_AUDIO_STATUS, drops = TN_AUDIO_DROPS;
+	printf("TinyNES DIAG S=%u F=%u VBL=%lu PER=%lld..%lld ODD=%u PIX=%u/%u LATE=%lu "
+	       "MISS=%u EMU=%llu AUD=%lu-%lu UND=%lu DROP=%lu LINK=%08lx\n",
+	       d.seconds, d.frames, (unsigned long)(vbl - d.vbl0),
+	       (long long)(d.per_min == INT64_MAX ? 0 : d.per_min),
+	       (long long)(d.per_max == INT64_MIN ? 0 : d.per_max), d.odd, d.pix_ok,
+	       d.pix_bad, (unsigned long)(late - d.late0), d.missed,
+	       (unsigned long long)to_us(d.emu_max),
+	       (unsigned long)(d.level_min == UINT32_MAX ? 0 : d.level_min),
+	       (unsigned long)d.level_max,
+	       (unsigned long)(TN_AUDIO_UNDERRUNS(status) - d.under0),
+	       (unsigned long)(drops - d.drops0), (unsigned long)TN_LINK_STATUS);
+	d.seconds++;
+	d.second_t = t;
+	d.frames = d.odd = d.pix_ok = d.pix_bad = d.missed = 0;
+	d.events_pix = d.events_period = 0;
+	d.per_min = INT64_MAX;
+	d.per_max = INT64_MIN;
+	d.emu_max = 0;
+	d.level_min = UINT32_MAX;
+	d.level_max = 0;
+	d.vbl0 = vbl;
+	d.late0 = late;
+	d.under0 = TN_AUDIO_UNDERRUNS(status);
+	d.drops0 = drops;
+}
+#endif
+
 #ifndef NES_PLAY
 uint8_t pad_for(unsigned frame)
 {
@@ -573,6 +757,16 @@ int main()
 	AudioStats audio;
 	uint64_t push_total = 0;
 	uint32_t played0 = 0, vbl0 = 0;
+#ifdef NES_DIAG
+	Diag diag;
+	diag.start_t = diag.second_t = ticks();
+	diag.vbl0 = TN_VIDEO_FRAMES;
+	diag.late0 = TN_VIDEO_LATE;
+	diag.under0 = TN_AUDIO_UNDERRUNS(TN_AUDIO_STATUS);
+	diag.drops0 = TN_AUDIO_DROPS;
+	printf("TinyNES DIAG ON FRAME=%llu SLACK=%llu\n",
+	       (unsigned long long)FRAME_CYCLES, (unsigned long long)PERIOD_SLACK);
+#endif
 #endif
 #else
 	const char *dump = getenv("NES_DUMP");
@@ -596,6 +790,20 @@ int main()
 		// The desktop is over the game: its pointer has the controller.
 		if (TN_LINK_STATUS & TN_LINK_SHOWN)
 			joypads = 0;
+#ifdef NES_DIAG
+		{
+			const uint16_t held = held1 | held2;
+			const uint16_t pressed = held & (uint16_t)~diag.held_prev;
+			diag.held_prev = held;
+			if (pressed & WII_X) {
+				char what[16];
+				snprintf(what, sizeof what, "MARK %u", ++diag.marks);
+				diag_stamp(diag, ticks(), f, what);
+			}
+			if (pressed & WII_START)
+				diag_stamp(diag, ticks(), f, "START");
+		}
+#endif
 		const uint32_t audio_level = TN_AUDIO_LEVEL(TN_AUDIO_STATUS);
 #else
 		joypads = pad_for(f);
@@ -619,6 +827,16 @@ int main()
 		push_total += ticks() - a;
 #endif
 
+#ifdef NES_DIAG
+		diag.expect[back] = frame_sum(frame_buffer(back));
+		diag.expect_valid[back] = true;
+		if (t > diag.emu_max)
+			diag.emu_max = t;
+		if (audio_level < diag.level_min)
+			diag.level_min = audio_level;
+		if (audio_level > diag.level_max)
+			diag.level_max = audio_level;
+#endif
 		uint64_t s = ticks();
 #ifdef __riscv
 		tn_dcache_wbinval();
@@ -635,10 +853,26 @@ int main()
 		// The next frame starts once this one is on screen, so that it
 		// never draws into a buffer waiting to be shown.
 		const uint32_t want = TN_VIDEO_SHOWING | (back ? TN_VIDEO_BUFFER : 0);
+#ifdef NES_DIAG
+		diag_wait(diag, want, f);
+#else
 		while ((TN_VIDEO_STATUS & (TN_VIDEO_SHOWING | TN_VIDEO_BUFFER)) != want)
 			;
-		if (TN_VIDEO_FRAMES - vbl > 1)
+#endif
+		if (TN_VIDEO_FRAMES - vbl > 1) {
 			missed++;
+#ifdef NES_DIAG
+			diag.missed++;
+#endif
+		}
+#ifdef NES_DIAG
+		diag.frames++;
+		{
+			const uint64_t now = ticks();
+			if (now - diag.second_t >= tick_hz)
+				diag_second(diag, now);
+		}
+#endif
 #else
 		s = 0;
 #endif
