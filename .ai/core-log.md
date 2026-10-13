@@ -825,3 +825,33 @@ The user will run a heating and cooling test with a contact sensor on the FPGA u
 - User Test: PASS
 
 ---
+
+## 23 COMMIT Unreleased 2026-10-13T09:50:48-07:00
+
+#### Coming From:
+
+Unreleased b247c13
+
+#### Purpose:
+
+Test whether the HDMI fault of DEV-018 depends on temperature, as the user proposed, and compare TinyNES's HDMI clocking with TinyTang's fault-free open-flow desktop core, before choosing a fix.
+
+#### Outcome:
+
+With the seed-5 image of entry 21 and the `DIAG=1` player of entry 22 loaded by the agent in two-wire mode, the user heated the FPGA's surface with a hair dryer from 32.8 C to 41.1 C, read with a contact sensor, and the picture glitched badly within one to two minutes, too fast to mark with X; cooled with air to 28 C and then 25.1 C it stayed clean for the rest of the 298 s session, which exited 0, and every internal check (frame period within 100 core cycles of 12,500,000, `PIXELS` and `BITS` of every frame, `LATE`, `MISSED`, underruns and drops) stayed clean throughout, as in the first session. Entry 22 overstated what `PIXELS` and `BITS` show: they catch a pixel turning zero or non-zero and a bit stuck within a frame, not one non-zero value changed for another, which DEV-018 now says. The seed-5 netlist feeds six pixel-clock pins, those of five `pixel1` bits and two `nx` bits, over general routing instead of the global network. A rebuild of TinyTang's desktop core at seed 2 with the current forks failed one hold check, so it is not the card's `desktop.bin`, but its routed netlist clocks the OSER10s exactly as TinyNES does, the HDMI PLL at X1Y81 with the 371.25 MHz clock over 22 E8 hops, PCLK on GB20 through `SPINE26 <= CBRIDGEOUT_BOTTOM2`, the clock lane straight from the pixel clock, and 17 pixel-clock pins off the global network, so neither the serialiser clocking nor off-network pixel flip-flops alone explains why only TinyNES shows the fault, and the lead is that TinyNES's busy A25 and SDRAM run the die hotter, to a margin the shared open-flow clocking has. The user did not want to change the plan now and asked that the test be logged for later. The user asked whether the board has a temperature sensor during the cycle; DEV-019 of entry 22 holds the answer. DEV-018 is revised. The core-syntax audit passed.
+
+#### Next Steps:
+
+The user has set the HDMI fault aside for other work. When it is taken up, the agreed first step is three tests with no build: `desktop.bin` and nestang heated to 45 to 50 C while the user watches, and the idle surface temperature of each core; if the open-flow desktop core also fails when hot and nestang does not, the fix cycle moves TinyNES's HDMI clocking to the vendor's arrangement (the serial clock on dedicated wiring from a nearby PLL, the clock lane through an OSER10), and if neither fails it looks at TinyNES's own pixel path, each candidate heat-tested with the `DIAG=1` player.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: PASS
+- User Test: PASS
+
+---
