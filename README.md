@@ -668,7 +668,8 @@ lane included (`1111100000` per pixel), leave through OSER10s on those two
 clocks. With the serial-clock PLL at `PLL_L[3]` its clock crossed the die on
 9.86 ns of general routing and the picture broke up with lines and lost
 signal once the FPGA was warm (about 41 C on the package); at `PLL_R[3]` the
-route is 2.12 ns and the picture held at 62 C (core reference DEV-018). The
+route is 2.12 ns and the picture held the game clean from 31 C to 69.8 C with
+both PMOD sockets loaded (core reference DEV-018). The
 build fails unless the pixel clock meets 74.25 MHz. The TMDS
 encoder is TinyTang's (`fpga/hdmi_test/hdmi_test.v`, MIT).
 

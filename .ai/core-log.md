@@ -950,3 +950,33 @@ Resume when the user requests it; the open work is unchanged. The heat test of t
 - User Test: N/A
 
 ---
+
+## 27 COMMIT Unreleased 2026-10-13T14:58:05-07:00
+
+#### Coming From:
+
+Unreleased e39380f
+
+#### Purpose:
+
+Repeat the cycle-25 heat test with the Wii controller on PMOD0 and the I2S2 on PMOD1, the acceptance condition of entry 24, to settle that the serial-clock PLL move and not the absent Pmod load cured the HDMI fault and to close DEV-018.
+
+#### Outcome:
+
+The seed-10 image (`ae350_soc.bin` bafc2cf2) and the `PLAY=1 DIAG=1` player were deployed in two-wire mode with `tools/deploy_tinytang.sh`, and Castlevania (USA) (Rev 1), CRC-32 `12a6cb14`, was played through `tools/load_ae350.py --tinytang` with both PMOD sockets loaded: the Wii Classic Controller on PMOD0, which the player reported as `PAD1=classic`, and the Pmod I2S2 on PMOD1, whose sound the user heard throughout. The package idled at 30.9 C, the game started at 31.9 C, the user heated it to a peak of 69.8 C and then let it fall to 35.4 C, and across 552 one-second samples of frames every frame's `PIXELS` and `BITS` matched the player's own count and `LATE`, `MISSED`, audio underruns and FIFO drops were all zero; four samples' vertical-blank periods read 104 core cycles against the 12,500,000-cycle frame, 4 cycles or 8 ppm outside the +-100 polling window, which is the instrument's noise floor. No `MARK` line was written, the user saw no glitch at any temperature and accepted the result, and the log is `build/diag/session4.log` (not committed). The same image had reached only 62 C in entry 25 with both Pmods unplugged, so the absent Pmod load is ruled out as the reason the earlier image failed. A cold test was attempted with canned air, which could not take the package below about 32 C, at or above its own 30.9 C idle, so the sub-ambient corner is recorded as unmeasured rather than passed. DEV-018 now carries the accepted result, drops its pending Pmod run, and moves from INFERRED to VERIFIED, the mechanism remaining a lead. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+DEV-018 is closed, so the next cycle should be proposed to the user from what remains: the OSER10 reset's recovery against the serial clock, which TOOL-023 records as failing Gowin's check by up to 5.80 ns, the halved clean-seed rate of 8 of 16 whose failures are all pixel-clock hold, the startup sound FIFO overflow, the patterned glitch of entry 19, the DEV-016 workaround and the stale Apicula test count. The sub-ambient corner needs a cold source the user does not have, so it stays recorded as unmeasured rather than as a pass.
+
+#### Files Modified:
+
+- README.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: PASS
+- User Test: PASS
+
+---
