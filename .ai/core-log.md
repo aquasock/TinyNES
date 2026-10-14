@@ -1040,3 +1040,33 @@ None.
 - User Test: N/A
 
 ---
+
+## 30 COMMIT Unreleased 2026-10-14T01:18:14-07:00
+
+#### Coming From:
+
+Unreleased c28b0cc
+
+#### Purpose:
+
+Carry the release card's wording of `scripts/open/nes.tdsh` back into this repository, at the user's direction, so the script's example names a cartridge the release ships rather than a commercial one.
+
+#### Outcome:
+
+The release card's `root/scripts/open/nes.tdsh` differed from this repository's only in its usage comment, where the user had changed the example from `Castlevania (USA) (Rev 1).nes` to `nova.nes`, the GPL-3.0 Nova the Squirrel v1.0.6a cartridge the card carries in `root/data/nes/`. The card's file was copied over the repository's, the diff is that one comment line, and the repository copy is now byte-identical to the card's, SHA-256 `77be22ea29c98c413bc179cdeb46d4d8d5b2a8189dbd76ffbaf8efd043d144b0`. The script's behaviour is unchanged, so nothing was built, deployed or tested. TinyTang's `deps.conf` still pins this repository at `fa557f4`, which the user chose to leave until the `v0.1.0` tag. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+None for TinyNES beyond the release itself: TinyTang re-pins this repository when it is tagged.
+
+#### Files Modified:
+
+- scripts/open/nes.tdsh
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

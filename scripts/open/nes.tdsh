@@ -5,7 +5,7 @@
 # is opened in the Files app or on the desktop, with FILE set to the file's
 # path, so double-clicking a .nes file runs this. From the shell:
 #
-#     FILE="/root/data/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/open/nes.tdsh
+#     FILE="/root/data/nes/nova.nes"; tdsh run /root/scripts/open/nes.tdsh
 #
 # It loads the TinyNES core, has ae350run send the player program to the
 # core's AE350 and the cartridge when the program asks for it, and waits for
