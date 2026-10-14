@@ -1010,3 +1010,33 @@ None.
 - User Test: N/A
 
 ---
+
+## 29 COMMIT Unreleased 2026-10-13T23:52:01-07:00
+
+#### Coming From:
+
+Unreleased fa557f4
+
+#### Purpose:
+
+Record a handoff so the next agent starts from the project's records rather than reconstructing this session: where the release stands, what is committed and where, and what remains before it is published.
+
+#### Outcome:
+
+The release card was validated on hardware end to end and the defects that validation found are fixed, committed and pushed. The card's assembly is `release_SD`, zipped as `release_SD-0.1.0-draft-20261013.zip`, and the run covered boot, the USB console, pairing a keyboard and mouse over Bluetooth, the desktop, Phosphor and TinyNES, with the user accepting the desktop, the oscilloscope, the I2S2 audio, unwrapped `help` output, working function keys and the corrected boot narration. Three firmware defects were fixed in TinyTang as core-log entry 57 and pushed at commit `26e2b97`: the `help` list wrapped because a line costs two columns of indent, a ten-column name field and one space before the help text, leaving 67 characters at 80 columns, so seven of 116 commands were shortened and `tools/check_help_width.py` now gates the budget; F1-F11 were mapping to nothing because `ports/bl616/tang_key.c` translates HID usages into the ANSI bytes the desktop parses, so a `fkey_sequences` table now emits `ESC [ 11~` through `ESC [ 23~` while F12 stays `TANG_KEY_USAGE_TOGGLE` for the desktop/core swap; and the boot narration could not name the core where it had been placed, because the board has no raster until `tangload` programs a core and `osd desk on` mirrors the console from that point forward rather than replaying it, so the name moved into the post-load line. The firmware built from that commit is 611520 bytes, sha256 `238cee62ce93fbf70d5332e03ea10e61776f1330afa059d99c0f60df1dc90c59`, identity `dba104c-dirty.17f81b2`, and the user flashed it and confirmed it; its identity keeps a `-dirty` suffix because `third_party/tinydesk` carries two patches the build applies on every configure, which TinyTang's `BUILDING.md` now records by digest as its entry 58. The larger fault was the card's AE350 player: `ef1502ed` is a `bench_stream=1` build that waits for the host to stream a file while the firmware only answers the file-request mailbox, so each side waited for the other and every track ended in `the AE350 did not start playing`; the card now carries the `bench_stream=2` player `c7a89035`, and a FLAC plays to 441000 samples at 44.1 kHz with zero underruns, the count Tang-Phosphor's record treats as its qualification. The PMOD arrangement is settled and written down: the Pmod I2S2 belongs on PMOD1, beside the HDMI port, declared as `0xc0 = 0x500`, and the Wii Classic Controllers are on PMOD0, beside the two USB-A ports, read from fixed pins per the NES core's own `ae350_soc.cst`, so a socket declared as I2S2 takes those pins away from the pads; declaring a socket with the module seated in the other silences the Line Out while the clock probe at `0xf8` and `0xfc` still reads normally, because that counter measures the clock and not the lanes. Tang-Phosphor's own bring-up document and play script stated the PMOD0 seating as the rule, which is where this session's detour came from, and both were corrected and pushed there as its entry 84 at commit `c261fcb`. Durable facts from the session are in TinyTang's reference as `TOOL-018`, `TOOL-019` and `TOOL-020`, and the release tree's README hash block was regenerated and verifies ten of ten. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit; TinyTang's `tools/check_core_log.py` was run against this log and reported every entry conforming.
+
+#### Next Steps:
+
+The next single action is to strip the sixteen commercial ROMs from `root/data/nes/` and re-zip the tree, because the card cannot be published with them. Then set the card's `tang.ini` to the tree's copy: the card still declares `pmod0 = i2s2` from an earlier edit and only played because a live `0xc0 = 0x500` poke was applied, which a reboot discards, so the PMOD will be silent again until the file is replaced, and the README's `tang.ini` hash line should be refreshed afterwards and `sha256sum -c` re-run. Publish with a `v0.1.0` tag on TinyTang, which per the syntax is a `VERSION` entry rather than a `COMMIT` one; TinyTang's `.ai/core.md` Releasing section is still empty, so the release notes are a decision before they are a task, and a final pass on a card built from the finished tree should confirm boot, pairing, the desktop, Phosphor and a cartridge. Two known defects are parked by the user's instruction rather than fixed: the release README's paragraph calling the AE350 player qualified states the opposite of what the hardware showed and belongs to the next build cycle, and `boot.tdsh`'s header comment still offers `nestang-menu.bin` for a rollback this release no longer ships. One loose end in project control: Tang-Phosphor's active log numbers its entries 67 to 83 while its own `core-syntax.md` says an active log begins at entry 1, so its numbering or its archive is out of step and TinyTang's checker cannot gate that repository until it is settled.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
