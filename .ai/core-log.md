@@ -1070,3 +1070,36 @@ None for TinyNES beyond the release itself: TinyTang re-pins this repository whe
 - User Test: N/A
 
 ---
+
+## 31 COMMIT Unreleased 2026-10-14T13:46:31-07:00
+
+#### Coming From:
+
+Unreleased 9e1c027
+
+#### Purpose:
+
+Make NES battery saves work end to end on this board: settle the card's content layout, carry a cartridge's save RAM from the AE350 player to the card and back into the emulator, and repair the desktop's open handler, which had stopped launching a cartridge at all.
+
+#### Outcome:
+
+At the user's direction the card's content moved under `media/` (`nes`, `music`) with machine state under `saves/` and `states/`, checked by a 141-file manifest with no size or mtime drift and all 17 cartridges byte-identical, and the card's `tang.ini` reads `pmod0 = none`, `pmod1 = i2s2`. `firmware/apps/nes_bench/main.cpp` now asks the host for a battery-backed cartridge's save once the game is loaded (`TinyNES NVRAM WANT`) and receives it into the core's own `SaveGame[0]` through the boot ROM's load protocol, then emits it at exit as hex, with `TinyNES NVRAM SAVE` and `DONE` carrying its length and CRC-32, because in link mode the FPGA turns the CPU's bytes into TinyDesk text frames and that receiver drops carriage returns and ends lines on a line feed; `TinyNES LINK` moved after that request, since once link mode is on the host reads frames rather than lines, and `fceu_settings.c` gained `nes_bench_battery()`, exposing FCEUmm's `SaveGame[0]` and `SaveGameLen[0]` from the file that already carries the core's include path. The link loses a chunk at the start of a burst, so three throwaway lines precede the header and each 64-character line is followed by a wait for the link to be idle and a 4 ms pause; that is what made an 8192-byte save arrive whole. The save goes without the `TNR1` payload header the cartridge carries, because it is received straight into the core's save buffer, where a header occupies the first eight bytes and shifts every other byte by eight: the first attempt left `TNR1` and 8192 at the front of the save RAM, and because that shifted data was written back to the card and shifted again on the next load, every round trip made it worse, which is why the game showed an empty slot even after a fresh save. The desktop fault was separate: `scripts/open/nes.tdsh` never ran, which the new `/root/nes-open.log` line proved, and the board's `tang` command then reported one allocation refused since boot, 53 bytes for task `tdsh_script`, so the desktop path had run out of heap, in part because the save was held in a permanent 8 KiB static buffer; the save is now written out as it arrives with an incremental CRC, which returned 8192 bytes to the heap and restored the desktop. In TinyTang, `ae350run` serves and captures the save, `tools/tinytang_put.py` now quotes the remote path, which had been splitting a name with spaces down to its first word, and the Phosphor app reads `/root/media/music`. Against the result: the board resets on an `ebreak` assert in the Bluetooth controller task, crash record `mcause 0x30000003` with `btbleco` in its trail, the class BLE-018 records, which also explains USB dropouts earlier taken for cabling. The user loaded their save and played it. The core-syntax audit passed.
+
+#### Next Steps:
+
+Take up the Bluetooth assert first, since a reset during a save or a core load makes every hardware test unreliable. Then TinyTang's own cycle needs its log entry and commit for the `ae350run` save path, the receive-ring and frame-queue change, the Phosphor media path and the tool fix, none of which is committed there, and the save is still written at exit only, so a power-off mid-game loses it. The card also carries commercial ROMs and cannot be published as it stands, and the release still needs its `v0.1.0` tag.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/fceu_settings.c
+- firmware/apps/nes_bench/main.cpp
+- scripts/open/nes.tdsh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

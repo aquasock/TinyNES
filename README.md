@@ -432,7 +432,7 @@ takes about ten seconds: the core, the 625 KB player at the link's 186 KB/s,
 and the cartridge. From the shell:
 
 ```sh
-FILE="/root/data/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/open/nes.tdsh
+FILE="/root/media/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/open/nes.tdsh
 ```
 
 ### Diagnosing the HDMI picture

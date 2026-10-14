@@ -125,6 +125,9 @@ extern int option_ramstate;
 // fceu_settings.c: the five APU channel volumes, which FCEUI_Initialize
 // leaves at 0.
 void nes_bench_apu_volumes(int volume);
+// fceu_settings.c: the loaded cartridge's battery-backed save RAM, if it has
+// one, as its bytes and how many there are.
+uint8_t *nes_bench_battery(uint32_t *len);
 }
 
 namespace {
@@ -205,6 +208,8 @@ void FCEUD_DispMessage(int, unsigned, const char *s) { printf("fceumm %s\n", s);
 #ifdef NES_PLAY
 extern "C" {
 #include "load.h"
+// tn_wait_tx_idle, to let the save that is printed last reach the pin.
+#include "uart.h"
 }
 // The largest cartridge taken, and the payload's magic, "TNR1".
 const size_t CART_MAX = 2u << 20;
@@ -660,6 +665,77 @@ const uint8_t *receive_cart(size_t &size)
 	size = length;
 	return buffer + 8;
 }
+
+// A battery-backed cartridge's save RAM, as the core has it once the
+// cartridge is loaded: where its bytes are and how many there are.
+uint8_t *save_ram;
+uint32_t save_len;
+
+// The link frames this program's bytes and the board keeps only a handful of
+// frames in hand, draining its receive ring a frame at a time; a burst of
+// lines overruns that and frames are dropped. So each line waits for the link
+// to be idle and then leaves the board 4 ms to file it. That costs about a
+// second on an 8 KiB save and keeps every byte.
+void save_pace()
+{
+	tn_wait_tx_idle();
+	const uint64_t until = ticks() + tick_hz / 250;
+	while (ticks() < until)
+		;
+}
+
+// A battery the game never wrote is whatever the core allocated for it: every
+// byte the same. Worth saying out loud, because from the card a blank save and
+// a real one look identical, and "it saved" at one end with a silent game at
+// the other cannot tell the two apart.
+bool save_is_blank()
+{
+	for (uint32_t i = 1; i < save_len; i++) {
+		if (save_ram[i] != save_ram[0])
+			return false;
+	}
+	return true;
+}
+
+// Ask the host for a saved battery file and take it into the core's own
+// buffer, so the game starts where it was left. The host sends it in the
+// boot ROM's load protocol, as it sends the cartridge. The save RAM the
+// core has after loading is blank, and stays that way when nothing arrives
+// within about a second, which is the usual case and not an error.
+void receive_save()
+{
+	if (!save_ram || !save_len)
+		return;
+	printf("TinyNES NVRAM WANT %08lx %08lx\n", (unsigned long)(uintptr_t)save_ram,
+	       (unsigned long)save_len);
+	fflush(stdout);
+	tn_load_reset();
+	uint32_t got = 0;
+	for (int step = 0; step < 10 && !got; step++)
+		got = tn_load_poll(TN_CORE_HZ / 10);
+	// The load's own checksums judge the payload, and its entry, which the
+	// file protocol puts at the address the image was framed for, says that
+	// address was this buffer: anything else leaves the blank save RAM alone.
+	if (got != (uintptr_t)save_ram)
+		return;
+	// What actually landed, and its CRC: the same number the save printed when
+	// it was written means the round trip is byte-perfect and the game not
+	// seeing it is the game's side of the problem, not the link's.
+	printf("TinyNES NVRAM GOT %lu %08lx%s\n", (unsigned long)save_len,
+	       (unsigned long)crc_update(0, save_ram, save_len),
+	       save_is_blank() ? " BLANK" : "");
+	// The first and last few bytes as they now stand.  A save the game will
+	// accept has structure in it; the round trip being byte-perfect and the
+	// game still showing an empty slot means the question is what these are.
+	printf("TinyNES NVRAM HEAD");
+	for (uint32_t i = 0; i < 24 && i < save_len; i++)
+		printf(" %02x", save_ram[i]);
+	printf("\nTinyNES NVRAM TAIL");
+	for (uint32_t i = save_len > 24 ? save_len - 24 : 0; i < save_len; i++)
+		printf(" %02x", save_ram[i]);
+	printf("\n");
+	fflush(stdout);
+}
 #endif
 
 int main()
@@ -671,9 +747,6 @@ int main()
 		printf("TinyNES NES BAD CART\n");
 		return 1;
 	}
-	printf("TinyNES LINK\n");
-	fflush(stdout);
-	TN_UART_CTRL = TN_UART_LINK_MODE;
 #else
 	const size_t rom_size = (size_t)(nes_rom_end - nes_rom);
 #endif
@@ -720,6 +793,18 @@ int main()
 	       (unsigned)rom_size,
 	       (unsigned long)crc_update(0, nes_rom, rom_size),
 	       (unsigned long long)to_us(start));
+#ifdef NES_PLAY
+	// A battery-backed cartridge's save RAM: ask for a saved one and take it
+	// into the core's own buffer, before the first frame runs.
+	save_ram = nes_bench_battery(&save_len);
+	receive_save();
+	// Link mode last: the host answers the save request as a line, which it
+	// can only do while the link is still the boot ROM's, and from here on
+	// this program's bytes go out as TinyDesk text frames instead.
+	printf("TinyNES LINK\n");
+	fflush(stdout);
+	TN_UART_CTRL = TN_UART_LINK_MODE;
+#endif
 #ifdef __riscv
 	uint32_t micm, mdcm;
 	__asm__ volatile("csrr %0, 0xfc0" : "=r"(micm));
@@ -951,6 +1036,53 @@ int main()
 	       (unsigned long long)to_us(push_total / n),
 	       (unsigned long)audio.pushed, (unsigned long)played_pairs,
 	       (unsigned long)vbl_count);
+
+	// A battery-backed cartridge's save RAM goes back to the host as text:
+	// link mode drops carriage returns and splits lines, so binary cannot go
+	// as it is, and four bits to a hex digit leave neither. The core wrote
+	// it through the D-cache, so that is written back before it is read.
+	if (save_ram && save_len) {
+		tn_dcache_wbinval();
+		const uint32_t save_crc = crc_update(0, save_ram, save_len);
+		// The header used to be the first thing to cross the link after the
+		// summary, and a burst's opening is where the link loses a chunk:
+		// on 2026-10-14 the header arrived as "TinyNES N" and the save was
+		// never armed, so the header is not sent until the link is warm.
+		for (int lead = 0; lead < 3; lead++) {
+			printf("TinyNES NVRAM BEGIN\n");
+			save_pace();
+		}
+		// A save the game never wrote is still what the core allocated: every
+		// byte the same.  Say so, or a blank file looks like a working save
+		// and the next launch looks like a broken one.
+		const bool blank = save_is_blank();
+		printf("TinyNES NVRAM SAVE %lu %08lx%s\n", (unsigned long)save_len,
+		       (unsigned long)save_crc, blank ? " BLANK" : "");
+		save_pace();
+		const char *const digits = "0123456789abcdef";
+		char hex[65];
+		unsigned n = 0;
+		for (uint32_t i = 0; i < save_len; i++) {
+			hex[n++] = digits[save_ram[i] >> 4];
+			hex[n++] = digits[save_ram[i] & 15];
+			// 32 bytes to a line, 64 hex digits, and a line ends only
+			// where the link's framing expects one, at a newline.
+			if (n == 64) {
+				hex[n] = 0;
+				printf("%s\n", hex);
+				save_pace();
+				n = 0;
+			}
+		}
+		if (n) {
+			hex[n] = 0;
+			printf("%s\n", hex);
+			save_pace();
+		}
+		printf("TinyNES NVRAM DONE %08lx\n", (unsigned long)save_crc);
+		tn_wait_tx_idle();
+		save_pace();
+	}
 #endif
 
 	// The last frame stays on screen; the core frees only its own buffer.
