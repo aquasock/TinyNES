@@ -1103,3 +1103,34 @@ Take up the Bluetooth assert first, since a reset during a save or a core load m
 - User Test: PASS
 
 ---
+
+## 32 COMMIT Unreleased 2026-10-14T16:00:57-07:00
+
+#### Coming From:
+
+Unreleased 9915766
+
+#### Purpose:
+
+Give TinyNES a settings file and a desktop app for it, and make the AE350's controller mapping come from that file rather than from the code.
+
+#### Outcome:
+
+The design is in `docs/tinynes-controls-plan.md`: an app in the approved four-tab layout (Input, Video, Audio, Saves) reading `/nes.ini` at the card root, the same shape as `/tang.ini` with an absent file or key meaning the current behaviour, global rather than per-game and usable with or without a game running, the user swapping between it and the game with F12 the way a MiSTer OSD works. `firmware/apps/nes_bench/main.cpp` now takes the mapping from a `pad_map` array indexed into a `PAD_BIT` table of the controller buttons it can tell apart, and asks the host for it with `TinyNES SETTINGS WANT <addr> <len>`, receiving it headerless into its own array exactly as a save is; the compiled-in default is the mapping this program has always had, so an absent answer changes nothing, and the analogue stick still steers the D-pad whatever the D-pad itself is mapped to. In TinyTang a new `ports/bl616/tinynes_app.cpp` registers "TinyNES Controls" with an NES icon, its four tab headers are buttons whose pages are shown and hidden with `td_widget_set_visible`, and `ports/bl616/tang_nes_ini.c` reads the file and is exercised without GUI code by the `tang` command, which reports how many keys it understood; `ae350run` answers the settings request with a sixteen-byte blob and prints the mapping it sent. The user's tests passed for the tabs, the file loop, the app over a running game with F12, the window lifecycle and the save regression, and a mapping of `p1_a = y` written into `/nes.ini` and carried to the AE350 changed the game's A button while player 2 was left alone, which is the first time a file on the card has changed how a game responds. Against that, two of my own errors cost this cycle time and are recorded rather than smoothed over: the parser read only one `key = value` per line while the file I shipped put four on a line, so all sixteen input keys were silently dropped and the count read nine, and I reported a `25 key(s)` figure that was never board output but an illustration I had written, when the count line is the instrument that catches exactly this and I had bypassed it by not running it. The button set was also wrong: the file offered sixteen controller names and only nine bits of the Classic's word have ever been identified on this board (entry 16), so it now offers the eight the player can honour while HOME stays reserved for the swap to TinyDesk. The heap total is back to 121,304 bytes with 62,324 free, the 8 KiB returned when the save buffer stopped being a permanent array, and `BRD-008` was revised for the free 40-pin header's missing 3.3 V rail. The core-syntax audit passed.
+
+#### Next Steps:
+
+Wire the Input tab to what is now proved: Remap and Restore defaults are inert and Player 1/2 changes state with nothing visible, and the app reads `/nes.ini` once per boot rather than when it opens. A host test for `tang_nes_ini.c` belongs in TinyTang's `tools/tests/` beside the `tang.ini` and Phosphor catalogue tests, since the one-key-per-line fault is what it would have caught. Then the Video and Audio tabs, whose settings still reach nothing, and the Bluetooth assert, which resets the board and can spoil any hardware test.
+
+#### Files Modified:
+
+- docs/tinynes-controls-plan.md
+- firmware/apps/nes_bench/main.cpp
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

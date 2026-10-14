@@ -320,6 +320,24 @@ const uint16_t WII_B = 1u << 14, WII_Y = 1u << 13, WII_LEFT = 1u << 9,
 	       WII_UP = 1u << 8,
 	       WII_RIGHT = 1u << 7, WII_DOWN = 1u << 6, WII_SELECT = 1u << 4,
 	       WII_HOME = 1u << 3, WII_START = 1u << 2;
+
+// The controller buttons this program can tell apart, in the order the host's
+// setting file indexes them.  The Classic's word carries sixteen bits and only
+// these nine have been identified on this board, so a mapping to anything else
+// could not be honoured and is not offered (TinyNES core-log entry 16).
+const uint16_t PAD_BIT[] = {
+	WII_B, WII_Y, WII_UP, WII_DOWN, WII_LEFT, WII_RIGHT, WII_SELECT, WII_START,
+};
+const unsigned PAD_BITS = sizeof PAD_BIT / sizeof PAD_BIT[0];
+
+// Which controller button answers to each NES button: one index into PAD_BIT
+// per NES button, in the order JOY_* has them, player 1's eight then player
+// 2's.  The host fills this from /nes.ini; this is what the program has always
+// done, and what it keeps when the host says nothing.
+uint8_t pad_map[2 * 8] = {
+	0, 1, 6, 7, 2, 3, 4, 5,
+	0, 1, 6, 7, 2, 3, 4, 5,
+};
 // The left stick's 6-bit axes centre near 32; this far off centre it
 // counts as the D-pad.
 const unsigned STICK = 12;
@@ -347,14 +365,13 @@ uint8_t read_pad(unsigned n, uint16_t &held)
 	const unsigned lx = lo & 63u, ly = lo >> 8 & 63u;
 
 	uint8_t joy = 0;
-	if (held & WII_B)
-		joy |= JOY_A;
-	if (held & WII_Y)
-		joy |= JOY_B;
-	if (held & WII_SELECT)
-		joy |= JOY_SELECT;
-	if (held & WII_START)
-		joy |= JOY_START;
+	const uint8_t *map = pad_map + (n != 0 ? 8 : 0);
+	for (unsigned i = 0; i < 8; i++) {
+		if (map[i] < PAD_BITS && (held & PAD_BIT[map[i]]))
+			joy |= (uint8_t)(1u << i);
+	}
+	// The stick is a convenience, not a remappable button: it steers the
+	// D-pad whatever the D-pad itself is mapped to.
 	if (held & WII_UP || ly > 32 + STICK)
 		joy |= JOY_UP;
 	if (held & WII_DOWN || ly < 32 - STICK)
@@ -697,6 +714,22 @@ bool save_is_blank()
 	return true;
 }
 
+// Ask the host which controller button answers to each NES button and take
+// the answer into pad_map.  Headerless, exactly as a save is, and for the
+// same reason: it lands directly in the buffer.  The host always has an
+// answer -- its defaults at worst -- so this does not wait the way a save
+// that may not exist does, and nothing arriving leaves what was compiled in.
+void receive_settings()
+{
+	printf("TinyNES SETTINGS WANT %08lx %08lx\n", (unsigned long)(uintptr_t)pad_map,
+	       (unsigned long)sizeof pad_map);
+	fflush(stdout);
+	tn_load_reset();
+	uint32_t got = 0;
+	for (int step = 0; step < 10 && !got; step++)
+		got = tn_load_poll(TN_CORE_HZ / 10);
+}
+
 // Ask the host for a saved battery file and take it into the core's own
 // buffer, so the game starts where it was left. The host sends it in the
 // boot ROM's load protocol, as it sends the cartridge. The save RAM the
@@ -798,6 +831,7 @@ int main()
 	// into the core's own buffer, before the first frame runs.
 	save_ram = nes_bench_battery(&save_len);
 	receive_save();
+	receive_settings();
 	// Link mode last: the host answers the save request as a line, which it
 	// can only do while the link is still the boot ROM's, and from here on
 	// this program's bytes go out as TinyDesk text frames instead.
