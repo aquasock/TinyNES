@@ -24,8 +24,9 @@
 
 APP     := nes_bench
 ifeq ($(PLAY),1)
-# The boot ROM's receiver, unchanged, takes the cartridge.
-SOURCES := main.cpp ../../boot/load.c
+# The boot ROM's receiver, unchanged, takes the cartridge, and cart_zip.c
+# unpacks one sent as a .zip.
+SOURCES := main.cpp ../../boot/load.c cart_zip.c
 CPPFLAGS += -I../../boot
 else
 SOURCES := main.cpp rom.S
@@ -48,6 +49,12 @@ LIB_SOURCES  := $(filter-out $(CORE_DIR)/drivers/libretro/libretro.c \
 # fceu_settings.c reaches into the core's FSettings, so it is built with the
 # core's own flags.
 LIB_SOURCES  += $(abspath fceu_settings.c)
+ifeq ($(PLAY),1)
+# libretro-common's raw DEFLATE decoder, MIT, for cart_zip.c; upstream builds
+# it only with the HD texture packs, which are left out.
+LIB_SOURCES  += $(CORE_DIR)/drivers/libretro/libretro-common/encodings/encoding_deflate.c
+CPPFLAGS     += -I$(CORE_DIR)/drivers/libretro/libretro-common/include
+endif
 LIB_CPPFLAGS := $(COREDEFINES) -DNDEBUG $(INCFLAGS)
 
 ifeq ($(PLAY),1)

@@ -48,8 +48,10 @@
 //   TinyNES WANT <address> <bytes>
 // and receives one more image in the boot ROM's load protocol
 // (firmware/boot/load.c, tinynes.h) at that address, holding "TNR1", the
-// cartridge's length and the .nes file, from tools/load_ae350.py --file or
-// TinyTang's ae350run. Once it has the cartridge it prints
+// cartridge's length and the .nes file, or a .zip holding one .nes, which it
+// unpacks and reports as TinyNES NES ZIP <name> <bytes> (or TinyNES NES BAD
+// ZIP <why>), from tools/load_ae350.py --file or TinyTang's ae350run. Once it
+// has the cartridge it prints
 //   TinyNES LINK
 // and turns the UART to link mode (desk_link.sv, tinynes.h): from then on
 // its text goes out in TinyTang's frames, and TinyTang draws TinyDesk's layer
@@ -227,6 +229,8 @@ extern "C" {
 // tn_wait_tx_idle, to let the save that is printed last reach the pin.
 #include "uart.h"
 }
+// A cartridge may come as a .zip holding one .nes.
+#include "cart_zip.h"
 // The largest cartridge taken, and the payload's magic, "TNR1".
 const size_t CART_MAX = 2u << 20;
 const uint32_t CART_MAGIC = 0x31524e54u;
@@ -690,7 +694,10 @@ extern "C" void FCEUD_SetPalette(uint16_t index, uint8_t r, uint8_t g, uint8_t b
 
 #ifdef NES_PLAY
 // Ask for the cartridge and receive it into the heap; its bytes and length,
-// or nullptr if none came within 30 seconds or it was malformed.
+// or nullptr if none came within 30 seconds or it was malformed. A .zip is
+// unpacked here: its one .nes entry is inflated and its CRC-32 checked
+// (cart_zip.c), so the core only ever sees the .nes, and the zip, already
+// checked by the load protocol, is freed.
 const uint8_t *receive_cart(size_t &size)
 {
 	uint8_t *buffer = static_cast<uint8_t *>(malloc(CART_MAX + 8));
@@ -709,6 +716,21 @@ const uint8_t *receive_cart(size_t &size)
 	if (got != (uintptr_t)buffer || magic != CART_MAGIC || length == 0 ||
 	    length > CART_MAX)
 		return nullptr;
+	if (cart_is_zip(buffer + 8, length)) {
+		uint8_t *nes = nullptr;
+		size_t nes_len = 0;
+		char name[96];
+		const char *why = cart_unzip(buffer + 8, length, CART_MAX, &nes,
+					     &nes_len, name, sizeof name);
+		free(buffer);
+		if (why) {
+			printf("TinyNES NES BAD ZIP %s\n", why);
+			return nullptr;
+		}
+		printf("TinyNES NES ZIP %s %lu\n", name, (unsigned long)nes_len);
+		size = nes_len;
+		return nes;
+	}
 	size = length;
 	return buffer + 8;
 }

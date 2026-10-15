@@ -402,7 +402,14 @@ it prints `TinyNES WANT <address> <bytes>` and takes one more image in the
 load protocol at that address, `TNR1`, the cartridge's length and the `.nes`
 file, received by the boot ROM's own `firmware/boot/load.c` compiled into it,
 into a 2 MiB buffer. `load_ae350.py --file <rom>` answers it, as TinyTang's
-`ae350run` does on the board. The Wii Classic Controllers on
+`ae350run` does on the board. The file may also be a `.zip` holding one
+`.nes`: `cart_zip.c` finds that entry through the zip's central directory,
+inflates it with libretro-common's DEFLATE decoder, already in the fetched
+FCEUmm tree under the MIT licence, checks the CRC-32 the zip stores, and
+prints `TinyNES NES ZIP <name> <bytes>`, or `TinyNES NES BAD ZIP <why>` and
+ends as for a bad cartridge. `tests/test_cart_zip.sh <folder>` runs the same
+code on the PC over every `.zip` in a folder and compares each with the
+`.nes` of the same name beside it. The Wii Classic Controllers on
 PMOD0's first two buses are players 1 and 2: the D-pad or the left stick
 for the directions, B for the NES's A, Y for its B, `-` for Select and `+`
 for Start; A and X do nothing. A controller that is absent or not a Classic reads as
@@ -450,6 +457,12 @@ and the cartridge. From the shell:
 ```sh
 FILE="/root/media/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/open/nes.tdsh
 ```
+
+A zipped cartridge is started the same way from the shell, with `FILE` naming
+the `.zip`; by the user's decision a `.zip` opened on the desktop does not
+start TinyNES, so there is no `zip.tdsh`. `ae350run` names the save after the
+file with its extension replaced, so `Game.zip` and `Game.nes` share
+`/root/saves/nes/Game.sav`.
 
 ### Accuracy tests and the FCEUmm patches
 
@@ -949,7 +962,9 @@ files allow any later version, and a few carry other notices, such as
 `boards/pic16c5x.c` under BSD-3-Clause. The libretro ports and
 libretro-common are maintained by the libretro team. TinyNES fetches the
 core with `tools/fetch_fceumm.sh` and does not distribute it; the patches it
-applies, in `patches/fceumm/`, are GPL-2.0-or-later. 100th Coin's AccuracyCoin
+applies, in `patches/fceumm/`, are GPL-2.0-or-later. The player's zip
+reader links libretro-common's DEFLATE decoder from the same fetched tree,
+which carries its own MIT notice (the RetroArch team). 100th Coin's AccuracyCoin
 and TriCNES are MIT; the cartridge is fetched by
 `tools/fetch_accuracycoin.sh` and TriCNES is a reference only. The `nes_bench`
 harness is MIT-licensed, but programs built with the core are GPL and cartridge images belong to their owners; neither is

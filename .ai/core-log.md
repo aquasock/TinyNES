@@ -1340,3 +1340,39 @@ The next cycle, chosen by the user, is zipped cartridges: the player recognising
 - User Test: PASS
 
 ---
+
+## 39 COMMIT Unreleased 2026-10-14T21:25:00-07:00
+
+#### Coming From:
+
+Unreleased e369dd9
+
+#### Purpose:
+
+Let the NES player take a cartridge sent as a `.zip` holding one `.nes`, started from the shell, with double-clicking a `.zip` in TinyDesk left unable to start TinyNES, as the user decided.
+
+#### Outcome:
+
+`ae350run` already sends any file as `TNR1`, its length and its bytes and names the save after the file with its extension replaced, so TinyTang needed no change and `Game.zip` and `Game.nes` share `Game.sav`; the user chose shell launch only, so there is no `zip.tdsh`. The new `firmware/apps/nes_bench/cart_zip.c` finds the one `.nes` entry through the zip's central directory, which also covers zips written with a data descriptor, takes stored or deflated data, inflates with libretro-common's raw DEFLATE decoder from the fetched FCEUmm tree, MIT-licensed and now added to the play build's sources because upstream builds it only with the HD packs, and checks the CRC-32 the zip stores; `receive_cart` in `main.cpp` unpacks a cartridge that begins with a zip header, frees the zip, and prints `TinyNES NES ZIP <name> <bytes>` or `TinyNES NES BAD ZIP <why>`. `tests/test_cart_zip.sh` builds the same file on the PC under the address and undefined-behaviour sanitizers: all 794 zips in the user's local library unpacked byte-identical to their `.nes`, truncated, corrupted, wrong-CRC, no-`.nes`, two-`.nes` and non-zip inputs were each refused with the right reason, and a stored zip and one with a readme beside an upper-case `.NES` loaded. At the user's request the agent reorganised that library, `/run/media/vash/HDD/nes/`, outside this repository: every zip moved into a folder by its title's first letter or digit, every bracketed tag `(Hack)` included removed from the names, the 32 names still over 47 bytes shortened by the agent's judgement within their folder letter with Tetris's Bulletproof release kept distinct, and B and S split into `Ba`, `Be-Bz`, `Sa-Sp` and `Sq-Sz`, leaving 31 folders of at most 61 files whose names are all at most 47 bytes, which TinyDesk's Files app needs (TDESK-017), with undo lists kept in the session's scratchpad; the user copied the tree to the card's `/root/media/nes/`. The player built without warnings, and `tools/deploy_tinytang.sh`, run by the agent in two-wire mode, reloaded `ae350_soc.bin` `5d4f88cd` and installed `961d8ecfa5b348d1e08c585150e41e40d904d71529a315a82b9795ba6a963e00` at 868224 bytes. The user started Super Mario Bros. (40 KB), Kirby's Adventure (490 KB unpacking to the set's largest, 768 KB) and The Legend of Zelda from their zips with `nes.tdsh` from the shell, registered a name in Zelda and found it again after quitting and relaunching, found that double-clicking a `.zip` in the Files app did not start TinyNES, and passed the cycle. The user does not need the three saves left under the old `.nes` names. The README documents zipped cartridges, their shell launch and the licence of the decoder, PROV-007 records it, and TDESK-017 is new. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, checked that the reference's records and fast index list the same ids in the same order, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+The next cycle should be proposed to the user. Open items are a way to start a zipped game from the desktop that the user accepts, since double-clicking is ruled out; the boot test of every cartridge, now on the card as zips, which entry 37 held; the larger AccuracyCoin work of entry 37; the authentic-NES list of entry 36; and TinyDesk's 47-byte name and 63-file folder limits, which the reorganised library now works within.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/cart_zip.c
+- firmware/apps/nes_bench/cart_zip.h
+- firmware/apps/nes_bench/main.cpp
+- tests/cart_zip_host.c
+- tests/test_cart_zip.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
