@@ -379,7 +379,9 @@ image built into the program, with a scripted controller, shows the game on
 HDMI and times each emulated frame against the NES frame period.
 `tools/fetch_fceumm.sh` clones commit
 `ac0d00a7fc01166f84c7bac01d1084ebfd2b865e` into `third_party/`, which git
-ignores, and checks that it is unmodified. The Makefile includes the core's
+ignores, applies TinyNES's patches from `patches/fceumm/` (see *Accuracy
+tests and the FCEUmm patches*), and checks that the tree is exactly that
+commit with them. The Makefile includes the core's
 own `Makefile.common` and builds it as upstream does for unix, but without
 the NTSC filter, the HD texture packs and FCEUmm's libretro driver
 (`src/drivers/libretro/libretro.c`): `main.cpp` takes the driver's place, so
@@ -448,6 +450,46 @@ and the cartridge. From the shell:
 ```sh
 FILE="/root/media/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/open/nes.tdsh
 ```
+
+### Accuracy tests and the FCEUmm patches
+
+`tools/fetch_accuracycoin.sh` fetches 100th Coin's AccuracyCoin test cartridge
+(MIT) at commit `6bee919529289c555803b612b8c9e4f7eaaeeabb`, and
+`tools/accuracycoin.py` runs it on the PC build of `nes_bench`, the same core
+and driver as the board. A scripted controller marks tests to skip, B on a
+test or on a page's index, and presses Start on the index; the program then
+writes the NES's work RAM at the end of the run (`NES_RAM_DUMP=<file>`, PC
+only), and the script reads each test's result byte at `$0400`-`$04FF`, using
+the cartridge's own source for the pages, the tests and their addresses. It
+prints every test with its success or error code and a summary, and with
+`--expect <file>` lists each change against a saved run and fails if a passing
+test stops passing. Page 19's Misaligned OAM Behavior waits for a sprite zero
+hit FCEUmm never produces and hangs the run, so it is skipped by default:
+
+```sh
+tools/fetch_accuracycoin.sh
+python3 tools/accuracycoin.py [--skip 19.7] [--expect FILE] [--write FILE]
+```
+
+`tests/accuracycoin_expected.txt` is the run with the current series, which
+each new patch is checked against with `--expect`.
+
+The fixes are a patch series, `patches/fceumm/NNNN-*.patch`, applied in name
+order by `tools/fetch_fceumm.sh`, which accepts the checkout only as the
+pinned commit or that commit with exactly the series, and refuses anything
+else rather than overwrite work not yet saved. `tools/fceumm_patch.sh <name>
+"<subject>"` saves changes made in `third_party/fceumm` as the next patch. The
+patches are GPL-2.0-or-later like the code they change
+(`patches/fceumm/README.md`), and where one follows 100th Coin's TriCNES
+emulator (MIT) its header says so. The first seven fix the SH* opcodes'
+address on a page cross, palette reads' open-bus bits, the PPU open bus's
+decay, sprite zero under the left mask, OAM writes and DMA at the OAM address,
+the dummy-read address on a page cross, and the CPU data bus around writes,
+`$4015` and the controller ports; `main.cpp` also turns FCEUmm's Four Score
+off, as its libretro driver does. With them the harness's run goes from 83 to
+90 of 146 passing, Castlevania, Zelda and Chip 'n Dale give the same checksums
+as without them, and on the A25 the benchmark averages 11.08 ms a frame
+against 10.93 ms.
 
 ### Diagnosing the HDMI picture
 
@@ -900,6 +942,9 @@ FCE and Xodnizel's FCE Ultra, with code by CaH4e3 and the others in its
 files allow any later version, and a few carry other notices, such as
 `boards/pic16c5x.c` under BSD-3-Clause. The libretro ports and
 libretro-common are maintained by the libretro team. TinyNES fetches the
-core with `tools/fetch_fceumm.sh` and does not distribute it. The `nes_bench`
+core with `tools/fetch_fceumm.sh` and does not distribute it; the patches it
+applies, in `patches/fceumm/`, are GPL-2.0-or-later. 100th Coin's AccuracyCoin
+and TriCNES are MIT; the cartridge is fetched by
+`tools/fetch_accuracycoin.sh` and TriCNES is a reference only. The `nes_bench`
 harness is MIT-licensed, but programs built with the core are GPL and cartridge images belong to their owners; neither is
 committed.

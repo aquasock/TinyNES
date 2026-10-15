@@ -1,0 +1,25 @@
+Subject: Palette RAM reads take their top two bits from the PPU's open bus
+
+AccuracyCoin's Palette RAM Quirks, error code 5: passes.
+Checked with tools/accuracycoin.py --expect against the run before it, and
+against the nes_bench checksums of Castlevania, Zelda and Chip 'n Dale.
+
+License: GPL-2.0-or-later, as the FCEUmm code it changes (patches/fceumm/README.md).
+
+---
+diff --git a/src/ppu.c b/src/ppu.c
+index fb78963..d423a4b 100644
+--- a/src/ppu.c
++++ b/src/ppu.c
+@@ -223,6 +223,11 @@ static DECLFR(A2007) {
+ 			ret = PALRAM[tmp & 0x1F];
+ 		if (GRAYSCALE)
+ 			ret &= 0x30;
++		/* Palette RAM drives only the low six bits; the top two are the PPU's
++		 * open bus, and the byte read becomes the bus's value (AccuracyCoin's
++		 * Palette RAM Quirks, error code 5). */
++		ret = (ret & 0x3F) | (PPUGenLatch & 0xC0);
++		PPUGenLatch = ret;
+ 		{
+ 			if ((tmp - 0x1000) < 0x2000)
+ 				VRAMBuffer = VPage[(tmp - 0x1000) >> 10][tmp - 0x1000];

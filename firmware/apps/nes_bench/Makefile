@@ -76,6 +76,16 @@ $(PALETTES): $(CORE_DIR)/drivers/libretro/libretro.c $(ROOT)/tools/gen_fceumm_pa
 	python3 -I $(ROOT)/tools/gen_fceumm_palettes.py $< -o $@
 $(call objects,main.cpp): $(PALETTES)
 
+# FRAMES, INPUT, PALETTE and the rest are defines, so a change to them alone
+# would leave main.cpp's object stale: the options are kept in a file that is
+# rewritten only when they change, and both builds of main.cpp depend on it.
+DEFS_STAMP := $(BUILD)/app_defs
+ifneq ($(file <$(DEFS_STAMP)),$(APP_DEFS))
+$(shell mkdir -p $(BUILD))
+$(file >$(DEFS_STAMP),$(APP_DEFS))
+endif
+$(call objects,main.cpp): $(DEFS_STAMP)
+
 ifneq ($(PLAY),1)
 ASFLAGS += -DNES_ROM_FILE='"$(BUILD)/rom.nes"'
 $(call objects,rom.S): $(BUILD)/rom.nes
@@ -109,7 +119,7 @@ $(foreach s,$(filter %.c,$(LIB_SOURCES)),$(eval $(call host_compile,$(s),$$(HOST
 $(eval $(call host_compile,main.cpp,$$(HOST_CXX) -MMD -MP $$(CPPFLAGS) -O2 -std=gnu++20 -Wall -Wextra -Werror))
 $(eval $(call host_compile,rom.S,$$(HOST_CC) $$(APP_DEFS) -DNES_ROM_FILE='"$$(BUILD)/rom.nes"'))
 $(call host_object,rom.S): $(BUILD)/rom.nes
-$(call host_object,main.cpp): $(PALETTES)
+$(call host_object,main.cpp): $(PALETTES) $(DEFS_STAMP)
 
 -include $(HOST_LIB_OBJECTS:.o=.d) $(HOST_APP_OBJECTS:.o=.d)
 

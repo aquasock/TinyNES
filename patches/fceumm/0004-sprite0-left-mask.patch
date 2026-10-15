@@ -1,0 +1,26 @@
+Subject: No sprite-zero hit in the left eight pixels while sprites or background are masked there
+
+AccuracyCoin's Sprite 0 Hit behavior, error codes 8 and 9; the test then stops at
+code E, the hit's exact dot, which FCEUmm's line renderer does not time.
+Checked with tools/accuracycoin.py --expect against the run before it, and
+against the nes_bench checksums of Castlevania, Zelda and Chip 'n Dale.
+
+License: GPL-2.0-or-later, as the FCEUmm code it changes (patches/fceumm/README.md).
+
+---
+diff --git a/src/ppu.c b/src/ppu.c
+index 3cfba9a..f2c188e 100644
+--- a/src/ppu.c
++++ b/src/ppu.c
+@@ -476,6 +476,11 @@ static void CheckSpriteHit(int p) {
+ 	if (sphitx == 0x100) return;
+ 
+ 	for (x = sphitx; x < (sphitx + 8) && x < l; x++) {
++		/* No hit in the left eight pixels while either sprites or the
++		 * background are masked there (AccuracyCoin's Sprite 0 Hit
++		 * behavior, error codes 8 and 9). */
++		if (x < 8 && (PPU[1] & 6) != 6)
++			continue;
+ 		if ((sphitdata & (0x80 >> (x - sphitx))) && !(Plinef[x] & 64) && x < 255) {
+ 			PPU_status |= 0x40;
+ 			sphitx = 0x100;

@@ -1,0 +1,159 @@
+Subject: The PPU's open bus decays bit by bit about 20 frames after it was last driven
+
+AccuracyCoin's PPU Register Open Bus, error code 5: passes. The decay time and
+which accesses drive which bits follow TriCNES's PPUBusDecay (Emulator.cs at
+b6a59a0): writes and $2004 and $2007 reads drive all eight, $2002 reads bits 5-7.
+Checked with tools/accuracycoin.py --expect against the run before it, and
+against the nes_bench checksums of Castlevania, Zelda and Chip 'n Dale.
+
+License: GPL-2.0-or-later, as the FCEUmm code it changes (patches/fceumm/README.md).
+
+---
+diff --git a/src/ppu.c b/src/ppu.c
+index d423a4b..3cfba9a 100644
+--- a/src/ppu.c
++++ b/src/ppu.c
+@@ -106,6 +106,34 @@ uint8_t MMC5HackSPScroll = 0;
+ uint8_t MMC5HackSPPage = 0;
+ 
+ uint8_t VRAMBuffer = 0, PPUGenLatch = 0;
++
++/* The PPU's open bus, PPUGenLatch: each bit keeps the value last driven onto
++ * it for about 20 frames and then decays to 0 (AccuracyCoin's PPU Register
++ * Open Bus, error code 5).  The 20 frames are TriCNES's PPUBusDecayConstant,
++ * 1,786,830 PPU cycles, here in CPU cycles; each bit's last refresh is kept
++ * as a CPU-cycle time. */
++#define PPU_BUS_DECAY_CYCLES 595610
++static uint64_t PPUBusRefreshed[8];
++
++static void PPUBusDrive(uint8_t value, uint8_t mask) {
++	const uint64_t now = timestampbase + timestamp;
++	int i;
++
++	PPUGenLatch = (uint8_t)((PPUGenLatch & ~mask) | (value & mask));
++	for (i = 0; i < 8; i++)
++		if (mask & (1 << i))
++			PPUBusRefreshed[i] = now;
++}
++
++static uint8_t PPUBusRead(void) {
++	const uint64_t now = timestampbase + timestamp;
++	int i;
++
++	for (i = 0; i < 8; i++)
++		if ((PPUGenLatch & (1 << i)) && now - PPUBusRefreshed[i] > PPU_BUS_DECAY_CYCLES)
++			PPUGenLatch &= (uint8_t)~(1 << i);
++	return PPUGenLatch;
++}
+ uint8_t *vnapage[4];
+ uint8_t PPUNTARAM = 0;
+ uint8_t PPUCHRRAM = 0;
+@@ -191,12 +219,12 @@ static DECLFR(A2002) {
+ 
+ 	FCEUPPU_LineUpdate();
+ 	ret = PPU_status;
+-	ret |= PPUGenLatch & 0x1F;
++	ret |= PPUBusRead() & 0x1F;
+ 
+ 	{
+ 		vtoggle = 0;
+ 		PPU_status &= 0x7F;
+-		PPUGenLatch = ret;
++		PPUBusDrive(ret, 0xE0);	/* only the flags are driven */
+ 	}
+ 
+ 	return ret;
+@@ -204,7 +232,7 @@ static DECLFR(A2002) {
+ 
+ static DECLFR(A200x) {	/* Not correct for $2004 reads. */
+ 	FCEUPPU_LineUpdate();
+-	return PPUGenLatch;
++	return PPUBusRead();
+ }
+ 
+ static DECLFR(A2007) {
+@@ -226,8 +254,8 @@ static DECLFR(A2007) {
+ 		/* Palette RAM drives only the low six bits; the top two are the PPU's
+ 		 * open bus, and the byte read becomes the bus's value (AccuracyCoin's
+ 		 * Palette RAM Quirks, error code 5). */
+-		ret = (ret & 0x3F) | (PPUGenLatch & 0xC0);
+-		PPUGenLatch = ret;
++		ret = (ret & 0x3F) | (PPUBusRead() & 0xC0);
++		PPUBusDrive(ret, 0xFF);
+ 		{
+ 			if ((tmp - 0x1000) < 0x2000)
+ 				VRAMBuffer = VPage[(tmp - 0x1000) >> 10][tmp - 0x1000];
+@@ -239,7 +267,7 @@ static DECLFR(A2007) {
+ 		ret = VRAMBuffer;
+ 		{
+ 			if (PPU_hook) PPU_hook(tmp);
+-			PPUGenLatch = VRAMBuffer;
++			PPUBusDrive(VRAMBuffer, 0xFF);
+ 			if (tmp < 0x2000) {
+ 				VRAMBuffer = VPage[tmp >> 10][tmp];
+ 			} else if (tmp < 0x3F00)
+@@ -274,7 +302,7 @@ static DECLFR(A2007) {
+ 
+ static DECLFW(B2000) {
+ 	FCEUPPU_LineUpdate();
+-	PPUGenLatch = V;
++	PPUBusDrive(V, 0xFF);
+ 
+ 	if (!(PPU[0] & 0x80) && (V & 0x80) && (PPU_status & 0x80))
+ 		TriggerNMI2();
+@@ -286,24 +314,24 @@ static DECLFW(B2000) {
+ 
+ static DECLFW(B2001) {
+ 	FCEUPPU_LineUpdate();
+-	PPUGenLatch = V;
++	PPUBusDrive(V, 0xFF);
+ 	PPU[1] = V;
+ 	if (V & 0xE0)
+ 		deemp = V >> 5;
+ }
+ 
+ static DECLFW(B2002) {
+-	PPUGenLatch = V;
++	PPUBusDrive(V, 0xFF);
+ }
+ 
+ static DECLFW(B2003) {
+-	PPUGenLatch = V;
++	PPUBusDrive(V, 0xFF);
+ 	PPU[3] = V;
+ 	PPUSPL = V & 0x7;
+ }
+ 
+ static DECLFW(B2004) {
+-	PPUGenLatch = V;
++	PPUBusDrive(V, 0xFF);
+ 	if (PPUSPL >= 8) {
+ 		if (PPU[3] >= 8)
+ 			SPRAM[PPU[3]] = V;
+@@ -317,7 +345,7 @@ static DECLFW(B2004) {
+ static DECLFW(B2005) {
+ 	uint32_t tmp = TempAddr;
+ 	FCEUPPU_LineUpdate();
+-	PPUGenLatch = V;
++	PPUBusDrive(V, 0xFF);
+ 	if (!vtoggle) {
+ 		tmp &= 0xFFE0;
+ 		tmp |= V >> 3;
+@@ -335,7 +363,7 @@ static DECLFW(B2005) {
+ static DECLFW(B2006) {
+ 	FCEUPPU_LineUpdate();
+ 
+-	PPUGenLatch = V;
++	PPUBusDrive(V, 0xFF);
+ 	if (!vtoggle) {
+ 		TempAddr &= 0x00FF;
+ 		TempAddr |= (V & 0x3f) << 8;
+@@ -352,7 +380,7 @@ static DECLFW(B2006) {
+ 
+ static DECLFW(B2007) {
+ 	uint32_t tmp = RefreshAddr & 0x3FFF;
+-	PPUGenLatch = V;
++	PPUBusDrive(V, 0xFF);
+ 	if (tmp < 0x2000) {
+ 		if (PPUCHRRAM & (1 << (tmp >> 10)))
+ 			VPage[tmp >> 10][tmp] = V;

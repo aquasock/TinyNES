@@ -1264,3 +1264,48 @@ The user approved the next cycle: a deterministic AccuracyCoin harness under `to
 - User Test: PASS
 
 ---
+
+## 37 COMMIT Unreleased 2026-10-14T20:21:40-07:00
+
+#### Coming From:
+
+Unreleased c35863f
+
+#### Purpose:
+
+Measure FCEUmm with 100th Coin's AccuracyCoin through a deterministic harness and start carrying FCEUmm fixes as a patch series in this repository, using the author's MIT TriCNES as the reference, as the user approved.
+
+#### Outcome:
+
+`tools/fetch_accuracycoin.sh` fetches the cartridge and its source at `6bee919` into the git-ignored `third_party/accuracycoin/`, byte-identical to the user's copy, and `tools/accuracycoin.py` builds the PC `nes_bench` with a controller script that marks tests to skip and presses Start on the page index, has it write the NES's RAM at exit through the new host-only `NES_RAM_DUMP`, and decodes each result byte at `$0400`-`$04FF` from the source's own suite tables; its first run parsed nothing because `TestPages:` also appears in a comment, and the unofficial-opcode pages use `tblf1` and `tblf2` lines, both fixed. The script exposed two harness faults in `nes_bench`, a 32-press limit on the controller script, now 64, and `main.cpp` not rebuilding when only `INPUT`, `FRAMES` or `PALETTE` changed, which had left a stale script compiled in; the Makefile now keeps those defines in a file rewritten only when they change, on which both builds of `main.cpp` depend. With page 19 skipped the harness reproduced the cartridge's own screen, 84 of 146; the run hangs in page 19's Misaligned OAM Behavior, which waits for a sprite-zero hit FCEUmm never produces, so the default skips only that test and scores 83, because the rest of page 19 leaves t Register Quirks and Attributes As Tiles failing their sprite-zero precondition. `tools/fetch_fceumm.sh` now applies `patches/fceumm/*.patch` in order and accepts the checkout only as the pinned commit or that commit with exactly the series, refusing anything else rather than overwrite unsaved work, and `tools/fceumm_patch.sh` saves changes as the next patch; a fresh checkout came out identical to the working one, and `patches/fceumm/README.md` records that the patches are GPL-2.0-or-later. Seven patches followed, each measured with `--expect` against the run before: 0001 the SH* opcodes' address on a page cross, which clears code 1 but stops at code 7, the RDY case; 0002 palette reads' open-bus bits, passing Palette RAM Quirks; 0003 the PPU open bus's per-bit decay after TriCNES's 20 frames, passing PPU Register Open Bus; 0004 sprite zero under the left mask, clearing codes 8 and 9 and stopping at code E, the exact dot; 0005 OAM writes and OAM DMA at the OAM address in place of FCEUmm's redirection of the first bytes, passing Misaligned OAM DMA; 0006 the dummy-read address on a page cross, which FCEUmm formed by flipping bit 8, passing Dummy read cycles and JSR Edge Cases; and 0007 writes driving the data bus, `$4015` reads leaving it and its bit 5, and the controller ports' bits 5 to 7 as open bus, passing Open Bus. `main.cpp` also calls `FCEUI_DisableFourScore(1)`, as FCEUmm's libretro driver does by default, because the core's Four Score answered controller reads 9 to 24, which passes Controller Clocking with success code 2 and moves Controller Strobing to code 4. The default run went from 83 to 90 of 146 with no test regressed, saved as `tests/accuracycoin_expected.txt`. Castlevania, Zelda and Chip 'n Dale gave the same checksums over 3,600 PC frames with and without the series, from an unpatched copy in `build/fceumm-clean` because the Makefile's object paths need the core inside the repository. Loaded by the agent in two-wire mode, `tools/deploy_tinytang.sh` reloaded `ae350_soc.bin` `5d4f88cd` and installed the patched player `31bffb1bbef7883a047b379e994fbe09c856a8841e785d39122504a9f39a42bb` at 860084 bytes, 11,896 more than before because the `$4015` check is inlined into every read, and the Castlevania benchmark averaged 11,083 us a frame (max 12,345) against 10,930 (12,214) unpatched, 150.1 against 152.2 percent, all 16 checksum lines equal to each other and to the PC's `VIDEO=f2160661 AUDIO=4512be2f`. The user played on HDMI, ran AccuracyCoin on the board with the patched player, saw 90, and passed the cycle; the user also found TinyDesk slow to open a large NES folder and then fast, and the agent noted from `third_party/tinydesk/apps/files.c` that the Files app lists at most 64 entries a folder. The README documents the harness and the series, PROV-007 now records the carried patches, and PROV-009 and EMU-007 are new. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, checked that the reference's records and fast index list the same ids in the same order, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+The remaining failures are three larger pieces, each its own cycle for the user to choose among: the DMC DMA's cycle stealing and its effect on the data bus, about twenty tests across pages 13, 14, 15 and 20 and the RDY case of the SH* opcodes; the CPU's get and put cycle parity, behind Controller Strobing and Frame Counter IRQ; and PPU dot timing, behind page 18, the sprite-zero dot and pages 21 and 22, which with misaligned OAM evaluation would also end the page-19 hang. Each costs the A25 time and is to be measured as this cycle measured its patches. The Files app's 64-entry limit is TinyDesk's, in TinyTang's dependency, and the user has not asked for it to change; the authentic-NES list of entry 36 also waits for the user's choice.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+- patches/fceumm/0001-sh-page-cross.patch
+- patches/fceumm/0002-palette-open-bus.patch
+- patches/fceumm/0003-ppu-bus-decay.patch
+- patches/fceumm/0004-sprite0-left-mask.patch
+- patches/fceumm/0005-oam-address-writes.patch
+- patches/fceumm/0006-dummy-read-address.patch
+- patches/fceumm/0007-cpu-open-bus.patch
+- patches/fceumm/README.md
+- tests/accuracycoin_expected.txt
+- tools/accuracycoin.py
+- tools/fceumm_patch.sh
+- tools/fetch_accuracycoin.sh
+- tools/fetch_fceumm.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

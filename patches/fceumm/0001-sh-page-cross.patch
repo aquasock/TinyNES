@@ -1,0 +1,71 @@
+Subject: SHA, SHX, SHY and SHS: the stored value replaces the target's high byte on a page cross
+
+AccuracyCoin's Unofficial Instructions, error code 1, on SHA (both forms), SHS, SHY
+and SHX: success code 1, the high byte ANDed with X and A, for SHA and SHS.
+The tests then stop at code 7, the RDY case, which needs cycle-exact DMC DMA.
+Follows TriCNES's opcodes $93, $9B, $9C, $9E and $9F (Emulator.cs at b6a59a0).
+Checked with tools/accuracycoin.py --expect against the run before it, and
+against the nes_bench checksums of Castlevania, Zelda and Chip 'n Dale.
+
+License: GPL-2.0-or-later, as the FCEUmm code it changes (patches/fceumm/README.md).
+
+---
+diff --git a/src/ops.h b/src/ops.h
+index a22d4a9..3f8d90e 100644
+--- a/src/ops.h
++++ b/src/ops.h
+@@ -456,17 +456,17 @@ case 0x43: RMW_IX(LSR;EOR);
+ case 0x53: RMW_IY(LSR;EOR);
+ 
+ /* AXA - SHA */
+-case 0x93: ST_IY(_A&_X&(((A-_Y)>>8)+1));
+-case 0x9F: ST_ABY(_A&_X&(((A-_Y)>>8)+1));
++case 0x93: ST_SH_IY(_A&_X);
++case 0x9F: ST_SH_ABY(_A&_X);
+ 
+ /* SYA */
+-case 0x9C: ST_ABX(_Y&(((A-_X)>>8)+1));
++case 0x9C: ST_SH_ABX(_Y);
+ 
+ /* SXA */
+-case 0x9E: ST_ABY(_X&(((A-_Y)>>8)+1));
++case 0x9E: ST_SH_ABY(_X);
+ 
+ /* XAS */
+-case 0x9B: _S=_A&_X;ST_ABY(_S& (((A-_Y)>>8)+1) );
++case 0x9B: _S=_A&_X;ST_SH_ABY(_S);
+ 
+ /* TOP */
+ case 0x0C: LD_AB(;);
+diff --git a/src/x6502.c b/src/x6502.c
+index 6250f2a..16c0092 100644
+--- a/src/x6502.c
++++ b/src/x6502.c
+@@ -313,6 +313,27 @@ redundant) on the variable "x".
+ #define ST_IX(r)        { uint32_t A; GetIX(A); WrMem(A, r); break; }
+ #define ST_IY(r)        { uint32_t A; GetIYWR(A); WrMem(A, r); break; }
+ 
++/* SHA, SHX, SHY and SHS store the register(s) ANDed with the high byte of the
++ * base address plus one, and when the index carries into the high byte the
++ * CPU puts that same value on the address bus's high byte, so the store lands
++ * on a page chosen by the value (AccuracyCoin's Unofficial Instructions,
++ * error code 1; for SHA and SHS this is its success code 1, the high byte
++ * ANDed with both X and A). */
++#define ST_SH(get, i, r) {									\
++	uint32_t A, base;										\
++	uint8_t v;												\
++	get;													\
++	base = (A - (i)) & 0xFFFF;								\
++	v = (r) & ((base >> 8) + 1);							\
++	if ((base ^ A) & 0xFF00)								\
++		A = (A & 0x00FF) | ((uint32_t)v << 8);				\
++	WrMem(A, v);											\
++	break;													\
++}
++#define ST_SH_ABX(r)    ST_SH(GetABIWR(A, _X), _X, r)
++#define ST_SH_ABY(r)    ST_SH(GetABIWR(A, _Y), _Y, r)
++#define ST_SH_IY(r)     ST_SH(GetIYWR(A), _Y, r)
++
+ static const uint8_t CycTable[256] =
+ {
+ /*0x00*/ 7, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 4, 4, 6, 6,

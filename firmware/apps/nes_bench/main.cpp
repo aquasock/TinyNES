@@ -36,7 +36,9 @@
 // emphasis of every CHECK-th frame, AUDIO every frame's samples. OVER
 // counts frames slower than the NES frame period, SPEED is that period
 // over the average frame time. On the PC, NES_DUMP=<dir> in the environment
-// also saves the CHECK frames there as <frame>.ppm. PALETTE names the
+// also saves the CHECK frames there as <frame>.ppm, and NES_RAM_DUMP=<file>
+// writes the NES's 2 KiB of work RAM there when the run ends, which is how
+// tools/accuracycoin.py reads a test cartridge's results. PALETTE names the
 // palette the game is shown in: fceumm, the core's own, or one of the
 // presets of FCEUmm's libretro driver (tools/gen_fceumm_palettes.py),
 // chosen by NES_PALETTE here and by the host under PLAY=1.
@@ -120,11 +122,13 @@ FCEUGI *FCEUI_LoadGame(const char *name, const uint8_t *databuf, size_t size,
 		       void (*post_load)(void));
 void FCEUI_Emulate(uint8_t **xbuf, int32_t **sound, int32_t *sound_size, int skip);
 void FCEUI_SetInput(int port, int type, void *ptr, int attrib);
+void FCEUI_DisableFourScore(int s);
 void FCEUI_Sound(int rate);
 void FCEUI_SetSoundVolume(uint32_t volume);
 void FCEUI_CloseGame(void);
 void FCEUI_Kill(void);
 extern uint8_t *XBuf, *XDBuf;
+extern uint8_t RAM[0x800];
 extern int option_ramstate;
 // fceu_settings.c: the five APU channel volumes, which FCEUI_Initialize
 // leaves at 0.
@@ -275,7 +279,7 @@ struct Press {
 	unsigned first, count;
 	uint8_t buttons;
 };
-Press presses[32];
+Press presses[64];
 unsigned press_count;
 
 struct Button {
@@ -860,6 +864,10 @@ int main()
 	uint32_t joypads = 0;
 	FCEUI_SetInput(0, SI_GAMEPAD, &joypads, 0);
 	FCEUI_SetInput(1, SI_GAMEPAD, &joypads, 0);
+	// A plain NES has no Four Score: without this the core answers the
+	// adapter's reads 9 to 24 (players 3 and 4, then its signature) where a
+	// lone controller reads 1, which is also the libretro driver's default.
+	FCEUI_DisableFourScore(1);
 	start = ticks() - start;
 
 	printf("TinyNES NES CORE=%s ROM=%u CRC=%08lx START=%llu\n", NES_CORE,
@@ -1173,6 +1181,15 @@ int main()
 	}
 #endif
 
+#ifndef __riscv
+	// The work RAM as the run left it, for a test cartridge's results.
+	if (const char *ram_dump = getenv("NES_RAM_DUMP")) {
+		if (FILE *out = fopen(ram_dump, "wb")) {
+			fwrite(RAM, 1, sizeof RAM, out);
+			fclose(out);
+		}
+	}
+#endif
 	// The last frame stays on screen; the core frees only its own buffer.
 	XBuf = core_xbuf;
 	FCEUI_CloseGame();

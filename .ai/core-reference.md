@@ -310,6 +310,8 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Which clocks and sample rates does the I2S2's CS4344 accept, and how does TinyNES clock it? | AUD | AUD-001 |
 | What is the REYAX RYLR998 LoRa module, what does it need, and where could it attach? | LORA | LORA-001 |
 | Why was FCEUmm silent under nes_bench's own driver, and what does real sound cost? | EMU | EMU-006 |
+| How accurate is FCEUmm by AccuracyCoin, what do TinyNES's patches fix, and what do they cost? | EMU | EMU-007 |
+| What are AccuracyCoin and TriCNES, and on what terms does TinyNES use them? | PROV | PROV-009 |
 | Which silicon revision is this board, and which revision is the core image? | PSX | PSX-001 |
 | How much logic and block RAM does the device have? | PSX | PSX-002 |
 | Which FPGA pins carry the core UART, and where is the board's clock? | PSX | PSX-003 |
@@ -443,8 +445,9 @@ PROV-001: "Lineage as the user states it: nand2mario's TangCore is the origin fo
 PROV-003: "colibri is CERN's vendor-independent, fully verified, open-source VHDL common library at gitlab.cern.ch/colibri/colibri, with an unofficial SystemVerilog port at github.com/kavierim/colibri-sv pinned to upstream 3fa78412; read the port when working in SystemVerilog since it ships an AGENTS.md and targets Verilator and free tooling, but treat the original as the authority; licensed CERN-OHL-W-2.0 (weakly reciprocal), not MIT, with no code copied here"
 PROV-005: "TinyTang is MIT with thirteen Apache-2.0 files: nand2mario's JTAG programmer, and ten Phosphor transport files and two host tests written by this project's author in Tang-Control; it descends from nand2mario's TangCore firmware-bl616 through Tang-Control, a fork of it, and copies no other TangCore source; THIRD_PARTY.md must keep saying the UART protocol was read from GPL-3.0 nestang as a specification, not copied"
 PROV-006: "libretro Nestopia is GPL-2.0-or-later (Freij, Nestopia UE, Carmichael and others); TinyNES measured commit 135dfa6, never vendored, and stopped fetching it when FCEUmm was chosen"
-PROV-007: "libretro FCEUmm is GPL-2.0 (mostly or-later, with a few BSD or unmarked files); tools/fetch_fceumm.sh fetches commit ac0d00a into git-ignored third_party/fceumm, and programs linked with it, and the palette tables generated from its libretro.c, stay in build/"
+PROV-007: "libretro FCEUmm is GPL-2.0 (mostly or-later, with a few BSD or unmarked files); tools/fetch_fceumm.sh fetches commit ac0d00a into git-ignored third_party/fceumm and applies TinyNES's GPL-2.0-or-later patches/fceumm/ series, and programs linked with it, and the palette tables generated from its libretro.c, stay in build/"
 PROV-008: "The desk layer's font, fpga/ae350_soc/desk_font.hex, is Daniel Hepper's public-domain font8x8 (font8x8_basic.h) at 8e279d2, fetched by tools/fetch_font8x8.sh and converted by tools/gen_desk_font.py"
+PROV-009: "100th Coin's (Chris Siebert's) AccuracyCoin test cartridge and TriCNES emulator are MIT; TinyNES fetches AccuracyCoin at 6bee919 into git-ignored third_party/accuracycoin and uses TriCNES at b6a59a0 as a reference for its FCEUmm patches, copying no code"
 PSX-001: "This board is GW5AST-138 revision C (package mark 2518CA0N), while the console138k core image it loads is built for revision B and works anyway"
 PSX-002: "GW5AST-138: 138,240 LUTs, 139,095 registers, 340 BSRAM blocks of 18 Kbit, about 765 KB"
 PSX-003: "50 MHz oscillator on FPGA pin V22; the BL616 control UART reaches the FPGA on V14 (FPGA RX) and U15 (FPGA TX), LVCMOS33 - the other end of the link PROT-003 describes from the BL616 side; all three confirmed on this board by the AE350 system at 2 Mbaud"
@@ -495,6 +498,7 @@ EMU-003: "8.23 ms of FCEUmm's 19.14 ms XRGB8888 frame on the A25 is the 8-bit to
 EMU-004: "With its own driver in place of libretro.c, FCEUmm's core draws straight into the SDRAM frame buffers and Castlevania runs on HDMI at 10.82 ms a frame (max 12.02), 153.7 percent, every frame shown at the next vertical blank, checksums matching the PC"
 EMU-005: "Played by hand with a Wii Classic Controller Pro on PMOD0 bus 1, nes_bench's PLAY=1 build ran Castlevania at 11.34 to 11.53 ms a frame (max 12.50) over three runs of 3,799 to 4,530 frames, no frame over the period, LATE 0 and MISSED 0; since entry 21 the player runs in link mode with TinyDesk over the game on a HOME tap"
 EMU-006: "FCEUI_Initialize clears FSettings, leaving the five APU channel volumes at 0, so nes_bench's own driver mixed silence until it set them to 256 as the libretro driver does; with real sound Castlevania still runs at 153.5 percent, and the play build plays it on the I2S2 with no underrun"
+EMU-007: "AccuracyCoin on FCEUmm ac0d00a under nes_bench: 84 of 146 with page 19 skipped, 83 with only its Misaligned OAM Behavior skipped, which hangs; TinyNES's seven patches and the Four Score turned off raise that to 90, the user saw 90 on the board, and the A25 benchmark slows from 10.93 to 11.08 ms a frame with identical checksums"
 WII-001: "Wii extensions use I2C address 0x52; write F0=55 then FB=00 to disable encryption, read six identity bytes at FA and six format-1 data bytes after setting pointer 00; NintendoExtensionCtrl waits 10 ms, 20 ms and 175 us at those steps and accepts Classic IDs 00/01 00 A4 20 00..03 01; buttons in bytes 4-5 are active low"
 AUD-001: "The CS4344 takes a 256x MCLK at 2 to 50 kHz (MCLK 0.512 to 50 MHz, 45 to 55 percent duty) in I2S, with MCLK, SCLK and LRCK synchronous but no phase set; TinyNES counts all three from the 75 MHz bus clock, MCLK 12.5 MHz, Fs 48,828.125 Hz, measured 48,827.968 Hz on the board"
 LORA-001: "The REYAX RYLR998 (UPC 612789267033) is a five-pin 3.3 V UART LoRa module, AT-command controlled, 820 to 960 MHz, -20 to +22 dBm out, -129 dBm sensitivity, 140 mA transmitting at +22 dBm; RYLR998_M4 has an I-PEX MHF4 connector instead of the built-in antenna; not fitted or tested here"
@@ -2102,16 +2106,17 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - record_id: PROV-007
   kind: EXTERNAL
   topic_id: PROV
-  title: "libretro FCEUmm is distributed under GPL-2.0, mostly or-later, and is fetched at a pinned commit, never vendored"
+  title: "libretro FCEUmm is distributed under GPL-2.0, mostly or-later, and is fetched at a pinned commit with TinyNES's own patches applied, never vendored"
   status: VERIFIED
   verified_date: 2026-10-14
   statement: "libretro/libretro-fceumm's Copying is the GNU GPL version 2. Most source files, such as src/fceu.c (Copyright 2003 Xodnizel) and src/ppu.c (Copyright 1998 BERO, 2003 Xodnizel), allow 'any later version'; src/boards/pic16c5x.c is BSD-3-Clause (Tony La Porta, from MAME), src/md5.c says only 'licensed under the GPL', and src/boards/emu2413.c (Mitsutaka Okazaki) states no licence. Its Authors file credits BERO with the base FCE code, Xodnizel with most of FCE Ultra, and CaH4e3, Quietust, Mitsutaka Okazaki and others. Commit ac0d00a7fc01166f84c7bac01d1084ebfd2b865e of 2026-10-11 is the head of master that TinyNES uses."
-  consequence: "tools/fetch_fceumm.sh clones that commit into third_party/fceumm/, which .gitignore excludes, and fails if HEAD differs or the tree has local changes, so TinyNES (MIT) carries no FCEUmm source. Programs linked with it, such as build/firmware/apps/nes_bench/fceumm/nes_bench.elf, are GPL-2.0 and stay in build/; with a cartridge image built in they are for local use only. The preset palettes the player offers are the palettes[] table of src/drivers/libretro/libretro.c, a file that carries no notice of its own and so falls under the repository's Copying; tools/gen_fceumm_palettes.py (MIT, code only) generates them into the build directory as fceumm_palettes.h at build time, so no table is committed here. README.md's licensing section names the authors and these terms."
+  consequence: "tools/fetch_fceumm.sh clones that commit into third_party/fceumm/, which .gitignore excludes, applies the patch series in patches/fceumm/ in name order, and fails if HEAD differs or the tree is anything but that commit with exactly the series, so TinyNES (MIT) carries no FCEUmm source, only its patches, which are GPL-2.0-or-later like the code they change and say so in patches/fceumm/README.md. Programs linked with it, such as build/firmware/apps/nes_bench/fceumm/nes_bench.elf, are GPL-2.0 and stay in build/; with a cartridge image built in they are for local use only. The preset palettes the player offers are the palettes[] table of src/drivers/libretro/libretro.c, a file that carries no notice of its own and so falls under the repository's Copying; tools/gen_fceumm_palettes.py (MIT, code only) generates them into the build directory as fceumm_palettes.h at build time, so no table is committed here. README.md's licensing section names the authors and these terms."
   sources:
     - "https://github.com/libretro/libretro-fceumm commit ac0d00a7fc01166f84c7bac01d1084ebfd2b865e: Copying, Authors, src/fceu.c, src/ppu.c, src/md5.c, src/boards/pic16c5x.c and src/boards/emu2413.c headers"
     - "This project's tools/fetch_fceumm.sh, .gitignore (/third_party/) and README.md (NES emulator benchmark; References and licensing)"
+    - "This project's patches/fceumm/README.md and tools/fceumm_patch.sh"
     - "src/drivers/libretro/libretro.c at ac0d00a: struct st_palettes palettes[] (23 presets) and its file head, and this project's tools/gen_fceumm_palettes.py and firmware/apps/nes_bench/Makefile (PALETTES)"
-  verification: "Read from the fetched tree on 2026-10-12 (core-log entry 11); fetch_fceumm.sh reported the pinned commit and a clean tree. Only the file headers named here were read for exceptions. A search for C files without a GPL notice, cut off at ten results, also listed files with no notice at all, such as src/filter.c, src/input/cursor.c and src/boards/vrcirq.c; the tree was not checked exhaustively. Revised 2026-10-14 (core-log entry 35): the palette tables, read from libretro.c, whose head carries no notice, and generated into build/ rather than committed; the generated tables were compared with the C compiler's own reading of upstream's table and all 23 x 64 colours matched."
+  verification: "Read from the fetched tree on 2026-10-12 (core-log entry 11); fetch_fceumm.sh reported the pinned commit and a clean tree. Only the file headers named here were read for exceptions. A search for C files without a GPL notice, cut off at ten results, also listed files with no notice at all, such as src/filter.c, src/input/cursor.c and src/boards/vrcirq.c; the tree was not checked exhaustively. Revised 2026-10-14 (core-log entry 35): the palette tables, read from libretro.c, whose head carries no notice, and generated into build/ rather than committed; the generated tables were compared with the C compiler's own reading of upstream's table and all 23 x 64 colours matched. Revised 2026-10-14 (core-log entry 37): TinyNES now carries a GPL-2.0-or-later patch series that the fetch script applies and verifies."
 
 - record_id: PROV-008
   kind: EXTERNAL
@@ -2125,6 +2130,20 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "https://github.com/dhepper/font8x8 commit 8e279d2d864e79128e96188a6b9526cfa3fbfef9: README, font8x8_basic.h header"
     - "This project's tools/fetch_font8x8.sh, tools/gen_desk_font.py, fpga/ae350_soc/desk_font.hex and README.md"
   verification: "Fetched and converted on 2026-10-13 (core-log entry 21); glyph 'A' in the hex file matches the README's own encoding of it, 0c 1e 33 33 3f 33 33 00, and tests/video_tb.sv checks the same. The desk layer drew TinyDesk legibly with it on this board."
+
+- record_id: PROV-009
+  kind: EXTERNAL
+  topic_id: PROV
+  title: "AccuracyCoin and TriCNES, by 100th Coin, are MIT; one is fetched, the other read"
+  status: VERIFIED
+  verified_date: 2026-10-14
+  statement: "github.com/100thCoin/AccuracyCoin is a 32 KiB NROM test cartridge, AccuracyCoin.nes, with its assembly source AccuracyCoin.asm and README.md, under the MIT licence; commit 6bee919529289c555803b612b8c9e4f7eaaeeabb of 2026-10-10 holds 146 counted tests on 22 pages, five more DRAW tests that only print, and the README's error and success codes. Each test's result is a byte at $0400 to $04FF named by a result_* label, whose low two bits are 1 for pass, 2 for fail and 3 for running and whose upper six bits are the success or error code shown on screen (0 to 9, then A for 10); $FF marks a test to skip, which B sets on a test or, on a page index, on the whole page, and Start on a page index runs every test. github.com/100thCoin/TriCNES is the author's C# NES emulator, MIT, copyright 2025 Chris Siebert, read at b6a59a094672c825c9228debd2d5a9b70029c9db of 2026-10-12."
+  consequence: "tools/fetch_accuracycoin.sh fetches the cartridge at that commit into third_party/accuracycoin/, which .gitignore excludes, and fails if HEAD differs or the tree is changed; tools/accuracycoin.py reads its results from the PC build's RAM dump using the source's TestPages suites, table, tblf1 and tblf2 lines and result_* definitions. TriCNES is read as a reference for the behaviour of the FCEUmm patches (patches/fceumm/), whose headers name it where a patch follows it; no TriCNES code is copied, and if any is adapted later its MIT notice goes with it."
+  sources:
+    - "https://github.com/100thCoin/AccuracyCoin commit 6bee919: LICENSE, README.md (Navigating the menus, Error Codes, Success Codes), AccuracyCoin.asm (TestPages, Suite_*, RunTest, TEST_Fail, result_* = $04xx)"
+    - "https://github.com/100thCoin/TriCNES commit b6a59a0: LICENSE, Emulator.cs (opcodes $93, $9B, $9C, $9E and $9F; PPUBusDecay and PPUBusDecayConstant)"
+    - "This project's tools/fetch_accuracycoin.sh, tools/accuracycoin.py and patches/fceumm/README.md"
+  verification: "Both repositories were cloned on 2026-10-14 (core-log entry 37) and their LICENSE files read; the fetched AccuracyCoin.nes is byte-identical to the user's copy, and tools/accuracycoin.py's decode of the RAM reproduced the cartridge's own results screen, 84 of 146 with page 19 skipped, before any patch."
 
 - record_id: PSX-001
   kind: DEVICE
@@ -2811,6 +2830,20 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "libretro/libretro-fceumm ac0d00a: src/fceu.c FCEUI_Initialize, src/fceu.h FCEUS, src/drivers/libretro/libretro.c set_apu_channels and the fceumm_apu options"
     - "This project's firmware/apps/nes_bench/main.cpp and fceu_settings.c"
   verification: "Measured on 2026-10-13 (core-log entry 18): the PC build's samples with a temporary peak probe, before and after the fix; on the board in two-wire mode, the benchmark and the play build on the ae350_soc image 7cc7acb9; the user played the game and said it looked and sounded perfect."
+
+- record_id: EMU-007
+  kind: EXTERNAL
+  topic_id: EMU
+  title: "AccuracyCoin's score under FCEUmm, before and after TinyNES's patches, and what the patches cost"
+  status: VERIFIED
+  verified_date: 2026-10-14
+  statement: "Under nes_bench's own driver and libretro FCEUmm ac0d00a, AccuracyCoin (PROV-009) run with Start on page 1's index hangs in page 19's Misaligned OAM Behavior, which waits for a sprite zero hit from misaligned OAM that FCEUmm's sprite evaluation never produces, so no results table is drawn. With page 19 skipped it scores 84 of 146 passed with 10 skipped; with only that test skipped, page 19's other tests leave the PPU so that t Register Quirks and Attributes As Tiles fail their sprite-zero precondition, and it scores 83. The failures that remain cluster on the DMC DMA's cycle (pages 13, 14 and 15 and INC $4014, whose codes say the DMA should update the data bus or is mistimed), PPU dot timing (page 18, $2002 flag timing, sprite zero's exact dot, pages 21 and 22) and the CPU's get and put cycle parity (Controller Strobing code 4, Frame Counter IRQ code 7). FCEUmm's Four Score emulation is on unless a driver calls FCEUI_DisableFourScore(1), as its libretro driver does by default (libretro.c), and with it on, controller reads 9 to 24 answer the adapter instead of 1."
+  consequence: "TinyNES's patch series 0001 to 0007 and nes_bench turning the Four Score off take the default run (19.7 skipped) to 90 of 146, the run tests/accuracycoin_expected.txt holds: Palette RAM Quirks, PPU Register Open Bus, Misaligned OAM DMA, Dummy read cycles, JSR Edge Cases, Open Bus and Controller Clocking (success code 2) pass, while SH*, Sprite 0 Hit and Controller Strobing move to later error codes that need DMA, dot or cycle-parity timing. Castlevania (USA) (Rev A), The Legend of Zelda (USA) (Rev 1) and Chip 'n Dale Rescue Rangers (USA) give the same VIDEO and AUDIO checksums over 3,600 PC frames with and without the series, and Castlevania's 1,800-frame benchmark on the A25 averaged 11,083 us (max 12,345) against 10,930 (12,214) unpatched, 150.1 against 152.2 percent, with all 16 checksum lines equal and equal to the PC's VIDEO=f2160661 AUDIO=4512be2f; the read path's $4015 check and the write path's data-bus store are the hot-path costs."
+  sources:
+    - "This project's tools/accuracycoin.py, tests/accuracycoin_expected.txt, patches/fceumm/0001 to 0007 and firmware/apps/nes_bench/main.cpp (FCEUI_DisableFourScore, NES_RAM_DUMP)"
+    - "libretro FCEUmm ac0d00a: src/input.c (FSDisable, ReadGP, JPRead), src/drivers/libretro/libretro.c (FCEUI_DisableFourScore(1))"
+    - "AccuracyCoin 6bee919 README.md error codes for the tests named"
+  verification: "Measured on 2026-10-14 (core-log entry 37) on the PC build and, for speed and checksums, on the board in two-wire mode with ae350_soc.bin 5d4f88cd; the user ran the cartridge on the board with the patched player and reported 90."
 
 - record_id: WII-001
   kind: EXTERNAL

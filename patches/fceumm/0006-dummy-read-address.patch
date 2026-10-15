@@ -1,0 +1,35 @@
+Subject: Indexed reads that cross a page dummy-read the base's page, not bit 8 flipped
+
+AccuracyCoin's Dummy read cycles, error code 3, and JSR Edge Cases, error code 3:
+both pass.
+Checked with tools/accuracycoin.py --expect against the run before it, and
+against the nes_bench checksums of Castlevania, Zelda and Chip 'n Dale.
+
+License: GPL-2.0-or-later, as the FCEUmm code it changes (patches/fceumm/README.md).
+
+---
+diff --git a/src/x6502.c b/src/x6502.c
+index 16c0092..0658110 100644
+--- a/src/x6502.c
++++ b/src/x6502.c
+@@ -206,7 +206,10 @@ static uint8_t ZNTable[256];
+ 	target += i;									\
+ 	if ((target ^ tmp) & 0x100) {					\
+ 		target &= 0xFFFF;							\
+-		RdMem(target ^ 0x100);						\
++		/* The dummy read is the base's page with the indexed low	\
++		 * byte (AccuracyCoin's Dummy read cycles, error code 3);	\
++		 * flipping bit 8 is wrong when the carry goes further. */	\
++		RdMem((tmp & 0xFF00) | (target & 0x00FF));	\
+ 		ADDCYC(1);									\
+ 	}												\
+ }
+@@ -257,7 +260,7 @@ static uint8_t ZNTable[256];
+ 	target += _Y;									\
+ 	if ((target ^ rt) & 0x100) {					\
+ 		target &= 0xFFFF;							\
+-		RdMem(target ^ 0x100);						\
++		RdMem((rt & 0xFF00) | (target & 0x00FF));	\
+ 		ADDCYC(1);									\
+ 	}												\
+ }

@@ -1,0 +1,69 @@
+Subject: Writes drive the data bus, $4015 reads leave it alone, and open-bus bits are the NES's
+
+AccuracyCoin's Open Bus, error codes 4, 6, 7 and 9: passes.
+Checked with tools/accuracycoin.py --expect against the run before it, and
+against the nes_bench checksums of Castlevania, Zelda and Chip 'n Dale.
+
+License: GPL-2.0-or-later, as the FCEUmm code it changes (patches/fceumm/README.md).
+
+---
+diff --git a/src/input.c b/src/input.c
+index ce629cd..76c069a 100644
+--- a/src/input.c
++++ b/src/input.c
+@@ -85,7 +85,9 @@ static DECLFR(JPRead)
+ 		if (FCExp->Read)
+ 			ret = FCExp->Read(A & 1, ret);
+ 
+-	ret |= X.DB & 0xC0;
++	/* The top three bits are the CPU's open bus on an NES (AccuracyCoin's
++	 * Open Bus, error code 6). */
++	ret |= X.DB & 0xE0;
+ 
+ 	return(ret);
+ }
+diff --git a/src/sound.c b/src/sound.c
+index 678b045..54c17dd 100644
+--- a/src/sound.c
++++ b/src/sound.c
+@@ -378,7 +378,9 @@ static DECLFR(StatusRead) {
+ 	int x;
+ 	uint8_t ret;
+ 
+-	ret = SIRQStat;
++	/* Bit 5 is not driven: it is the data bus as the read found it
++	 * (AccuracyCoin's Open Bus, error code 9). */
++	ret = SIRQStat | (X.DB & 0x20);
+ 
+ 	for (x = 0; x < 4; x++) ret |= lengthcount[x] ? (1 << x) : 0;
+ 	if (DMCSize) ret |= 0x10;
+diff --git a/src/x6502.c b/src/x6502.c
+index 0658110..6bf54e0 100644
+--- a/src/x6502.c
++++ b/src/x6502.c
+@@ -56,10 +56,17 @@ void FP_FASTAPASS(1) (*MapIRQHook)(int a);
+ }
+ 
+ static INLINE uint8_t RdMemNorm(uint32_t A) {
++	/* $4015 answers on the CPU's internal bus only, so the external data
++	 * bus keeps its value (AccuracyCoin's Open Bus, error code 7). */
++	if (A == 0x4015)
++		return ARead[A](A);
+ 	return(_DB = ARead[A](A));
+ }
+ 
++/* A write drives the data bus too, so open bus reads afterwards see the
++ * value written (AccuracyCoin's Open Bus, error code 4). */
+ static INLINE void WrMemNorm(uint32_t A, uint8_t V) {
++	_DB = V;
+ 	BWrite[A](A, V);
+ }
+ 
+@@ -68,6 +75,7 @@ static INLINE uint8_t RdRAMFast(uint32_t A) {
+ }
+ 
+ static INLINE void WrRAMFast(uint32_t A, uint8_t V) {
++	_DB = V;
+ 	RAM[A] = V;
+ }
+ 

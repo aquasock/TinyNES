@@ -1,0 +1,33 @@
+Subject: OAM writes and OAM DMA go to the OAM address, which wraps, with no redirection
+
+AccuracyCoin's Misaligned OAM DMA, error code 2: passes.
+Checked with tools/accuracycoin.py --expect against the run before it, and
+against the nes_bench checksums of Castlevania, Zelda and Chip 'n Dale.
+
+License: GPL-2.0-or-later, as the FCEUmm code it changes (patches/fceumm/README.md).
+
+---
+diff --git a/src/ppu.c b/src/ppu.c
+index f2c188e..b2fcb29 100644
+--- a/src/ppu.c
++++ b/src/ppu.c
+@@ -332,12 +332,13 @@ static DECLFW(B2003) {
+ 
+ static DECLFW(B2004) {
+ 	PPUBusDrive(V, 0xFF);
+-	if (PPUSPL >= 8) {
+-		if (PPU[3] >= 8)
+-			SPRAM[PPU[3]] = V;
+-	} else {
+-		SPRAM[PPUSPL] = V;
+-	}
++	/* Each byte goes to the OAM address, which then increments and wraps, so
++	 * an OAM DMA started at a non-zero address writes from there round to it
++	 * (AccuracyCoin's Misaligned OAM DMA, error code 2).  The redirection of
++	 * the first bytes after a $2003 write to entries 0 to 7, through PPUSPL,
++	 * and the dropping of entries 0 to 7 after a wrap are gone; the 2C02's
++	 * real OAM row corruption is a separate behaviour (OAM Corruption). */
++	SPRAM[PPU[3]] = V;
+ 	PPU[3]++;
+ 	PPUSPL++;
+ }
