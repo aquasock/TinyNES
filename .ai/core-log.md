@@ -1134,3 +1134,33 @@ Wire the Input tab to what is now proved: Remap and Restore defaults are inert a
 - User Test: PASS
 
 ---
+
+## 33 COMMIT Unreleased 2026-10-14T17:15:50-07:00
+
+#### Coming From:
+
+Unreleased 994de28
+
+#### Purpose:
+
+Move the settings app's design document to the app's new name and change the name it carries.
+
+#### Outcome:
+
+This repository's half of the rename is the design document, which became `docs/tinynes-control-deck-plan.md`, with its title and the ASCII mock's title bar changed to match; the frame still lines up at 69 columns with four dashes fewer, so the drawing a reader trusts is unchanged in shape. Nothing else here names the app, and the document's only citation is entry 32, which is left exactly as written because it names the path that was true when it was recorded. The app rename itself, and the checks that nothing looks the app up by name or copies its name into a fixed buffer, are TinyTang entry 75. No file in this repository is compiled, so there is no build of its own to report, and the rename the user confirmed on the board is the one TinyTang built and flashed. The core-syntax audit passed.
+
+#### Next Steps:
+
+The Video tab is the next cycle: the three aspect ratios, which are constants in `fpga/ae350_soc/video.sv` today, and palette selection, which the core can carry from FCEUmm's own tables, both applied at launch the way the controls already are. Scale, scanlines and overscan were dropped by the user's decision, with the `/nes.ini` keys kept, and the shipped file's `aspect = 8:7` default becomes true only when that ratio is implemented.
+
+#### Files Modified:
+
+- docs/tinynes-control-deck-plan.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: PASS
+
+---

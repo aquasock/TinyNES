@@ -1,4 +1,4 @@
-# TinyNES Controls: a settings app and `nes.ini`
+# TinyNES Control Deck: a settings app and `nes.ini`
 
 Status on 2026-10-14: **design for review; nothing built.** The layout is the
 one the user approved, with button remapping as the first working tab and
@@ -65,7 +65,7 @@ works. **There is no slider**, so every numeric option steps with `<` and `>`
 buttons; `td_progress` draws the bar for volume and is display only.
 
 ```
-┌─ TinyNES Controls ────────────────────────────────────────────────┐
+┌─ TinyNES Control Deck ────────────────────────────────────────────┐
 │  [ Input ]   Video     Audio     Saves                            │
 ├───────────────────────────────────────────────────────────────────┤
 │  Player    ( ● 1 )   (   2 )                                      │
