@@ -488,8 +488,14 @@ the dummy-read address on a page cross, and the CPU data bus around writes,
 `$4015` and the controller ports; `main.cpp` also turns FCEUmm's Four Score
 off, as its libretro driver does. With them the harness's run goes from 83 to
 90 of 146 passing, Castlevania, Zelda and Chip 'n Dale give the same checksums
-as without them, and on the A25 the benchmark averages 11.08 ms a frame
-against 10.93 ms.
+as without them, and on the A25 the benchmark averaged 11.08 ms a frame
+against 10.93 ms. The eighth is a speed fix: FCEUmm rebuilt a 256-entry
+background palette table on every partial-line render, and a game polling
+`$2002`, as Zelda II's title screen does about 1,900 times a frame, renders
+once per read, so the intro took 17.45 ms a frame on the A25 against the
+16.64 ms period and played slow with broken sound. Rebuilding the table only
+when its 16 palette bytes change leaves every checksum as it was and brings
+the intro to 9.95 ms and the Castlevania benchmark to 9.03 ms.
 
 ### Diagnosing the HDMI picture
 

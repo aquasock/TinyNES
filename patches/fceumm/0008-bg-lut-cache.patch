@@ -1,0 +1,42 @@
+Subject: Rebuild the background palette pair table only when the palette it was built from changes
+
+A speed fix, not an accuracy one. RefreshLine rebuilt its 256-entry table on
+every call, and FCEUPPU_LineUpdate calls it on every $2002 read, so a game
+polling $2002 for a sprite-zero hit, as Zelda II's title screen does about
+1,900 times a frame, spent most of its frame rebuilding a table that had not
+changed. Measured with gprof on the PC build: RefreshLine was 72 percent of
+the intro's time, and the intro's frame went from 327 to about 148 us.
+The table built is the same as before, so every checksum is unchanged:
+tools/accuracycoin.py --expect tests/accuracycoin_expected.txt shows no
+change, and Castlevania, Zelda, Zelda II and Chip 'n Dale match.
+
+License: GPL-2.0-or-later, as the FCEUmm code it changes (patches/fceumm/README.md).
+
+---
+diff --git a/src/ppu.c b/src/ppu.c
+index b2fcb29..fa12f36 100644
+--- a/src/ppu.c
++++ b/src/ppu.c
+@@ -182,9 +182,22 @@ uint8_t UPALRAM[0x03];/* for 0x4/0x8/0xC addresses in palette, the ones in
+  *       that hits Pal[0x04/0x08/0x0C] (e.g. Mega Man 3 sprites). */
+ static uint16_t fceu_bg_pair_lut[256];
+ 
++/* The table depends on PALRAM[0x00..0x0F] alone, so it is rebuilt only when
++ * those 16 bytes, priority bits included, differ from the ones it was last
++ * built from.  A game that polls $2002 in a loop calls RefreshLine once per
++ * read, nearly 1,900 times a frame in Zelda II's title screen, and rebuilding
++ * 256 entries each time was most of the frame; the table is the same either
++ * way. */
++static uint8_t fceu_bg_pair_lut_from[16];
++static int fceu_bg_pair_lut_valid;
++
+ static void FCEU_BuildBgPairLUT(void)
+ {
+ 	int b;
++	if (fceu_bg_pair_lut_valid && !memcmp(fceu_bg_pair_lut_from, PALRAM, 16))
++		return;
++	memcpy(fceu_bg_pair_lut_from, PALRAM, 16);
++	fceu_bg_pair_lut_valid = 1;
+ 	for (b = 0; b < 256; b++)
+ 	{
+ #ifdef MSB_FIRST

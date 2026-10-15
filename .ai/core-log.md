@@ -1309,3 +1309,34 @@ The remaining failures are three larger pieces, each its own cycle for the user 
 - User Test: PASS
 
 ---
+
+## 38 COMMIT Unreleased 2026-10-14T20:53:20-07:00
+
+#### Coming From:
+
+Unreleased 3bea324
+
+#### Purpose:
+
+Find and remove what made the user's Zelda II intro play slowly with distorted sound on the Tang while the rest of the game was fine, as the user approved.
+
+#### Outcome:
+
+The user first found the Redux hack of Zelda II refused on the desktop and the original's intro slow with broken sound. The hack's name, 51 characters, does not fit the 48-byte name field of TinyDesk's Files app (`third_party/tinydesk/apps/files.c`, `NAME_MAX_`), so it is stored without `.nes` and TinyTang's open rule finds no handler; renaming it to 47 characters or fewer works around it, and the limit is TinyDesk's. Both images booted on the PC build through to the file-select screen. No report of the slowdown was found online or in FCEUmm's issue tracker. The user's image, 262,160 bytes with CRC-32 `861c3fe6`, built into the benchmark and run by the agent on the board in two-wire mode, averaged 17,450 us a frame through the intro (max 17,600), 1,690 of 1,800 frames over the 16,639 us period at `SPEED=98.0%`, and about 11 ms after Start, with checksums equal to the PC build's. `perf` is barred on this machine (`perf_event_paranoid` 4), so the PC build was profiled with gprof: the intro reads `$2002` about 1,875 times a frame waiting for a sprite-zero hit, each read renders the line so far through `FCEUPPU_LineUpdate`, and `RefreshLine` was 72 percent of the time because it rebuilt FCEUmm's 256-entry background palette pair table on every call. Patch 0008 keeps the 16 palette bytes the table was built from and rebuilds it only when they change, which builds the same table: the intro fell from 327 to about 148 us a frame on the PC, `tools/accuracycoin.py --expect tests/accuracycoin_expected.txt` showed no change at 90 of 146, and Castlevania, Zelda and Chip 'n Dale matched the unpatched core. The first deploy attempt found the console busy and a second lost `/dev/ttyACM0` mid-run, the board coming back as a new USB device, and nothing had been sent either time; the third reloaded `ae350_soc.bin` `5d4f88cd` and installed the player `0e24b868f26a8fbad072fa0e93bdf3b9363ce937d2013492b0d07493fc591b31` at 860344 bytes. On the A25 the intro then averaged 9,951 us (max 10,026) with no frame over at `SPEED=168.9%`, and the Castlevania benchmark 9,034 us (max 9,658) at 184.1 percent against 11,083 before, both with every checksum line equal to the earlier board runs. The user watched the intro on HDMI and passed the cycle, and asked whether zipped `.nes` files are easy to support: all 794 zips in the user's local copy are single-entry deflate archives holding one `.nes`, and libretro-common's MIT inflater is already in the fetched tree. The README describes patch 0008 and EMU-008 is new. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, checked that the reference's records and fast index list the same ids in the same order, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+The next cycle, chosen by the user, is zipped cartridges: the player recognising a zip by its signature, inflating its single `.nes` entry into the cartridge buffer with libretro-common's inflater and checking the CRC-32 the zip stores, with `ae350run`'s handling of the file and its save name checked in TinyTang. The user requires that double-clicking a `.zip` in TinyDesk must not launch TinyNES, only `.nes` files, so no `zip.tdsh` handler is added and how a zipped game is started is settled in that cycle. The user is still trying other cartridges, and the boot test of all 794 is on hold; the larger AccuracyCoin work of entry 37 and TinyDesk's 48-byte name and 64-entry folder limits remain open.
+
+#### Files Modified:
+
+- README.md
+- patches/fceumm/0008-bg-lut-cache.patch
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

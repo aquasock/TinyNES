@@ -311,6 +311,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | What is the REYAX RYLR998 LoRa module, what does it need, and where could it attach? | LORA | LORA-001 |
 | Why was FCEUmm silent under nes_bench's own driver, and what does real sound cost? | EMU | EMU-006 |
 | How accurate is FCEUmm by AccuracyCoin, what do TinyNES's patches fix, and what do they cost? | EMU | EMU-007 |
+| Why did Zelda II's intro play slowly with broken sound, and what fixed it? | EMU | EMU-008 |
 | What are AccuracyCoin and TriCNES, and on what terms does TinyNES use them? | PROV | PROV-009 |
 | Which silicon revision is this board, and which revision is the core image? | PSX | PSX-001 |
 | How much logic and block RAM does the device have? | PSX | PSX-002 |
@@ -499,6 +500,7 @@ EMU-004: "With its own driver in place of libretro.c, FCEUmm's core draws straig
 EMU-005: "Played by hand with a Wii Classic Controller Pro on PMOD0 bus 1, nes_bench's PLAY=1 build ran Castlevania at 11.34 to 11.53 ms a frame (max 12.50) over three runs of 3,799 to 4,530 frames, no frame over the period, LATE 0 and MISSED 0; since entry 21 the player runs in link mode with TinyDesk over the game on a HOME tap"
 EMU-006: "FCEUI_Initialize clears FSettings, leaving the five APU channel volumes at 0, so nes_bench's own driver mixed silence until it set them to 256 as the libretro driver does; with real sound Castlevania still runs at 153.5 percent, and the play build plays it on the I2S2 with no underrun"
 EMU-007: "AccuracyCoin on FCEUmm ac0d00a under nes_bench: 84 of 146 with page 19 skipped, 83 with only its Misaligned OAM Behavior skipped, which hangs; TinyNES's seven patches and the Four Score turned off raise that to 90, the user saw 90 on the board, and the A25 benchmark slows from 10.93 to 11.08 ms a frame with identical checksums"
+EMU-008: "Zelda II's title screen polls $2002 about 1,900 times a frame and FCEUmm rebuilt a 256-entry palette table on each resulting partial-line render, so its intro took 17.45 ms a frame on the A25 (1,690 of 1,800 frames over 16.64 ms); patch 0008 rebuilds the table only when its 16 palette bytes change, giving 9.95 ms, and Castlevania's benchmark 9.03 ms, with identical checksums"
 WII-001: "Wii extensions use I2C address 0x52; write F0=55 then FB=00 to disable encryption, read six identity bytes at FA and six format-1 data bytes after setting pointer 00; NintendoExtensionCtrl waits 10 ms, 20 ms and 175 us at those steps and accepts Classic IDs 00/01 00 A4 20 00..03 01; buttons in bytes 4-5 are active low"
 AUD-001: "The CS4344 takes a 256x MCLK at 2 to 50 kHz (MCLK 0.512 to 50 MHz, 45 to 55 percent duty) in I2S, with MCLK, SCLK and LRCK synchronous but no phase set; TinyNES counts all three from the 75 MHz bus clock, MCLK 12.5 MHz, Fs 48,828.125 Hz, measured 48,827.968 Hz on the board"
 LORA-001: "The REYAX RYLR998 (UPC 612789267033) is a five-pin 3.3 V UART LoRa module, AT-command controlled, 820 to 960 MHz, -20 to +22 dBm out, -129 dBm sensitivity, 140 mA transmitting at +22 dBm; RYLR998_M4 has an I-PEX MHF4 connector instead of the built-in antenna; not fitted or tested here"
@@ -2844,6 +2846,20 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "libretro FCEUmm ac0d00a: src/input.c (FSDisable, ReadGP, JPRead), src/drivers/libretro/libretro.c (FCEUI_DisableFourScore(1))"
     - "AccuracyCoin 6bee919 README.md error codes for the tests named"
   verification: "Measured on 2026-10-14 (core-log entry 37) on the PC build and, for speed and checksums, on the board in two-wire mode with ae350_soc.bin 5d4f88cd; the user ran the cartridge on the board with the patched player and reported 90."
+
+- record_id: EMU-008
+  kind: EXTERNAL
+  topic_id: EMU
+  title: "FCEUmm's per-render palette table rebuild made $2002 polling games too slow for the A25; caching it fixed Zelda II's intro"
+  status: VERIFIED
+  verified_date: 2026-10-14
+  statement: "In libretro FCEUmm ac0d00a, RefreshLine (src/ppu.c) calls FCEU_BuildBgPairLUT, which fills the 256-entry fceu_bg_pair_lut from PALRAM[0x00..0x0F], every time it renders a tile span, and the $2002 read handler A2002 calls FCEUPPU_LineUpdate, and so RefreshLine, on every read. Zelda II - The Adventure of Link (USA), a 262,160-byte MMC1 image with an NES 2.0 header, CRC-32 861c3fe6, reads $2002 2,812,244 times in 1,500 frames of its title screen and intro, about 1,875 a frame, waiting for a sprite-zero hit; gprof on the PC build put 72 percent of that time in RefreshLine. On the PC its intro frames averaged 327 us against 172 us after Start and about 200 us for Castlevania's play. On the A25 the 1,800-frame benchmark averaged 17.45 ms (max 17.60) through the intro, with 1,690 frames over the 16.64 ms period and SPEED 98.0 percent, and about 11 ms after Start; the board's checksums equalled the PC's."
+  consequence: "The user saw the intro play slowly with distorted sound while the rest of the game was fine, which is this: the intro alone ran over the period and the sound FIFO drained. TinyNES patch 0008 keeps the 16 bytes the table was built from and rebuilds it only when they differ, which builds the same table and changes no checksum (AccuracyCoin's run, Castlevania, Zelda, Zelda II and Chip 'n Dale all match); the intro then averaged 9.95 ms (max 10.03) on the A25 with no frame over, SPEED 168.9 percent, and Castlevania's benchmark 9.03 ms (max 9.66), 184.1 percent, against 11.08 with patches 0001 to 0007 and 10.93 unpatched. Other games that poll $2002 in a loop gain the same way. No report of the slowdown was found in FCEUmm's issue tracker, whose only Zelda II issue, #330, is about save files."
+  sources:
+    - "libretro FCEUmm ac0d00a: src/ppu.c (A2002, FCEUPPU_LineUpdate, RefreshLine, FCEU_BuildBgPairLUT, fceu_bg_pair_lut), src/pputile.h"
+    - "This project's patches/fceumm/0008-bg-lut-cache.patch and firmware/apps/nes_bench (FRAMES=1800 INPUT=\"1700+4=start\" with the user's Zelda II image built in)"
+    - "https://github.com/libretro/libretro-fceumm/issues/330"
+  verification: "Measured on 2026-10-14 (core-log entry 38) with gprof on the PC build and on the board in two-wire mode with ae350_soc.bin 5d4f88cd, before and after the patch; the user then played the intro on HDMI with the patched player and passed it."
 
 - record_id: WII-001
   kind: EXTERNAL
