@@ -26,8 +26,13 @@ family=GW5AST-138C
 # at PLL_R[1] and PLL_R[3], 8 of 16 seeds were clean in a sweep with bus_clk
 # routed first, all failures pixel-clock hold; seed 10 had the best margin on
 # both clocks together and the fewest pixel-clock pins off the global
-# network, and is repeatable.
-seed="${TINY_NES_SEED:-10}"
+# network, and is repeatable.  The aspect register and its column picker moved
+# the placement, and in a second sweep on 2026-10-14 seed 10 failed with four
+# pixel-clock holds while 8 of 16 were still clean; seed 11 is that sweep's
+# pick by the same rule -- 85.03 MHz on bus_clk and 85.24 on pix_clk against
+# 75 and 74.25, with the fewest pixel-clock pins off the global network (2)
+# and the shortest pixel-clock route (482 pips) of any seed.
+seed="${TINY_NES_SEED:-11}"
 
 [[ -f "$suite/environment" ]] || { echo "missing open toolchain: $suite" >&2; exit 2; }
 # shellcheck disable=SC1090

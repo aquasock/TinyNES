@@ -202,9 +202,12 @@ in two-wire mode:
 bash tools/build_ae350_soc.sh
 ```
 
-The SoC build uses nextpnr seed 3 by default: the unseeded route with the
-PMOD0 logic misses a pixel-clock hold check by 0.06 ns. Set
-`TINY_NES_SEED=N` to evaluate another placement.
+The SoC build uses nextpnr seed 11 by default: the pixel-aspect register and
+its column picker moved the placement, leaving seed 10 with four pixel-clock
+hold violations, and of the 8 clean seeds in a 16-seed sweep this one had the
+best margin on both clocks together, 85.03 MHz on the bus and 85.24 MHz on
+the pixel clock against 75 and 74.25, with the fewest pixel-clock pins off
+the global network. Set `TINY_NES_SEED=N` to evaluate another placement.
 
 The build needs the forks of nextpnr and Apicula on their `epic/gw5ast138c`
 branches, which add a timing model for the AE350's AHB ports, measured from
@@ -625,8 +628,11 @@ commit `a331d15`.
 
 `fpga/ae350_soc/video.sv` drives the board's HDMI port with 1280x720 at
 60 Hz (CEA-861 timing, 74.25 MHz pixel clock, positive syncs), as DVI. It
-shows a 256x240 frame buffer at three times its size, 768x720, centred
-between black side bars. Until a program turns the frame buffers on it shows
+shows a 256x240 frame buffer with each pixel three rows tall and either
+three or four columns wide, by the ASPECT register: 768x720 with square
+pixels, 878x720 at the NES's authentic 8:7 pixel aspect, or 960x720
+stretched to the 4:3 television frame, centred between black side bars that
+shrink with the picture. Until a program turns the frame buffers on it shows
 eight colour bars made by the fabric. A pixel's palette index follows
 FCEUmm's: the pixel itself when its line's emphasis is 0, otherwise
 256 + 64 x emphasis + the pixel's low six bits.
@@ -654,6 +660,7 @@ names them:
 | `0x10010` | read | LATE: lines shown before their SDRAM fetch had finished |
 | `0x10014` | read | PIXELS (diagnostic): screen pixels of the last frame whose value was not 0, nine per NES pixel |
 | `0x10018` | read | BITS (diagnostic): bit n set if pixel bit n was ever 1 in the last frame, bit 8 + n if ever 0 |
+| `0x1001c` | read, write | ASPECT: 0 is 8:7, 1 is 1:1 (the reset value), 2 is 4:3; taken at the next vertical blank |
 | `0x10800 + 4i` | read | Line buffer halfword i (diagnostic), one wait state |
 | `0x11000 + 4i` | write | Palette entry i, red in bits 23:16, green 15:8, blue 7:0 |
 | `0x12000 + 4(256b + y)` | write | Emphasis, bits 2:0, of line y of buffer b |
@@ -678,7 +685,10 @@ video channel: registers and error responses, whole frames decoded from the
 TMDS words and compared pixel by pixel with a model of the bars and of both
 frame buffers with palette and emphasis, the sync timing, the buffer flip,
 the fetch addresses, the LATE count when fetches are made too slow, the
-PIXELS and BITS registers and the line-buffer readback. It takes several
+PIXELS and BITS registers and the line-buffer readback, and a checked frame
+at each of the three pixel aspects, whose model widens the picture and
+spreads the 256 source pixels across it the way the unit's accumulator
+does. It takes several
 minutes:
 
 ```sh

@@ -1164,3 +1164,39 @@ The Video tab is the next cycle: the three aspect ratios, which are constants in
 - User Test: PASS
 
 ---
+
+## 34 COMMIT Unreleased 2026-10-14T18:33:05-07:00
+
+#### Coming From:
+
+Unreleased 9db3495
+
+#### Purpose:
+
+Give the video unit the pixel-aspect register the settings file has always carried, so 8:7, 1:1 and 4:3 reach the picture, and give the fabric's frame test the three geometries it has to tell apart.
+
+#### Outcome:
+
+`fpga/ae350_soc/video.sv` gained ASPECT as the unit's eighth register at `0x001c`, read and write, reset 1:1 and taken at the vertical blank like the buffer and the enable. The picture's geometry stopped being constants: the old `X0` localparam and the divide-by-three sub-counter became an accumulator that adds 256 for each output column and steps the source pixel when it reaches the picture's width, so the line buffer's 256 pixels fill 768 columns at 1:1, 878 at the NES's authentic 8:7 or 960 stretched to 4:3, with the left edge that centres them derived the same way and the height untouched. `firmware/include/tinynes.h` names the register and its three values, and `firmware/apps/nes_bench/main.cpp`'s settings blob became a struct -- the two eight-byte mappings then the aspect -- so the length the core asks the host for is its own `sizeof`, and the core writes the register after receiving settings and before the first frame; a host that answers with only the first sixteen bytes leaves the compiled-in 8:7, which is `/nes.ini`'s own default, so the two repos can be deployed in either order. The core builds under `-Werror -Wall -Wextra` with no warning. Two testbenches turned out not to run at all and both are repaired: `tests/video_tb.sv` has been unable to elaborate since the desk layer (cycle 21) because `expected()` reads variables declared below it, and `fpga/ae350_soc/wii_pads.sv` has had the same break since the Wii-pads commit, hiding `tests/ae350_soc_tb.sv` with it; both were declaration-order faults, neither was a design fault. The video testbench's baseline then passed in 14 minutes, and with its model extended to work the geometry out the way the unit does -- the source pixel of a column is `floor(256 * c / w)` -- and a checked frame added at each aspect, the full run passed with no mismatch in any of the twelve frames it compares and exit 0, while both `ae350_soc_tb` modes passed unchanged, including the EXTS video register check and the SDRAM line fetches beside a RAM port read. Placement had to be redone: the added logic moved the placement and left the committed seed 10 with four pixel-clock hold violations on the font RAM's clock net, so a 16-seed sweep was run, 8 of 16 were clean, and seed 11 was taken by the rule used before -- 85.03 MHz on the bus and 85.24 MHz on the pixel clock against 75 and 74.25, with the fewest pixel-clock pins off the global network, 2, and the shortest pixel-clock route of any seed; `tools/build_ae350_soc.sh` defaults to it and the README's stale claim of seed 3 is replaced. The bitstream built with every check passing, `build/ae350_soc/ae350_soc.fs` with SHA-256 `8fe76d6f5381c101845aff5dc55da1b8dff98c063df1287e7659aee2d45fb07a`, the deployed image `build/ae350_soc/ae350_soc.bin` with `5d4f88cd4853bfed382eaa7d9e9a9434eaa5f380c132156173d24f6ef8ed6808` and the stripped player `f1ed44542c043088d7b95154e4c6d164673592f850c31a286ed85fa49f42588a` at 842940 bytes; the host tests passed (30 parser checks and 16 for the rename), and the user set each ratio from the app and reports all three working on the board, with the file's 8:7 widening the picture before anything was changed. The TinyTang half is entry 76. The core-syntax audit passed.
+
+#### Next Steps:
+
+Palette selection is the Video tab's next setting and travels the same way: the core already writes the unit's palette store and FCEUmm's own tables are in the tree, so a fifth byte in the settings blob picks one and the app's row sets it. The Audio tab's volume, mute and channels follow, since the file carries them and nothing reads them yet. The optical S/PDIF transmitter the user asked about would need a biphase-mark encoder beside `i2s_out.sv` and one spare pin -- the empty SDRAM header supplies 5 V and the module's TTL input takes a 3.3 V drive, so no PMOD socket is needed -- and that is recorded here rather than in the reference so it waits for the audio work.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/main.cpp
+- firmware/include/tinynes.h
+- fpga/ae350_soc/video.sv
+- fpga/ae350_soc/wii_pads.sv
+- tests/video_tb.sv
+- tools/build_ae350_soc.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

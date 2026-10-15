@@ -368,6 +368,8 @@ module wii_pad_master #(
     reg [3:0] q = Q_WAIT, q_next = Q_WAKE1;
     reg [16:0] wait_us = 17'd20000;   // the first wake 20 ms after reset
     reg [16:0] after_us = 17'd0;      // the wait after the transfer in flight
+    // The read in flight is the identity until the first data read.
+    reg ident_pending = 1'b1;
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
@@ -457,8 +459,6 @@ module wii_pad_master #(
         end
     end
 
-    // The read in flight is the identity until the first data read.
-    reg ident_pending = 1'b1;
     always @(posedge clk or negedge resetn)
         if (!resetn)
             ident_pending <= 1'b1;

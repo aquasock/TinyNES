@@ -66,6 +66,7 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 #define TN_VIDEO_LATE    TN_REG(0x10010) /* read: lines shown before fetched */
 #define TN_VIDEO_PIXELS  TN_REG(0x10014) /* read: non-zero pixels, last frame */
 #define TN_VIDEO_BITS    TN_REG(0x10018) /* read: pixel bits seen 1 (7:0), 0 (15:8) */
+#define TN_VIDEO_ASPECT  TN_REG(0x1001c) /* read and write: pixel aspect at the next vblank */
 #define TN_VIDEO_LB(i)   TN_REG(0x10800 + 4 * (i)) /* read: line-buffer halfword */
 #define TN_VIDEO_PALETTE(i)     TN_REG(0x11000 + 4 * (i)) /* 0xRRGGBB */
 #define TN_VIDEO_EMPHASIS(b, y) TN_REG(0x12000 + 4 * (256 * (b) + (y)))
@@ -78,6 +79,9 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 #define TN_VIDEO_VBLANK    0x1u /* STATUS */
 #define TN_VIDEO_SHOWING   0x4u /* STATUS: the frame buffers are shown */
 #define TN_VIDEO_ID_VALUE  0x544e5631u /* "TNV1" */
+#define TN_VIDEO_ASPECT_8_7 0u /* ASPECT: the authentic pixel aspect, 878 columns */
+#define TN_VIDEO_ASPECT_1_1 1u /* ASPECT: square pixels, 768, the reset value */
+#define TN_VIDEO_ASPECT_4_3 2u /* ASPECT: stretched to the television frame, 960 */
 #define TN_VIDEO_WIDTH     256u
 #define TN_VIDEO_HEIGHT    240u
 #define TN_VIDEO_PALETTE_SIZE 768u

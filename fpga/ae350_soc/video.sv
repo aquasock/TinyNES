@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 // HDMI (DVI) video for the A25: two 256x240 8-bit indexed frame buffers in
 // the SDRAM, a 768-entry palette and per-line colour emphasis, shown at
-// 1280x720 60 Hz with each NES pixel 3x3 and the 768x720 picture centred
-// between black side bars. The palette index of a pixel follows FCEUmm's:
+// 1280x720 60 Hz with each NES pixel three rows tall and as many columns
+// wide as the ASPECT register asks for: three at 1:1, which is the square
+// 768x720 picture, and more at 8:7 or 4:3, which widen it to 878 or 960 and
+// keep the height, centred between black side bars. The palette index of a
+// pixel follows FCEUmm's:
 // the pixel value itself when its line's emphasis is 0, otherwise 256 +
 // emphasis * 64 + (pixel & 63).
 //
@@ -33,6 +36,11 @@
 //   0x0018  BITS, read: for the last whole frame shown, bit n (0 to 7) set
 //           if pixel bit n was ever 1 and bit 8 + n if it was ever 0
 //           (diagnostic).
+//   0x001c  ASPECT, read and write: the picture's pixel aspect, taken at the
+//           next vertical blank. 0 = 8:7, the authentic pixel aspect, 878
+//           columns wide; 1 = 1:1, square pixels, 768; 2 = 4:3, stretched to
+//           the television frame, 960; anything else is taken as 1:1. Reset
+//           1:1, the picture this unit drew before the register existed.
 //   0x0800 + 4 * i, read: line-buffer halfword i (0 to 255) in bits 15:0,
 //           halfword k of line y at 128 * (y & 1) + k, with one wait state
 //           (diagnostic).
@@ -103,7 +111,14 @@ module video #(
     localparam integer V_ACTIVE = 720, V_FP = 5, V_SYNC = 5, V_BP = 20;
     localparam integer H_TOTAL = H_ACTIVE + H_FP + H_SYNC + H_BP;
     localparam integer V_TOTAL = V_ACTIVE + V_FP + V_SYNC + V_BP;
-    localparam integer X0 = (H_ACTIVE - 768) / 2;
+    // The picture is 256 NES pixels across per line. At 1:1 each is three
+    // columns wide and the picture fills 768 of them; the other aspects widen
+    // it and leave its height alone, so one NES pixel spans three or four
+    // columns and the line buffer is read through an accumulator below
+    // rather than by a fixed divide by three.
+    localparam [9:0] PIC_8_7 = 10'd878;    // 256 * 3 * 8 / 7, rounded
+    localparam [9:0] PIC_1_1 = 10'd768;    // 256 * 3
+    localparam [9:0] PIC_4_3 = 10'd960;    // 256 * 3 * 5 / 4
     localparam integer BAR = H_ACTIVE / 8;
 
     // ------------------------------------------------------------ storage --
@@ -130,9 +145,10 @@ module video #(
 
     // ---------------------------------------------------------- bus side --
     localparam [2:0] R_CTRL = 3'd0, R_STATUS = 3'd1, R_FRAMES = 3'd2, R_ID = 3'd3,
-                     R_LATE = 3'd4, R_PIXELS = 3'd5, R_BITS = 3'd6;
+                     R_LATE = 3'd4, R_PIXELS = 3'd5, R_BITS = 3'd6, R_ASPECT = 3'd7;
 
     reg [1:0] ctrl = 2'b00;          // {buffer, enable}
+    reg [1:0] aspect = 2'd1;         // 0 = 8:7, 1 = 1:1, 2 = 4:3
     reg [31:0] frames = 32'd0;
     reg [31:0] late = 32'd0;
     reg [2:0] vblank_sync = 3'b000;  // the last two give an edge
@@ -140,8 +156,9 @@ module video #(
     reg [1:0] shown_buf_sync = 2'b00;
     reg [1:0] shown_en_sync = 2'b00;
 
-    // CTRL write in its data phase; ERROR response second cycle.
-    reg d_ctrl = 1'b0, err2 = 1'b0;
+    // A register write in its data phase, and whether it is ASPECT rather
+    // than CTRL; ERROR response second cycle.
+    reg d_reg = 1'b0, d_aspect = 1'b0, err2 = 1'b0;
     // A line-buffer read in its wait state, and its halfword.
     reg lb_read = 1'b0;
     reg [7:0] lb_index = 8'd0;
@@ -179,7 +196,8 @@ module video #(
     wire is_lb = is_unit && haddr[15:12] == 4'h0 && haddr[11:10] == 2'b10;
     wire is_pal = is_unit && haddr[15:12] == 4'h1;
     wire is_emph = is_unit && haddr[15:12] == 4'h2 && haddr[11] == 1'b0;
-    wire ok = word && (is_reg ? (hwrite ? haddr[4:2] == R_CTRL : haddr[4:2] <= R_BITS) :
+    wire ok = word && (is_reg ? (hwrite ? (haddr[4:2] == R_CTRL || haddr[4:2] == R_ASPECT)
+                                            : haddr[4:2] <= R_ASPECT) :
                        is_lb ? !hwrite : (is_pal || is_emph) && hwrite);
     reg [19:0] pixels;               // pixel side, steady between blanks
     reg [15:0] bits;                 // likewise
@@ -187,13 +205,14 @@ module video #(
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             ctrl <= 2'b00;
+            aspect <= 2'd1;
             frames <= 32'd0;
             late <= 32'd0;
             vblank_sync <= 3'b000;
             late_sync <= 3'b000;
             shown_buf_sync <= 2'b00;
             shown_en_sync <= 2'b00;
-            d_ctrl <= 1'b0;
+            d_reg <= 1'b0;
             err2 <= 1'b0;
             w_wait <= 1'b0;
             w_emph <= 1'b0;
@@ -215,9 +234,13 @@ module video #(
             if (late_sync[1] != late_sync[2])
                 late <= late + 1'b1;
 
-            if (d_ctrl)
-                ctrl <= hwdata[1:0];
-            d_ctrl <= 1'b0;
+            if (d_reg) begin
+                if (d_aspect)
+                    aspect <= hwdata[1:0];
+                else
+                    ctrl <= hwdata[1:0];
+            end
+            d_reg <= 1'b0;
 
             if (err2) begin
                 // Second cycle of an ERROR response.
@@ -243,12 +266,13 @@ module video #(
                 hrdata <= 32'd0;
                 if (accept && !hwrite && ok && !is_lb)
                     case (haddr[4:2])
-                        R_CTRL: hrdata <= {30'd0, d_ctrl ? hwdata[1:0] : ctrl};
+                        R_CTRL: hrdata <= {30'd0, d_reg && !d_aspect ? hwdata[1:0] : ctrl};
                         R_STATUS: hrdata <= {29'd0, shown_en_sync[1], shown_buf_sync[1], vblank_sync[1]};
                         R_FRAMES: hrdata <= frames;
                         R_ID: hrdata <= ID_VALUE;
                         R_LATE: hrdata <= late;
                         R_PIXELS: hrdata <= {12'd0, pixels};
+                        R_ASPECT: hrdata <= {30'd0, aspect};
                         default: hrdata <= {16'd0, bits};
                     endcase
                 if (accept) begin
@@ -263,7 +287,8 @@ module video #(
                         lb_read <= 1'b1;
                         hready <= 1'b0;
                     end else if (hwrite && is_reg) begin
-                        d_ctrl <= 1'b1;
+                        d_reg <= 1'b1;
+                        d_aspect <= haddr[4:2] == R_ASPECT;
                     end else if (hwrite) begin
                         hready <= 1'b0;
                         w_wait <= 1'b1;
@@ -354,11 +379,26 @@ module video #(
         layer_sync <= {layer_sync[0], layer_on};
     end
 
+    // The aspect, taken at vertical blank like the buffer and the enable, and
+    // the picture it gives: 256 NES pixels over pic_w columns, centred by x0.
+    reg [1:0] aspect_meta = 2'd1, aspect_sync = 2'd1;
+    reg [1:0] shown_aspect = 2'd1;
+    wire [9:0] pic_w = shown_aspect == 2'd0 ? PIC_8_7 :
+                       shown_aspect == 2'd2 ? PIC_4_3 : PIC_1_1;
+    wire [10:0] x0 = (H_ACTIVE - pic_w) >> 1;
+
     reg [10:0] hcnt = 11'd0;
     reg [9:0] vcnt = 10'd0;
     reg [11:0] cell_row = 12'd0;
     reg [7:0] nx = 8'd0, ny = 8'd0;   // the NES pixel at (hcnt, vcnt)
-    reg [1:0] hsub = 2'd0, vsub = 2'd0;
+    reg [9:0] hacc = 10'd0;           // ...and how far into it the column is
+    reg [1:0] vsub = 2'd0;
+    // One output column further across the picture: the next source pixel is
+    // due when that reaches pic_w. hacc is below pic_w at the start of a
+    // column and 256 is below pic_w, so at most one step is ever due, and
+    // the remainder is below 256.
+    wire [10:0] hacc_next = {1'b0, hacc} + 11'd256;
+    wire [10:0] hacc_step = hacc_next - {1'b0, pic_w};
     wire h_last = hcnt == H_TOTAL - 1;
     wire [10:0] h_next = h_last ? 11'd0 : hcnt + 1'b1;
     wire [9:0] v_next = vcnt == V_TOTAL - 1 ? 10'd0 : vcnt + 1'b1;
@@ -369,6 +409,8 @@ module video #(
     always @(posedge pix_clk) begin
         ctrl_meta <= ctrl;
         ctrl_sync <= ctrl_meta;
+        aspect_meta <= aspect;
+        aspect_sync <= aspect_meta;
         fd_sync <= {fd_sync[0], fd};
         hs_req_sync <= {hs_req_sync[1:0], hs_req};
         if (hs_take)
@@ -377,7 +419,7 @@ module video #(
             hcnt <= 11'd0;
             vcnt <= 10'd0;
             nx <= 8'd0;
-            hsub <= 2'd0;
+            hacc <= 10'd0;
             ny <= 8'd0;
             vsub <= 2'd0;
             shown_buf <= 1'b0;
@@ -387,14 +429,14 @@ module video #(
             cell_row <= 12'd0;
         end else begin
             hcnt <= h_next;
-            if (h_next == X0) begin
+            if (h_next == x0) begin
                 nx <= 8'd0;
-                hsub <= 2'd0;
-            end else if (hsub == 2'd2) begin
+                hacc <= 10'd0;
+            end else if (hacc_next >= {1'b0, pic_w}) begin
                 nx <= nx + 1'b1;
-                hsub <= 2'd0;
+                hacc <= hacc_step[9:0];
             end else begin
-                hsub <= hsub + 1'b1;
+                hacc <= hacc_next[9:0];
             end
             if (h_last) begin
                 vcnt <= v_next;
@@ -427,6 +469,7 @@ module video #(
                 if (v_next == V_ACTIVE) begin
                     shown_buf <= ctrl_sync[1];
                     shown_en <= ctrl_sync[0];
+                    shown_aspect <= aspect_sync;
                     layer_shown <= layer_sync[1];
                     pix_vblank <= 1'b1;
                     if (ctrl_sync[0]) begin
@@ -446,7 +489,7 @@ module video #(
     // the cell's glyph row. Stage 3: the colour; the layer's colour. Stage 4:
     // the colour, bars or layer, registered. The encoders register stage 4.
     wire de0 = hcnt < H_ACTIVE && vcnt < V_ACTIVE;
-    wire pic0 = hcnt >= X0 && hcnt < X0 + 768 && vcnt < V_ACTIVE;
+    wire pic0 = hcnt >= x0 && hcnt < x0 + pic_w && vcnt < V_ACTIVE;
     wire hs0 = hcnt >= H_ACTIVE + H_FP && hcnt < H_ACTIVE + H_FP + H_SYNC;
     wire vs0 = vcnt >= V_ACTIVE + V_FP && vcnt < V_ACTIVE + V_FP + V_SYNC;
     wire [2:0] bar0 = hcnt < BAR ? 3'd0 : hcnt < 2 * BAR ? 3'd1 :

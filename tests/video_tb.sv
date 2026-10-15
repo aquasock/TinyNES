@@ -161,12 +161,35 @@ module video_tb;
     function [23:0] rgb15(input [14:0] c);
         rgb15 = {c[4:0], c[4:2], c[9:5], c[9:7], c[14:10], c[14:12]};
     endfunction
+    // Raster checks run from the first vertical sync (the encoders send zeros,
+    // which decode as data, in reset); picture checks while `checking`.
+    // These come before `expected` because that function reads them: a Verilog
+    // function may only see variables declared above it, and Icarus says so.
+    reg prev_de = 1'b0, prev_hs = 1'b0, prev_vs = 1'b0;
+    integer since_hs = -1, de_len = 0, lines = -1, de_lines = 0, vs_lines = 0;
+    integer bp_lines = 0, col = 0, row = 0;
+    reg seen_de_since_vs = 1'b0;
+    integer vs_edges = 0;
+    reg checking = 1'b0, check_bars = 1'b0, check_buf = 1'b0, check_layer = 1'b0;
+    integer mismatches = 0;
+    integer raster_errors = 0;
+    // The aspect the picture check expects, as the unit's own register holds
+    // it: 0 = 8:7, 1 = 1:1, 2 = 4:3.
+    reg [1:0] check_aspect = 2'd1;
+
+    wire armed = vs_edges > 0;
     function [23:0] expected(input bars, input b, input [10:0] col, input [9:0] row);
         reg [7:0] nx, ny, p;
         reg [2:0] e, bar;
         reg [9:0] idx;
         reg [36:0] c;
+        reg [9:0] w;
+        reg [10:0] x0;
         begin
+            // The picture the ASPECT register asks for: 878, 768 or 960 of
+            // the 1280 columns, centred.
+            w = check_aspect == 2'd0 ? 10'd878 : check_aspect == 2'd2 ? 10'd960 : 10'd768;
+            x0 = (11'd1280 - w) >> 1;
             if (check_layer) begin
                 c = desk_cell(80 * (row / 16) + col / 16);
                 expected = font[{c[36:30], row[3:1]}][col[3:1]] ? rgb15(c[29:15]) : rgb15(c[14:0]);
@@ -175,10 +198,14 @@ module video_tb;
                 expected = {(bar == 0 || bar == 1 || bar == 4 || bar == 5) ? 8'd192 : 8'd16,
                             (bar == 0 || bar == 1 || bar == 2 || bar == 3) ? 8'd192 : 8'd16,
                             (bar == 0 || bar == 2 || bar == 4 || bar == 6) ? 8'd192 : 8'd16};
-            end else if (col < 256 || col >= 1024) begin
+            end else if (col < x0 || col >= x0 + w) begin
                 expected = 24'd0;
             end else begin
-                nx = (col - 256) / 3;
+                // Which source pixel an output column draws: the unit walks
+                // the line buffer with an accumulator that adds 256 for each
+                // column and takes a step when it reaches w, so after c
+                // columns it has taken floor(256 * c / w) steps.
+                nx = (256 * (col - x0)) / w;
                 ny = row / 3;
                 p = fb_pix(b, nx, ny);
                 e = emph(b, ny);
@@ -215,18 +242,6 @@ module video_tb;
     wire vs = !de && db[1];
     wire [23:0] rgb = {dr[9:2], dg[9:2], db[9:2]};
 
-    // Raster checks run from the first vertical sync (the encoders send zeros,
-    // which decode as data, in reset); picture checks while `checking`.
-    reg prev_de = 1'b0, prev_hs = 1'b0, prev_vs = 1'b0;
-    integer since_hs = -1, de_len = 0, lines = -1, de_lines = 0, vs_lines = 0;
-    integer bp_lines = 0, col = 0, row = 0;
-    reg seen_de_since_vs = 1'b0;
-    integer vs_edges = 0;
-    reg checking = 1'b0, check_bars = 1'b0, check_buf = 1'b0, check_layer = 1'b0;
-    integer mismatches = 0;
-    integer raster_errors = 0;
-
-    wire armed = vs_edges > 0;
     always @(posedge pix_clk) if (!pix_reset) begin
         if (since_hs >= 0)
             since_hs <= since_hs + 1;
@@ -339,7 +354,15 @@ module video_tb;
         expect_error(1'b0, EMPH, 3'd2);
         expect_error(1'b0, FB, 3'd2);
         expect_error(1'b1, FB, 3'd2);
-        expect_error(1'b0, REGS + 32'h1c, 3'd2);
+        // ASPECT is the eighth register: readable, writable, and 1:1 out of
+        // reset. It used to sit outside the window, where a read was an error.
+        rd32(REGS + 32'h1c, w);
+        if (w !== 32'd1) begin
+            $display("ASPECT reset value %h", w);
+            fail("ASPECT reset");
+        end
+        wr32(REGS + 32'h1c, 32'd1);
+        expect_error(1'b1, REGS + 32'h18, 3'd2);
         expect_error(1'b1, REGS + 32'h4, 3'd2);
         expect_error(1'b1, REGS + 32'hc, 3'd2);
         expect_error(1'b1, REGS, 3'd0);
@@ -507,6 +530,24 @@ module video_tb;
             @(posedge pix_clk);
         end
         layer_on = 1'b0;
+
+        // The pixel aspect. The picture widens to 878 or 960 columns and the
+        // side bars shrink to match, every source pixel still drawn but one
+        // into three columns or four rather than always three. The register
+        // is taken at the vertical blank, so each is checked a frame later.
+        for (i = 0; i < 3; i = i + 1) begin
+            wr32(REGS + 32'h1c, i[1:0]);
+            rd32(REGS + 32'h1c, w);
+            if (w !== i) begin
+                $display("ASPECT reads %h after writing %0d", w, i);
+                fail("ASPECT readback");
+            end
+            check_aspect = i[1:0];
+            check_frame(1'b0, 1'b0);
+        end
+        // Back to 1:1, which is the geometry every check above assumes.
+        wr32(REGS + 32'h1c, 2'd1);
+        check_aspect = 2'd1;
 
         if (raster_errors != 0) fail("raster timing");
         if (errors == 0)

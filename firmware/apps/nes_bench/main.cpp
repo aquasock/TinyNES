@@ -330,13 +330,24 @@ const uint16_t PAD_BIT[] = {
 };
 const unsigned PAD_BITS = sizeof PAD_BIT / sizeof PAD_BIT[0];
 
-// Which controller button answers to each NES button: one index into PAD_BIT
-// per NES button, in the order JOY_* has them, player 1's eight then player
-// 2's.  The host fills this from /nes.ini; this is what the program has always
-// done, and what it keeps when the host says nothing.
-uint8_t pad_map[2 * 8] = {
-	0, 1, 6, 7, 2, 3, 4, 5,
-	0, 1, 6, 7, 2, 3, 4, 5,
+// What the host fills, in one headerless blob: which controller button answers
+// to each NES button -- one index into PAD_BIT per NES button, in the order
+// JOY_* has them, player 1's eight then player 2's -- and then the picture's
+// pixel aspect.  These bytes are the ABI with the host (TinyTang
+// ports/bl616/tang_fpga_uart.c), so the two sides change together, and the
+// core asks for sizeof this rather than for a count of its own.  What is here
+// is what the program has always done, and what it keeps when the host says
+// nothing or answers with fewer bytes than this build asks for.
+struct HostSettings {
+	uint8_t pad_map[2 * 8];
+	uint8_t aspect;
+};
+HostSettings host_settings = {
+	{
+		0, 1, 6, 7, 2, 3, 4, 5,
+		0, 1, 6, 7, 2, 3, 4, 5,
+	},
+	TN_VIDEO_ASPECT_8_7,	// /nes.ini's own default
 };
 // The left stick's 6-bit axes centre near 32; this far off centre it
 // counts as the D-pad.
@@ -365,7 +376,7 @@ uint8_t read_pad(unsigned n, uint16_t &held)
 	const unsigned lx = lo & 63u, ly = lo >> 8 & 63u;
 
 	uint8_t joy = 0;
-	const uint8_t *map = pad_map + (n != 0 ? 8 : 0);
+	const uint8_t *map = host_settings.pad_map + (n != 0 ? 8 : 0);
 	for (unsigned i = 0; i < 8; i++) {
 		if (map[i] < PAD_BITS && (held & PAD_BIT[map[i]]))
 			joy |= (uint8_t)(1u << i);
@@ -714,15 +725,17 @@ bool save_is_blank()
 	return true;
 }
 
-// Ask the host which controller button answers to each NES button and take
-// the answer into pad_map.  Headerless, exactly as a save is, and for the
-// same reason: it lands directly in the buffer.  The host always has an
-// answer -- its defaults at worst -- so this does not wait the way a save
-// that may not exist does, and nothing arriving leaves what was compiled in.
+// Ask the host which controller button answers to each NES button, and for the
+// picture's aspect, and take the answer into host_settings.  Headerless,
+// exactly as a save is, and for the same reason: it lands directly in the
+// buffer.  The host always has an answer -- its defaults at worst -- so this
+// does not wait the way a save that may not exist does, and nothing arriving
+// leaves what was compiled in.
 void receive_settings()
 {
-	printf("TinyNES SETTINGS WANT %08lx %08lx\n", (unsigned long)(uintptr_t)pad_map,
-	       (unsigned long)sizeof pad_map);
+	printf("TinyNES SETTINGS WANT %08lx %08lx\n",
+	       (unsigned long)(uintptr_t)&host_settings,
+	       (unsigned long)sizeof host_settings);
 	fflush(stdout);
 	tn_load_reset();
 	uint32_t got = 0;
@@ -832,6 +845,13 @@ int main()
 	save_ram = nes_bench_battery(&save_len);
 	receive_save();
 	receive_settings();
+	// The picture's pixel aspect, from /nes.ini through the host.  Written
+	// here because the register is taken at the next vertical blank and this
+	// is well before the first frame; a host that sent fewer bytes than this
+	// build asked for leaves the compiled-in default in place.
+	TN_VIDEO_ASPECT = host_settings.aspect <= TN_VIDEO_ASPECT_4_3
+				  ? host_settings.aspect
+				  : TN_VIDEO_ASPECT_8_7;
 	// Link mode last: the host answers the save request as a line, which it
 	// can only do while the link is still the boot ROM's, and from here on
 	// this program's bytes go out as TinyDesk text frames instead.
