@@ -4,11 +4,16 @@ Status on 2026-10-14: **design for review; nothing built.** The layout is the
 one the user approved, with button remapping as the first working tab and
 video options to follow. This file is the thing to argue with before code.
 
+Revised on 2026-10-14 (core-log entry 36): the Audio tab and its `volume`,
+`mute` and `channels` keys are dropped. The Pmod I2S2's Line Out is a fixed
+level for the amplifier to set, the NES's sound is mono, and muting a line
+output is the amplifier's job too, so none of the three had anything to do.
+
 ## Goal
 
 An app on the desktop, opened while a game runs, that changes how the game
 behaves: which controller button answers to which NES button, and later
-aspect, scale, scanlines and volume. Settings live in `/nes.ini` at the card
+aspect and palette. Settings live in `/nes.ini` at the card
 root, beside `/tang.ini`, so they survive a power cycle and can be edited from
 a PC.
 
@@ -40,11 +45,6 @@ scale = 3             # 3x fills the 720p frame; 2x is smaller and centred
 scanlines = off
 palette = fceumm
 overscan = hide       # hide or show the top and bottom 8 lines
-
-[audio]
-volume = 75           # 0 to 100
-mute = no
-channels = stereo     # stereo or mono
 ```
 
 The current defaults are the current behaviour, so writing the file changes
@@ -62,15 +62,15 @@ text boxes, lists, progress bars and scrollbars, and `td_widget_set_visible`
 and `td_widget_set_color`. So each tab is a button plus its own widgets hidden
 or shown, with the active header recoloured. Tab-key focus traversal already
 works. **There is no slider**, so every numeric option steps with `<` and `>`
-buttons; `td_progress` draws the bar for volume and is display only.
+buttons.
 
 ```
 ┌─ TinyNES Control Deck ────────────────────────────────────────────┐
-│  [ Input ]   Video     Audio     Saves                            │
+│  [ Input ]   Video     Saves                                      │
 ├───────────────────────────────────────────────────────────────────┤
 │  Player    ( ● 1 )   (   2 )                                      │
 │                                                                   │
-│   NES button        Wii Classic Controller                       │
+│   NES button        Wii Classic Controller                        │
 │   ──────────────────────────────────────────────                  │
 │   A ............    B                                             │
 │   B ............    Y                                             │
@@ -91,11 +91,11 @@ buttons; `td_progress` draws the bar for volume and is display only.
 ```
 
 `Saves` follows once save states exist; the tab is present but greyed so the
-shape is right. Video and audio tabs are as approved.
+shape is right. The Video tab is as approved; there is no Audio tab.
 
 ## How a setting reaches the hardware
 
-Three destinations, one store. The BL616 parses `nes.ini` once per launch into
+Two destinations, one store. The BL616 parses `nes.ini` once per launch into
 a small struct; each destination reads what it needs.
 
 - **Input** goes to the AE350 player, where the mapping lives today. The
@@ -107,8 +107,6 @@ a small struct; each destination reads what it needs.
   `TNR1` header.
 - **Video** goes to `video.sv` registers: aspect, scale, scanlines, overscan.
   The palette is already a 768-entry store the core writes.
-- **Audio** goes to `i2s_out.sv`: volume and mute are a scale on the sample.
-  Channels would need the player, so it rides the same blob as input.
 
 Applying at launch only is the first version: the app writes the file, and the
 settings take effect on the next game start. Live application — reading the

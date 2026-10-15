@@ -1234,3 +1234,33 @@ The Audio tab's volume, mute and channels are next, carried in the same blob, si
 - User Test: PASS
 
 ---
+
+## 36 COMMIT Unreleased 2026-10-14T19:50:10-07:00
+
+#### Coming From:
+
+Unreleased a286f67
+
+#### Purpose:
+
+Drop the Control Deck's Audio tab and `/nes.ini`'s `volume`, `mute` and `channels` keys, as the user decided, instead of wiring them to the player.
+
+#### Outcome:
+
+The user asked what the Audio tab was for: the Pmod I2S2's CS4344 drives a fixed-level Line Out with no volume control of its own, so a volume setting could only scale FCEUmm's 16-bit mix in software and lose resolution, the player sends FCEUmm's single mono sample to both channels (`firmware/apps/nes_bench/main.cpp`, the `TN_AUDIO_DATA` writes), so `channels` had nothing to switch, and muting a line output is the amplifier's job; the user chose to remove all three and the tab rather than keep a desktop-only mute or add FCEUmm's per-channel volumes. This repository's half is `docs/tinynes-control-deck-plan.md`, which now carries a dated note of the decision and no longer shows the `[audio]` section, the tab in its mock, `td_progress` for volume or an audio destination; one line of the mock that had been 68 columns since entry 33, which said the frame lines up at 69, was padded to 69. The player never read these keys, so nothing here was built or deployed. TinyTang entry 78 is the firmware half, flashed and power-cycled as `0947b57-dirty.aafcfe8`, whose `tang` command read 22 keys from the card's `/nes.ini`, the earlier 25 less the three now ignored, and named the palette; the user found three tabs with Saves opening, Input and Video editing and saving, and games launching with their aspect and palette, and passed the cycle. During the cycle the user also asked what an authentic USA NES still lacks, and was given Reset and Power, a hardware check of player 2, the Four Score, a mouse-aimed Zapper with the Arkanoid paddle, and turbo buttons, without choosing among them; and AccuracyCoin, the user's test cartridge, was run on the PC build of the player: its run-all hangs in page 19's Misaligned OAM Behavior test, which waits for a sprite-zero hit FCEUmm's evaluation never produces, and with page 19 skipped it scores 84 of 146 with 10 skipped. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+The user approved the next cycle: a deterministic AccuracyCoin harness under `tools/` that runs the cartridge on the PC build and reports each test's result, and a series of FCEUmm patches carried in this repository and applied by the fetch script, using the author's MIT-licensed TriCNES as the reference; the first patches are the small ones (SHA, SHX, SHY and SHS target addresses, palette reads with open-bus top bits, PPU open-bus decay, sprite zero under the left mask, OAM DMA from the current OAM address, and controller strobe and ninth-read behaviour), each checked against Castlevania's checksums and frame time, while cycle-exact DMC DMA and PPU timing are larger work. Licensing of the carried patches, which are GPL-2.0 like the core they change, has to be recorded with PROV-007.
+
+#### Files Modified:
+
+- docs/tinynes-control-deck-plan.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: PASS
+
+---
