@@ -10,7 +10,10 @@
 #   make PLAY=1                 the playable program, build/firmware/apps/nes_play/
 #   make PLAY=1 DIAG=1          it with HDMI diagnostics, build/firmware/apps/nes_diag/
 #
-# FRAMES=<n> and INPUT="<script>" replace the defaults in main.cpp.
+# FRAMES=<n> and INPUT="<script>" replace the defaults in main.cpp, and
+# PALETTE=<n> the palette it starts with, an index into the names
+# tools/gen_fceumm_palettes.py lists (0, FCEUmm's own, by default); the
+# PLAY=1 build takes the palette from the host instead.
 # PLAY=1 builds the playable version instead (AE350 only), with the Wii
 # Classic Controllers as players 1 and 2 and the sound on the I2S2; it has
 # no cartridge built in and takes one over the UART when it starts.
@@ -58,10 +61,20 @@ APP_DEFS := $(if $(filter 1,$(PLAY)),-DNES_PLAY) \
             $(if $(filter 1,$(DIAG)),-DNES_DIAG) \
             $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
             $(if $(INPUT),-DNES_INPUT='"$(INPUT)"') \
-            $(if $(MCACHE),-DNES_MCACHE=$(MCACHE))
+            $(if $(MCACHE),-DNES_MCACHE=$(MCACHE)) \
+            $(if $(PALETTE),-DNES_PALETTE=$(PALETTE))
 CPPFLAGS += $(APP_DEFS)
 
 include ../../rt/rt.mk
+
+# The preset palettes, taken from FCEUmm's libretro driver, which is not
+# built: generated beside the program, since they are the core's, not ours.
+PALETTES := $(BUILD)/fceumm_palettes.h
+CPPFLAGS += -I$(BUILD)
+$(PALETTES): $(CORE_DIR)/drivers/libretro/libretro.c $(ROOT)/tools/gen_fceumm_palettes.py
+	@mkdir -p $(dir $@)
+	python3 -I $(ROOT)/tools/gen_fceumm_palettes.py $< -o $@
+$(call objects,main.cpp): $(PALETTES)
 
 ifneq ($(PLAY),1)
 ASFLAGS += -DNES_ROM_FILE='"$(BUILD)/rom.nes"'
@@ -96,6 +109,7 @@ $(foreach s,$(filter %.c,$(LIB_SOURCES)),$(eval $(call host_compile,$(s),$$(HOST
 $(eval $(call host_compile,main.cpp,$$(HOST_CXX) -MMD -MP $$(CPPFLAGS) -O2 -std=gnu++20 -Wall -Wextra -Werror))
 $(eval $(call host_compile,rom.S,$$(HOST_CC) $$(APP_DEFS) -DNES_ROM_FILE='"$$(BUILD)/rom.nes"'))
 $(call host_object,rom.S): $(BUILD)/rom.nes
+$(call host_object,main.cpp): $(PALETTES)
 
 -include $(HOST_LIB_OBJECTS:.o=.d) $(HOST_APP_OBJECTS:.o=.d)
 

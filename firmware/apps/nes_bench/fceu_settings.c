@@ -9,9 +9,14 @@
 // place: the CartInfo the loaded iNES fills in (src/cart.h, ines.c), which
 // cart.h declares the type of but not the object, so it is declared here as
 // FCEUmm's libretro driver declares it (src/drivers/libretro/libretro.c).
+// The palette is chosen the same way: FCEUI_SetPaletteArray() is the core's
+// own setter, but whether a game may take one depends on GameInfo's type,
+// which only the core's headers describe.
 // Built with the core's own flags, so the structure's layout is the core's.
 #include "fceu.h"
 #include "cart.h"
+#include "driver.h"
+#include "git.h"
 
 extern CartInfo iNESCart;
 
@@ -36,4 +41,17 @@ uint8_t *nes_bench_battery(uint32_t *len)
 		return 0;
 	*len = iNESCart.SaveGameLen[0];
 	return iNESCart.SaveGame[0];
+}
+
+/* Show the loaded game in a palette of 64 RGB triples, as FCEUmm's libretro
+ * driver does for its presets (retro_set_custom_palette): the core makes the
+ * eight emphasis variants itself and writes all of them through
+ * FCEUD_SetPalette. A Vs. System game keeps the palette its own PPU chip
+ * has, which the core chose when it loaded the game and the libretro driver
+ * leaves alone too, so a preset would show it in the wrong colours. */
+void nes_bench_palette(const uint8_t *rgb)
+{
+	if (!GameInfo || GameInfo->type == GIT_VSUNI)
+		return;
+	FCEUI_SetPaletteArray((uint8_t *)rgb, 64);
 }

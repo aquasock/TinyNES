@@ -14,6 +14,7 @@
 //
 // Report lines (identical in form on both builds):
 //   TinyNES NES CORE=<core> ROM=<bytes> CRC=<crc32> START=<us>
+//   TinyNES NES PALETTE=<name>
 //   TinyNES NES CACHE MICM=<csr> MDCM=<csr> I=<bytes>/<ways>/<line>
 //       D=<bytes>/<ways>/<line> MCTL=<csr>             (AE350 only)
 //   TinyNES NES F=<frame> AVG=<us> MAX=<us> SHOW=<us> VIDEO=<crc>
@@ -35,7 +36,10 @@
 // emphasis of every CHECK-th frame, AUDIO every frame's samples. OVER
 // counts frames slower than the NES frame period, SPEED is that period
 // over the average frame time. On the PC, NES_DUMP=<dir> in the environment
-// also saves the CHECK frames there as <frame>.ppm.
+// also saves the CHECK frames there as <frame>.ppm. PALETTE names the
+// palette the game is shown in: fceumm, the core's own, or one of the
+// presets of FCEUmm's libretro driver (tools/gen_fceumm_palettes.py),
+// chosen by NES_PALETTE here and by the host under PLAY=1.
 //
 // Built with PLAY=1 (AE350 only) it is a playable NES instead. It takes its
 // cartridge at start: it prints
@@ -128,7 +132,12 @@ void nes_bench_apu_volumes(int volume);
 // fceu_settings.c: the loaded cartridge's battery-backed save RAM, if it has
 // one, as its bytes and how many there are.
 uint8_t *nes_bench_battery(uint32_t *len);
+// fceu_settings.c: show the loaded game in a palette of 64 RGB triples.
+void nes_bench_palette(const uint8_t *rgb);
 }
+// The presets, generated into the build directory from the core's libretro
+// driver: nes_palette_name[] and nes_palette_rgb[] (Makefile).
+#include "fceumm_palettes.h"
 
 namespace {
 const int SI_GAMEPAD = 1;
@@ -189,6 +198,9 @@ void FCEUD_DispMessage(int, unsigned, const char *s) { printf("fceumm %s\n", s);
 #endif
 #ifndef NES_FRAMES
 #define NES_FRAMES 1800
+#endif
+#ifndef NES_PALETTE
+#define NES_PALETTE 0
 #endif
 #ifndef NES_CHECK
 #define NES_CHECK 60
@@ -333,7 +345,8 @@ const unsigned PAD_BITS = sizeof PAD_BIT / sizeof PAD_BIT[0];
 // What the host fills, in one headerless blob: which controller button answers
 // to each NES button -- one index into PAD_BIT per NES button, in the order
 // JOY_* has them, player 1's eight then player 2's -- and then the picture's
-// pixel aspect.  These bytes are the ABI with the host (TinyTang
+// pixel aspect, then the palette, an index into nes_palette_name[].  These
+// bytes are the ABI with the host (TinyTang
 // ports/bl616/tang_fpga_uart.c), so the two sides change together, and the
 // core asks for sizeof this rather than for a count of its own.  What is here
 // is what the program has always done, and what it keeps when the host says
@@ -341,6 +354,7 @@ const unsigned PAD_BITS = sizeof PAD_BIT / sizeof PAD_BIT[0];
 struct HostSettings {
 	uint8_t pad_map[2 * 8];
 	uint8_t aspect;
+	uint8_t palette;
 };
 HostSettings host_settings = {
 	{
@@ -348,6 +362,7 @@ HostSettings host_settings = {
 		0, 1, 6, 7, 2, 3, 4, 5,
 	},
 	TN_VIDEO_ASPECT_8_7,	// /nes.ini's own default
+	NES_PALETTE,		// FCEUmm's own, /nes.ini's default too
 };
 // The left stick's 6-bit axes centre near 32; this far off centre it
 // counts as the D-pad.
@@ -726,7 +741,7 @@ bool save_is_blank()
 }
 
 // Ask the host which controller button answers to each NES button, and for the
-// picture's aspect, and take the answer into host_settings.  Headerless,
+// picture's aspect and palette, and take the answer into host_settings.  Headerless,
 // exactly as a save is, and for the same reason: it lands directly in the
 // buffer.  The host always has an answer -- its defaults at worst -- so this
 // does not wait the way a save that may not exist does, and nothing arriving
@@ -784,6 +799,18 @@ void receive_save()
 }
 #endif
 
+// Show the game in palette n, an index into nes_palette_name[]: 0 is the
+// palette the core chose when it loaded the game, which is left as it is,
+// and an index this build does not know is taken as 0.  Returns the index
+// shown, for the report.
+unsigned set_palette(unsigned n)
+{
+	if (n == 0 || n >= NES_PALETTE_COUNT)
+		return 0;
+	nes_bench_palette(nes_palette_rgb[n - 1]);
+	return n;
+}
+
 int main()
 {
 #ifdef NES_PLAY
@@ -839,6 +866,9 @@ int main()
 	       (unsigned)rom_size,
 	       (unsigned long)crc_update(0, nes_rom, rom_size),
 	       (unsigned long long)to_us(start));
+#ifndef NES_PLAY
+	printf("TinyNES NES PALETTE=%s\n", nes_palette_name[set_palette(NES_PALETTE)]);
+#endif
 #ifdef NES_PLAY
 	// A battery-backed cartridge's save RAM: ask for a saved one and take it
 	// into the core's own buffer, before the first frame runs.
@@ -852,6 +882,10 @@ int main()
 	TN_VIDEO_ASPECT = host_settings.aspect <= TN_VIDEO_ASPECT_4_3
 				  ? host_settings.aspect
 				  : TN_VIDEO_ASPECT_8_7;
+	// The palette, from the same answer.  The core writes it to the video
+	// unit's palette store as it goes, before the first frame is shown.
+	printf("TinyNES NES PALETTE=%s\n",
+	       nes_palette_name[set_palette(host_settings.palette)]);
 	// Link mode last: the host answers the save request as a line, which it
 	// can only do while the link is still the boot ROM's, and from here on
 	// this program's bytes go out as TinyDesk text frames instead.

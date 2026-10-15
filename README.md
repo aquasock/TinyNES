@@ -413,7 +413,18 @@ PMOD1*): FCEUmm runs at 48,909 Hz, the DAC's 48,828.125 Hz times the NES's
 HDMI frame plays, and a one-sample correction a frame holds the FIFO near
 1,100 pairs. The summary adds an `AUDIO` line with underruns, dropped
 samples, the FIFO level range, the corrections and the time to send a
-frame's sound, and the program fails on any underrun or drop:
+frame's sound, and the program fails on any underrun or drop.
+
+After the cartridge and any battery save, the player prints `TinyNES SETTINGS
+WANT <address> <bytes>` and takes its settings, headerless, straight into its
+own `HostSettings`: player 1's and player 2's button mappings, eight bytes
+each, then the pixel aspect (the video unit's `ASPECT` values) and the palette,
+an index into the names `tools/gen_fceumm_palettes.py` lists. TinyTang's
+`ae350run` answers it from `/nes.ini` (`[video] palette = <name>`), sending no
+more bytes than were asked for, and a host that sends fewer leaves the
+compiled-in defaults, which are `/nes.ini`'s own: so the two repositories can
+be deployed in either order. The player prints `TinyNES NES PALETTE=<name>`
+for the palette it used.
 
 ```sh
 make -C firmware/apps/nes_bench PLAY=1
@@ -566,11 +577,18 @@ frames a second while the emulation keeps up, and the last frame stays up.
 It plays a controller script, by default 1,800 frames of Castlevania: Start
 at frame 120, then walking right through the first stage from frame 720
 with whips and jumps. `FRAMES=<n>` and `INPUT="<first>+<frames>=<button> ..."`
-replace them at build time. On the PC, `NES_DUMP=<dir>` saves the checked
+replace them at build time. The palette is FCEUmm's own unless `PALETTE=<n>`
+picks one of the 23 presets of FCEUmm's libretro driver, which
+`tools/gen_fceumm_palettes.py` generates into the build directory from the
+fetched `src/drivers/libretro/libretro.c`, so no GPL table is committed here;
+the script fails if upstream's names or order change, because the index is
+what TinyTang sends. A Vs. System game keeps the palette its own PPU has, as
+under the libretro driver. On the PC, `NES_DUMP=<dir>` saves the checked
 frames as PPM images. It prints:
 
 ```text
 TinyNES NES CORE=fceumm ROM=<bytes> CRC=<crc32> START=<us>
+TinyNES NES PALETTE=<name>
 TinyNES NES CACHE MICM=<micm_cfg> MDCM=<mdcm_cfg> I=<bytes>/<ways>/<line> D=<bytes>/<ways>/<line> MCTL=<mcache_ctl>
 TinyNES NES F=<frame> AVG=<us> MAX=<us> SHOW=<us> VIDEO=<crc> AUDIO=<crc>
 TinyNES NES FRAMES=<n> AVG=<us> MIN=<us> MAX=<us> SHOW=<us> OVER=<n> SPEED=<x.y>% LATE=<n> MISSED=<n>
@@ -584,7 +602,8 @@ are `FCEUI_Emulate` alone, which emulates the frame and mixes its sound;
 the benchmark does not play it, the `PLAY=1` build does. `SHOW` is the mean time to hand a frame to the
 video unit (0 on the PC). `VIDEO` is a CRC-32 of the picture and each
 line's emphasis of every 60th frame and `AUDIO` of every frame's samples,
-both taken outside the timed calls. `OVER` counts frames slower than the
+both taken outside the timed calls; `VIDEO` covers palette indices, not
+colours, so it is the same in every palette. `OVER` counts frames slower than the
 NES frame period and `SPEED` is that period over the average frame time.
 `LATE` counts lines the video unit showed before their SDRAM fetch ended and
 `MISSED` frames shown later than the vertical blank after they were asked

@@ -130,6 +130,10 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 - topic_id: AUD
   name: "Audio output"
   description: "The DAC on the Pmod I2S2 and the clocks and framing it accepts."
+
+- topic_id: LORA
+  name: "LoRa radio modules"
+  description: "Sub-GHz LoRa transceiver modules considered for a link between two boards: their electrical interface, RF figures and control."
 ```
 
 ---
@@ -304,6 +308,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Which PMOD0 pins are used for four Wii extension buses? | PMOD | PMOD-007 |
 | Which PMOD1 pins carry the Pmod I2S2's DAC? | PMOD | PMOD-008 |
 | Which clocks and sample rates does the I2S2's CS4344 accept, and how does TinyNES clock it? | AUD | AUD-001 |
+| What is the REYAX RYLR998 LoRa module, what does it need, and where could it attach? | LORA | LORA-001 |
 | Why was FCEUmm silent under nes_bench's own driver, and what does real sound cost? | EMU | EMU-006 |
 | Which silicon revision is this board, and which revision is the core image? | PSX | PSX-001 |
 | How much logic and block RAM does the device have? | PSX | PSX-002 |
@@ -335,7 +340,7 @@ DEV-014: "U-Boot names Andes mcache_ctl bits 9 and 10 as I- and D-cache prefetch
 DEV-015: "Gowin's timing analyser charges the AE350 AHB ports setups of -1.681 to 0.125 ns, holds to 0.094 ns and clock-to-out up to 1.859 ns; the Apicula and nextpnr forks now carry them as an AE350_SOC timing variant"
 DEV-016: "Open-flow AE350 images whose bus clock reaches the A25's row-0 taps through global branch GB20 do not boot, through GB10 they do; the build routes bus_clk first with a temporary nextpnr knob to keep it on GB10"
 DEV-017: "Clock-bridge pips (27,94) SPINE17 <= CBRIDGEOUT_BOTTOM0 and SPINE18 <= CBRIDGEOUT_BOTTOM2 clock nothing, SPINE26 <= CBRIDGEOUT_BOTTOM2 at (27,96) and (81,96) works; an HCLK CLKDIV enters at (54,88) SPINE18 (its TOP entry is dead); fork cd3893f and a build check enforce it"
-DEV-018: "TinyNES's HDMI showed thin lines, then flicker and signal loss, once the package passed about 41 C while every internal check stayed correct; with the serial-clock PLL moved from PLL_L[3] (9.86 ns of general routing to the OSER10s) to PLL_R[3] (2.12 ns) and the clock lane on an OSER10, the picture held to 62 C with the Pmods unplugged; the run with them plugged in is still to do"
+DEV-018: "TinyNES's HDMI showed thin lines, then flicker and signal loss, once the package passed about 41 C while every internal check stayed correct; with the serial-clock PLL moved from PLL_L[3] (9.86 ns of general routing to the OSER10s) to PLL_R[3] (2.12 ns) and the clock lane on an OSER10, the picture held to 62 C with the Pmods unplugged and to 69.8 C with both seated, which closed the defect; the mechanism remains a lead and the sub-ambient corner is unmeasured"
 DEV-019: "The GW5AST-138C has two on-die ADCs, ADCLRC and ADCULC, with a temperature mode (ADCVALUE / 4 in degrees C); the aquasock Apicula fork places and routes them but cannot configure them, so the open flow cannot read the temperature yet"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
@@ -438,7 +443,7 @@ PROV-001: "Lineage as the user states it: nand2mario's TangCore is the origin fo
 PROV-003: "colibri is CERN's vendor-independent, fully verified, open-source VHDL common library at gitlab.cern.ch/colibri/colibri, with an unofficial SystemVerilog port at github.com/kavierim/colibri-sv pinned to upstream 3fa78412; read the port when working in SystemVerilog since it ships an AGENTS.md and targets Verilator and free tooling, but treat the original as the authority; licensed CERN-OHL-W-2.0 (weakly reciprocal), not MIT, with no code copied here"
 PROV-005: "TinyTang is MIT with thirteen Apache-2.0 files: nand2mario's JTAG programmer, and ten Phosphor transport files and two host tests written by this project's author in Tang-Control; it descends from nand2mario's TangCore firmware-bl616 through Tang-Control, a fork of it, and copies no other TangCore source; THIRD_PARTY.md must keep saying the UART protocol was read from GPL-3.0 nestang as a specification, not copied"
 PROV-006: "libretro Nestopia is GPL-2.0-or-later (Freij, Nestopia UE, Carmichael and others); TinyNES measured commit 135dfa6, never vendored, and stopped fetching it when FCEUmm was chosen"
-PROV-007: "libretro FCEUmm is GPL-2.0 (mostly or-later, with a few BSD or unmarked files); tools/fetch_fceumm.sh fetches commit ac0d00a into git-ignored third_party/fceumm, and programs linked with it stay in build/"
+PROV-007: "libretro FCEUmm is GPL-2.0 (mostly or-later, with a few BSD or unmarked files); tools/fetch_fceumm.sh fetches commit ac0d00a into git-ignored third_party/fceumm, and programs linked with it, and the palette tables generated from its libretro.c, stay in build/"
 PROV-008: "The desk layer's font, fpga/ae350_soc/desk_font.hex, is Daniel Hepper's public-domain font8x8 (font8x8_basic.h) at 8e279d2, fetched by tools/fetch_font8x8.sh and converted by tools/gen_desk_font.py"
 PSX-001: "This board is GW5AST-138 revision C (package mark 2518CA0N), while the console138k core image it loads is built for revision B and works anyway"
 PSX-002: "GW5AST-138: 138,240 LUTs, 139,095 registers, 340 BSRAM blocks of 18 Kbit, about 765 KB"
@@ -492,6 +497,7 @@ EMU-005: "Played by hand with a Wii Classic Controller Pro on PMOD0 bus 1, nes_b
 EMU-006: "FCEUI_Initialize clears FSettings, leaving the five APU channel volumes at 0, so nes_bench's own driver mixed silence until it set them to 256 as the libretro driver does; with real sound Castlevania still runs at 153.5 percent, and the play build plays it on the I2S2 with no underrun"
 WII-001: "Wii extensions use I2C address 0x52; write F0=55 then FB=00 to disable encryption, read six identity bytes at FA and six format-1 data bytes after setting pointer 00; NintendoExtensionCtrl waits 10 ms, 20 ms and 175 us at those steps and accepts Classic IDs 00/01 00 A4 20 00..03 01; buttons in bytes 4-5 are active low"
 AUD-001: "The CS4344 takes a 256x MCLK at 2 to 50 kHz (MCLK 0.512 to 50 MHz, 45 to 55 percent duty) in I2S, with MCLK, SCLK and LRCK synchronous but no phase set; TinyNES counts all three from the 75 MHz bus clock, MCLK 12.5 MHz, Fs 48,828.125 Hz, measured 48,827.968 Hz on the board"
+LORA-001: "The REYAX RYLR998 (UPC 612789267033) is a five-pin 3.3 V UART LoRa module, AT-command controlled, 820 to 960 MHz, -20 to +22 dBm out, -129 dBm sensitivity, 140 mA transmitting at +22 dBm; RYLR998_M4 has an I-PEX MHF4 connector instead of the built-in antenna; not fitted or tested here"
 ```
 
 ---
@@ -2098,13 +2104,14 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   topic_id: PROV
   title: "libretro FCEUmm is distributed under GPL-2.0, mostly or-later, and is fetched at a pinned commit, never vendored"
   status: VERIFIED
-  verified_date: 2026-10-12
+  verified_date: 2026-10-14
   statement: "libretro/libretro-fceumm's Copying is the GNU GPL version 2. Most source files, such as src/fceu.c (Copyright 2003 Xodnizel) and src/ppu.c (Copyright 1998 BERO, 2003 Xodnizel), allow 'any later version'; src/boards/pic16c5x.c is BSD-3-Clause (Tony La Porta, from MAME), src/md5.c says only 'licensed under the GPL', and src/boards/emu2413.c (Mitsutaka Okazaki) states no licence. Its Authors file credits BERO with the base FCE code, Xodnizel with most of FCE Ultra, and CaH4e3, Quietust, Mitsutaka Okazaki and others. Commit ac0d00a7fc01166f84c7bac01d1084ebfd2b865e of 2026-10-11 is the head of master that TinyNES uses."
-  consequence: "tools/fetch_fceumm.sh clones that commit into third_party/fceumm/, which .gitignore excludes, and fails if HEAD differs or the tree has local changes, so TinyNES (MIT) carries no FCEUmm source. Programs linked with it, such as build/firmware/apps/nes_bench/fceumm/nes_bench.elf, are GPL-2.0 and stay in build/; with a cartridge image built in they are for local use only. README.md's licensing section names the authors and these terms."
+  consequence: "tools/fetch_fceumm.sh clones that commit into third_party/fceumm/, which .gitignore excludes, and fails if HEAD differs or the tree has local changes, so TinyNES (MIT) carries no FCEUmm source. Programs linked with it, such as build/firmware/apps/nes_bench/fceumm/nes_bench.elf, are GPL-2.0 and stay in build/; with a cartridge image built in they are for local use only. The preset palettes the player offers are the palettes[] table of src/drivers/libretro/libretro.c, a file that carries no notice of its own and so falls under the repository's Copying; tools/gen_fceumm_palettes.py (MIT, code only) generates them into the build directory as fceumm_palettes.h at build time, so no table is committed here. README.md's licensing section names the authors and these terms."
   sources:
     - "https://github.com/libretro/libretro-fceumm commit ac0d00a7fc01166f84c7bac01d1084ebfd2b865e: Copying, Authors, src/fceu.c, src/ppu.c, src/md5.c, src/boards/pic16c5x.c and src/boards/emu2413.c headers"
     - "This project's tools/fetch_fceumm.sh, .gitignore (/third_party/) and README.md (NES emulator benchmark; References and licensing)"
-  verification: "Read from the fetched tree on 2026-10-12 (core-log entry 11); fetch_fceumm.sh reported the pinned commit and a clean tree. Only the file headers named here were read for exceptions. A search for C files without a GPL notice, cut off at ten results, also listed files with no notice at all, such as src/filter.c, src/input/cursor.c and src/boards/vrcirq.c; the tree was not checked exhaustively."
+    - "src/drivers/libretro/libretro.c at ac0d00a: struct st_palettes palettes[] (23 presets) and its file head, and this project's tools/gen_fceumm_palettes.py and firmware/apps/nes_bench/Makefile (PALETTES)"
+  verification: "Read from the fetched tree on 2026-10-12 (core-log entry 11); fetch_fceumm.sh reported the pinned commit and a clean tree. Only the file headers named here were read for exceptions. A search for C files without a GPL notice, cut off at ten results, also listed files with no notice at all, such as src/filter.c, src/input/cursor.c and src/boards/vrcirq.c; the tree was not checked exhaustively. Revised 2026-10-14 (core-log entry 35): the palette tables, read from libretro.c, whose head carries no notice, and generated into build/ rather than committed; the generated tables were compared with the C compiler's own reading of upstream's table and all 23 x 64 colours matched."
 
 - record_id: PROV-008
   kind: EXTERNAL
@@ -2832,6 +2839,19 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "This project's fpga/ae350_soc/i2s_out.sv, tests/i2s_out_tb.sv and firmware/apps/audio_test/main.c"
   verification: "On this board on 2026-10-13 (core-log entry 18): audio_test measured the frame rate against the A25's cycle counter as 48,827.968 Hz (one frame of quantisation is 16 Hz), played 244,148 frames with no underrun or drop, and the user heard 1 kHz left and 2 kHz right; FCEUmm's sound then played with the game. tests/i2s_out_tb.sv checks the ratios, duty, edges and framing in simulation."
 
+
+- record_id: LORA-001
+  kind: EXTERNAL
+  topic_id: LORA
+  title: "REYAX RYLR998 868/915 MHz LoRa UART module: interface and RF figures"
+  status: SOURCED
+  verified_date: 2026-10-14
+  statement: "REYAX's RYLR998 datasheet (10-JUL-2021) describes a module with a Nuvoton MCU and a Semtech LoRa engine, the chip unnamed, controlled by AT commands over a UART, with five pins: 1 VDD, 2 NRST (active low, 100 kOhm internal pull-up, held low at least 100 ms to reset), 3 RXD, 4 TXD, 5 GND; TXD and RXD are to be held low before power-on and power-off. VDD 1.8 to 3.6 V (3.3 typical); inputs high at 0.7 VDD and above, low at 0.3 VDD and below; output high at least 0.9 V and low at most 0.1 V. RF output -20 to +22 dBm, filter insertion loss 1 to 3 dB (2 typical), sensitivity -129 dBm (one figure, its LoRa settings not stated), frequency 820 to 960 MHz at +-10 ppm. Current: 140 mA transmitting at +22 dBm, 17.5 mA receiving, 15 uA in sleep (AT+MODE=1), 0.02 to 5.5 mA averaged in its smart receiving mode (AT+MODE=2,3000,3000). UART 300 to 115200 baud, 115200 typical, 8N1. Operating -40 to +85 C. Ordering numbers: RYLR998 (built-in antenna), RYLR998_M4 (I-PEX MHF4 connector), RYLR998_NP (no pin header). That revision lists FCC and NCC certification as under test. Retail listings tie UPC 612789267033 to model RYLR998."
+  consequence: "Its 3.3 V logic and supply match the FPGA's LVCMOS33 pins and a PMOD socket's 3.3 V pin, while the empty SDRAM header J10 carries only +5 V (BRD-008), over its 3.6 V limit. PMOD1 carries the I2S2 and PMOD0 the Wii buses, of which the player reads only buses 1 and 2 (PMOD-007), so bus 3 or bus 4's pair could carry its UART, with 3.3 V from PMOD0 pin 6 or 12; whether that pin supplies 140 mA is not on record (Sipeed rates no PMOD current here). Attached to the FPGA, it works only under a core that bridges it, since the shell runs on the BL616. Nothing in this project drives it yet. Its per-packet payload limit, default band and spreading factor, and what AT+CPIN protects are in REYAX's AT command manual, which has not been read."
+  sources:
+    - "REYAX RYLR998 datasheet, 10-JUL-2021 revision, 7 pages, as hosted at https://cdn.hackaday.io/files/1853287929073152/RYLR998_EN.pdf (pages 2 to 7: features, pin description, timing, specification, ordering)"
+    - "Retail listings matching UPC 612789267033 to REYAX RYLR998: https://www.amazon.com/dp/B099RM1XMG and https://camelcamelcamel.com/product/B099RM1XMG"
+  verification: "Looked up online on 2026-10-14 (core-log entry 35) because this file had no answer; the datasheet text was extracted with pdftotext. No module has been fitted or tested on this board, so the status is SOURCED. The datasheet is a 2021 copy from a third-party host rather than REYAX's own site, and a newer revision may exist."
 ```
 
 ---
@@ -2865,7 +2885,7 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - A `core-syntax.md` audit is required whenever this file changes, per `.ai/core.md`.
 
 ```yaml
-last_reviewed: 2026-10-13
+last_reviewed: 2026-10-14
 ```
 
 ---

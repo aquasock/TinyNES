@@ -1200,3 +1200,37 @@ Palette selection is the Video tab's next setting and travels the same way: the 
 - User Test: PASS
 
 ---
+
+## 35 COMMIT Unreleased 2026-10-14T19:10:30-07:00
+
+#### Coming From:
+
+Unreleased bf2b587
+
+#### Purpose:
+
+Let `/nes.ini` choose the palette a game is shown in, from FCEUmm's own and the 23 presets of FCEUmm's libretro driver, carried to the player in the settings blob the way the aspect is, and bring DEV-018's fast-index line in line with its record.
+
+#### Outcome:
+
+The presets live in FCEUmm's `src/drivers/libretro/libretro.c`, which the player does not build, so the new `tools/gen_fceumm_palettes.py` reads its `palettes[]` table from the fetched tree into `fceumm_palettes.h` in the program's build directory at build time, and no GPL table is committed; the script holds the 24 names in index order, 0 being `fceumm`, FCEUmm's built-in palette, and 1 to 23 upstream's preset option values, and fails if upstream's names or order differ, because that index is the byte TinyTang sends. Its first run stopped on `wavebeam`, whose table writes `0X` rather than `0x`, which the parser now accepts, and its output matched a C program compiling upstream's own table on all 23 x 64 colours. `firmware/apps/nes_bench/Makefile` generates the header and takes `PALETTE=<n>` for the benchmark, `fceu_settings.c` gained `nes_bench_palette()`, which calls the core's `FCEUI_SetPaletteArray` with 64 colours so the core builds its emphasis variants and writes all 768 entries to the video unit as before, except for a Vs. System game, which keeps its PPU's palette as the libretro driver leaves it, and `main.cpp`'s `HostSettings` gained a `palette` byte after `aspect`, 18 bytes in all, applied after the settings arrive and reported as `TinyNES NES PALETTE=<name>`; an index of 0 or one the build does not know leaves the core's own palette untouched, and a host sending 17 bytes leaves the default. The PC build with the default gave `VIDEO=f2160661 AUDIO=4512be2f`, unchanged since entry 18; with `PALETTE=11` (`smooth-fbx`) the checksums were the same, as `VIDEO` covers palette indices and not colours, while all 30 dumped frames were in smooth-fbx's colours with no index mapped to two colours. The play, diagnostic and benchmark AE350 builds compiled without warnings. TinyTang entry 77 is the host half: the parser reads `palette = <name>`, `ae350run` sends the byte and names it, and the Control Deck's Video tab gained a Palette row; its firmware `7cb1639-dirty.0ff2f60` was flashed over the console and the board power-cycled, and `tools/deploy_tinytang.sh` reloaded the unchanged `ae350_soc.bin` `5d4f88cd` and installed the stripped player `f151e7f001ac232f395d5b15d8df7cb9e5f13ae62c8ea2d658253044961ba2b8` at 848188 bytes; the board's `tang` command read 25 keys from `/nes.ini`. The user stepped the palette in the app, saw `wii-vc`, the preset furthest from FCEUmm's own by mean colour distance, show the game darker, and passed the cycle. The README now describes the settings request, which it had never covered, and the palette. In `.ai/core-reference.md` DEV-018's index line, which still called the Pmod-seated heat run pending, now matches its record, closed at 69.8 C; PROV-007 records that the palette tables come from a file with no notice of its own under FCEUmm's `Copying` and stay in `build/`; and LORA-001, in a new LORA topic, records the REYAX RYLR998 LoRa module the user asked about, from its datasheet, as SOURCED, since none is fitted. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, checked that the reference's records and fast index list the same ids in the same order, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+The Audio tab's volume, mute and channels are next, carried in the same blob, since `/nes.ini` holds them and nothing reads them yet. The shell's `tang` command reports the video settings without the palette, a TinyTang one-liner left for that cycle. A LoRa link between two boards, which the user asked about, would begin as line-based chat with acknowledgements; a remote shell over it would need authentication, line mode and a command allowlist, and its attachment point, an FPGA core bridge or spare BL616 pins, is not yet settled; that waits for the user's approval of a plan.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/fceu_settings.c
+- firmware/apps/nes_bench/main.cpp
+- tools/gen_fceumm_palettes.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
