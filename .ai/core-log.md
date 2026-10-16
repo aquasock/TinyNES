@@ -1376,3 +1376,33 @@ The next cycle should be proposed to the user. Open items are a way to start a z
 - User Test: PASS
 
 ---
+
+## 40 COMMIT Unreleased 2026-10-16T02:58:45-07:00
+
+#### Coming From:
+
+Unreleased f5011dd
+
+#### Purpose:
+
+Record the desktop path to a zipped cartridge that entry 39 left open, now provided by TinyTang's TinyNES Launcher, and say so in the README's desktop section.
+
+#### Outcome:
+
+TinyTang entry 81's half of this is the code: a TinyDesk window, TinyNES Launcher, that browses `/root/media/nes`, its letter folders and the cartridges in them, and starts the one chosen by running this repository's own `scripts/open/nes.tdsh` with `FILE` set, which is what gives a `.zip` the desktop path it did not have. No engineering file of this repository had to change for that -- the script already took `FILE` and already handles both -- so this cycle is the README alone: the desktop section now names the window, says that picking a game in it is the shell line the section already showed typed for the user, and says that a `.zip` is listed beside the `.nes` files. The older sentence stays true and was kept: by the user's decision a `.zip` opened on the desktop starts nothing, so there is still no `zip.tdsh`, and the launcher reaches a zipped cartridge without one. No build or deployment applies here; the firmware is TinyTang's, and entry 81 records its artifact, its power cycle and the user's acceptance of the window on the board. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` unchanged, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+Entry 37's boot test of every cartridge, now on the card as zips, is still held and is the natural use of the window, since it makes each folder and its files reachable one at a time. The larger AccuracyCoin work of entry 37, the authentic-NES list of entry 36, and TinyDesk's 47-byte name and 63-file folder limits remain open. No further change is owed here for the launcher.
+
+#### Files Modified:
+
+- README.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

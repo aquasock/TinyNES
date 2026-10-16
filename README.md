@@ -460,9 +460,13 @@ FILE="/root/media/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/ope
 
 A zipped cartridge is started the same way from the shell, with `FILE` naming
 the `.zip`; by the user's decision a `.zip` opened on the desktop does not
-start TinyNES, so there is no `zip.tdsh`. `ae350run` names the save after the
-file with its extension replaced, so `Game.zip` and `Game.nes` share
-`/root/saves/nes/Game.sav`.
+start TinyNES, so there is no `zip.tdsh`. The desktop's way to one is
+TinyTang's **TinyNES Launcher**: a window that browses `/root/media/nes`, its
+folders and the cartridges in them, and starts the one chosen through this
+same script, so picking a game in the app is the shell line above typed for
+you, and a `.zip` is listed beside the `.nes` files. `ae350run` names the save
+after the file with its extension replaced, so `Game.zip` and `Game.nes`
+share `/root/saves/nes/Game.sav`.
 
 ### Accuracy tests and the FCEUmm patches
 
