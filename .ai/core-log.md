@@ -1485,3 +1485,33 @@ Audio is now on both outputs from the same samples, so the next work is whatever
 - User Test: PASS
 
 ---
+
+## 43 COMMIT Unreleased 2026-10-21T15:26:00-07:00
+
+#### Coming From:
+
+Unreleased 1e485ac
+
+#### Purpose:
+
+Record that the desktop's cartridge browser and settings are now one window, after TinyTang folded them together.
+
+#### Outcome:
+
+TinyTang entry 10 merged its TinyNES Launcher and TinyNES Control Deck into a single app whose first tab is Library, and deleted the launcher's source, registration and build entry; the user accepted the merged window on the board. This repository's README is the one that documents that window to a TinyNES reader, so its desktop section now names "TinyNES" with a Library tab rather than a separate launcher, and says the Input, Video and Saves tabs hold what the second window used to. No engineering file here changed: the apps live in TinyTang, and this cycle is the documentation that follows them. No build, deployment or hardware test applied. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry as number 43 of 100 with exactly six sections and allowed Status values.
+
+#### Next Steps:
+
+Nothing is owed here for the merge. The open TinyNES work is unchanged: the boot test of every cartridge that entry 37 holds, the AccuracyCoin run of entry 37, the authentic-NES list of entry 36, and TinyDesk's 47-byte name and 63-file folder limits.
+
+#### Files Modified:
+
+- README.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
