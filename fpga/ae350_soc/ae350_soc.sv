@@ -355,8 +355,41 @@ module ae350_soc_top #(
         .hsize(exts_size), .hwdata(exts_wdata), .hready_in(exts_ready),
         .hrdata(audio_rdata), .hready(audio_ready), .hresp(audio_resp),
         .mclk(pmod1_dac[0]), .lrck(pmod1_dac[1]),
-        .sclk(pmod1_dac[2]), .sdin(pmod1_dac[3])
+        .sclk(pmod1_dac[2]), .sdin(pmod1_dac[3]),
+        .audio_toggle(hdmi_audio_toggle), .audio_left(hdmi_audio_in_left),
+        .audio_right(hdmi_audio_in_right)
     );
+
+    // The HDMI transmitter takes the same stream.  Its audio inputs live on the
+    // pixel clock: the I2S side flips a toggle per frame and holds that frame's
+    // pair, the pixel side latches the pair when it sees the flip and raises
+    // clk_audio for one pixel clock.  That is a gated pixel clock, which is how
+    // the transmitter's audio logic is clocked on the image that works; feeding
+    // it a free-running clock from the bus domain carried no audio at all.
+    wire hdmi_audio_toggle;
+    wire [15:0] hdmi_audio_in_left, hdmi_audio_in_right;
+    reg [1:0] audio_toggle_sync = 2'b00;
+    reg audio_toggle_seen = 1'b0;
+    reg hdmi_audio_clk = 1'b0;
+    reg [15:0] hdmi_audio_left = 16'd0, hdmi_audio_right = 16'd0;
+    always @(posedge pix_clk or negedge hdmi_resetn) begin
+        if (!hdmi_resetn) begin
+            audio_toggle_sync <= 2'b00;
+            audio_toggle_seen <= 1'b0;
+            hdmi_audio_clk <= 1'b0;
+            hdmi_audio_left <= 16'd0;
+            hdmi_audio_right <= 16'd0;
+        end else begin
+            audio_toggle_sync <= {audio_toggle_sync[0], hdmi_audio_toggle};
+            hdmi_audio_clk <= 1'b0;
+            if (audio_toggle_sync[1] != audio_toggle_seen) begin
+                audio_toggle_seen <= audio_toggle_sync[1];
+                hdmi_audio_left <= hdmi_audio_in_left;
+                hdmi_audio_right <= hdmi_audio_in_right;
+                hdmi_audio_clk <= 1'b1;
+            end
+        end
+    end
 
     // HDMI: 50 MHz -> 27 MHz -> 371.25 MHz serial clock (hdmi_pll), divided
     // by 5 to the 74.25 MHz pixel clock. 50 * 27 = 1350 MHz VCO / 50; 27 * 55
@@ -516,34 +549,12 @@ module ae350_soc_top #(
     wire [2:0] tmds_data;
     wire tmds_clock_out;
 
-    // Audio is silent in this image: the words are zero and the rate selector
-    // says 48 kHz, which is what the clock regeneration packets declare.  The
-    // sample clock is the pixel clock divided to about 48 kHz, which is the
-    // rate the transmitter hands a word to the packetiser.
-    reg [10:0] audio_div = 11'd0;
-    reg clk_audio = 1'b0;
-    always @(posedge pix_clk) begin
-        if (pix_reset) begin
-            audio_div <= 11'd0;
-            clk_audio <= 1'b0;
-        end else if (audio_div == 11'd1546) begin  // 74.25 MHz / 1547 ~ 48.0 kHz
-            audio_div <= 11'd0;
-            clk_audio <= !clk_audio;
-        end else begin
-            audio_div <= audio_div + 1'b1;
-        end
-    end
-    wire [15:0] audio_sample_word [1:0];
-    assign audio_sample_word[0] = 16'd0;
-    assign audio_sample_word[1] = 16'd0;
-
-    // The transmitter's video mode is its elaboration-time default: 720p60,
-    // the only mode this picture has ever used.  read_slang binds the
-    // parameter when it reads the module, so it cannot be overridden here.
     hdmi_silent hdmi_tx (
         .clk_pixel_x5(pix_clk5),
         .clk_pixel(pix_clk),
-        .clk_audio(clk_audio),
+        .clk_audio(hdmi_audio_clk),
+        .audio_left(hdmi_audio_left),
+        .audio_right(hdmi_audio_right),
         .reset(pix_reset),
         .rgb(pixel_rgb),
         .tmds(tmds_data),

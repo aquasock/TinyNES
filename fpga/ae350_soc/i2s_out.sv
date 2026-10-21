@@ -51,7 +51,17 @@ module i2s_out #(
     output reg         mclk,
     output reg         lrck,
     output reg         sclk,
-    output reg         sdin
+    output reg         sdin,
+
+    // The same stream, for the HDMI transmitter: the pair for the frame that
+    // is starting, and a toggle that flips with it.  The pixel side detects
+    // the toggle and makes its own one-clock strobe, because gating the pixel
+    // clock there is how the transmitter's audio logic is clocked on this
+    // project's working image; a free-running clock in this domain crosses the
+    // other way and carries nothing.
+    output reg         audio_toggle,
+    output reg  [15:0] audio_left,
+    output reg  [15:0] audio_right
 );
     localparam integer DEPTH = 1 << DEPTH_BITS;
 
@@ -64,6 +74,8 @@ module i2s_out #(
     reg [7:0] tick = 8'd0;
     wire mclk_end = div == MCLK_DIV - 1;
     wire frame_start = mclk_end && tick == 8'd255;
+
+
 
     // ------------------------------------------------------------ FIFO
 
@@ -128,6 +140,9 @@ module i2s_out #(
             drops <= 32'd0;
             frame <= 32'd0;
             shift <= 32'd0;
+            audio_toggle <= 1'b0;
+            audio_left <= 16'd0;
+            audio_right <= 16'd0;
             ctrl_write <= 1'b0;
             data_write <= 1'b0;
             err2 <= 1'b0;
@@ -159,11 +174,19 @@ module i2s_out #(
                 end
             end
             if (frame_start) begin
+                audio_toggle <= !audio_toggle;
                 frames <= frames + 32'd1;
                 frame <= next_frame;
                 if (enable && !pop && !flush)
                     underruns <= underruns + 16'd1;
             end
+
+            // The pair for the HDMI side is the shifter's own frame register,
+            // mirrored every clock.  next_frame only carries a value on the
+            // cycle it is popped, so sampling it at a boundary hands the other
+            // side zeros; frame holds the pair for the whole frame.
+            audio_left <= frame[31:16];
+            audio_right <= frame[15:0];
 
             // FIFO pointers.
             if (flush) begin

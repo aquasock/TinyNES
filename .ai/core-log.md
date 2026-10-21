@@ -1453,3 +1453,35 @@ Ask the sink what it makes of the silent stream: if the television or receiver r
 - User Test: PASS
 
 ---
+
+## 42 COMMIT Unreleased 2026-10-21T14:12:00-07:00
+
+#### Coming From:
+
+Unreleased 00abf96
+
+#### Purpose:
+
+Carry real audio to the HDMI transmitter, so a game is audible on the television as well as on the Pmod I2S2.
+
+#### Outcome:
+
+`i2s_out` now exports its stream to the fabric's HDMI path: a toggle that flips once per frame, and the shifter's own `frame` register mirrored continuously, because the alternative, `next_frame`, only carries a value on the cycle it is popped and handed the transmitter zeros at every frame boundary. The pixel side synchronises the toggle in two stages, latches the pair when the synchronised value changes, and raises the transmitter's `clk_audio` for one pixel clock, which is how hdl-util's audio logic is clocked: `packet_picker` samples that clock in the pixel domain, and `audio_clock_regeneration_packet` measures CTS over N/128 edges of it against the pixel clock, so the packet declares the true I2S frame rate of 75 MHz / 1536 = 48,828.125 Hz with no table for it and no new PLL. Two earlier shapes carried no audio and are recorded in the reference: a free-running 48,828.125 Hz clock divided from `bus_clk`, and the same handshake sampling the FIFO's pop-cycle value. The fault was located with a 1.1 kHz tone generated from the pixel counter, which was audible on HDMI and proved the data islands, ACR packets and synchronisers before any sample was wired; gating that tone on the I2S pair being non-zero then fell silent, which put the fault in the handoff rather than the packets. A third round of confusion came from the test method rather than the design: `scripts/open/nes.tdsh`, which the desktop launcher runs, loads `/root/cores/console138k/tinynes.bin` every time it starts a game, so each launcher test was reloading the old DVI core over the image under test; the audio builds only ever ran in the moments between a `tangload` and the next launch. The final image removes the diagnostic tone, and an eight-seed sweep of the cleaned design gave 7 of 8 timing-clean placements with `pix_clk` 81.74 to 92.15 MHz and `bus_clk` 76.68 to 80.46 MHz; seed 8 was deployed as `tinynes.bin`, 4,746,220 bytes, SHA-256 `188d6a961d75e47ccf537b731746d669c5a96e80f7d3857efd53bb7843475723`, with the pixel clock on the measured SPINE16+SPINE25 pair and the AE350 dedicated hop present. The user launched Castlevania from the desktop launcher and reported perfect audio on the Pmod I2S2 and on HDMI together. The README and `.ai/core-reference.md`'s new DEV-020 record describe the handoff, the rate and the failed shapes. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry as number 42 of 100 with exactly six sections and allowed Status values.
+
+#### Next Steps:
+
+Audio is now on both outputs from the same samples, so the next work is whatever the emulator needs: the boot test of every cartridge that entry 37 still holds, the AccuracyCoin work, and the authentic-NES list of entry 36. The card's `tinynes.bin` is now this HDMI build, and the DVI image it replaced is reproducible from `00abf96^`; if the DVI path is ever wanted back, that is the commit. Two limits worth remembering: the ACR declares 48,828.125 Hz rather than a nominal 48 kHz, which this television accepted but a stricter sink might not, and the pixel clock's two-spine route is measured only as a pair.
+
+#### Files Modified:
+
+- README.md
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/i2s_out.sv
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

@@ -7,10 +7,13 @@
 // read by read_slang, so the array lives entirely on that side, and the top
 // level sees only scalars.
 //
-// Audio is silence in this image: both words are zero and the rate selector
-// says 48 kHz, which is what the transmitter declares in its clock
-// regeneration packets.  The pixel source is driven by cx/cy, which is the
-// same raster the video unit used to count for itself.
+// The audio words are the I2S unit's own stream, clocked by its frame clock,
+// which runs at 75 MHz / 1536 = 48,828.125 Hz rather than a nominal 48 kHz.
+// The transmitter measures CTS against the pixel clock, so its clock
+// regeneration packet states the true rate without a table for it; the rate
+// selector keeps the 48 kHz N value, which only sizes the measurement window.
+// The pixel source is driven by cx/cy, which is the same raster the video unit
+// used to count for itself.
 
 module hdmi_silent #(
     parameter int VIDEO_ID_CODE = 4
@@ -18,6 +21,8 @@ module hdmi_silent #(
     input  wire        clk_pixel,
     input  wire        clk_pixel_x5,
     input  wire        clk_audio,
+    input  wire [15:0] audio_left,
+    input  wire [15:0] audio_right,
     input  wire        reset,
     input  wire [23:0] rgb,
     output wire [2:0]  tmds,
@@ -26,8 +31,8 @@ module hdmi_silent #(
     output wire [9:0]  cy
 );
     logic [15:0] audio_sample_word [1:0];
-    assign audio_sample_word[0] = 16'd0;
-    assign audio_sample_word[1] = 16'd0;
+    assign audio_sample_word[0] = audio_left;
+    assign audio_sample_word[1] = audio_right;
 
     hdmi #(
         .VIDEO_ID_CODE(VIDEO_ID_CODE),

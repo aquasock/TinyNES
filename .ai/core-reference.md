@@ -159,6 +159,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Why do flip-flops on one clock hold 0 in some placements, and how must an HCLK CLKDIV clock enter the clock plane? | DEV | DEV-017 |
 | Why does the TinyNES HDMI picture show thin lines and then lose signal, and what has been ruled out? | DEV | DEV-018 |
 | Does the FPGA have a temperature sensor, and can the open flow read it? | DEV | DEV-019 |
+| How do the I2S samples reach the HDMI transmitter, and what does the sink need? | DEV | DEV-020 |
 | Is there a core with no emulator for TinyDesk to sit on? | DEV | DEV-005 |
 | Which FPGA pins are the JTAG programmer's? | BRD | BRD-001 |
 | Why does the SD card fail to mount? | BRD | BRD-002 |
@@ -346,6 +347,7 @@ DEV-016: "Open-flow AE350 images whose bus clock reaches the A25's row-0 taps th
 DEV-017: "Clock-bridge pips (27,94) SPINE17 <= CBRIDGEOUT_BOTTOM0 and SPINE18 <= CBRIDGEOUT_BOTTOM2 clock nothing, SPINE26 <= CBRIDGEOUT_BOTTOM2 at (27,96) and (81,96) works; an HCLK CLKDIV enters at (54,88) SPINE18 (its TOP entry is dead); fork cd3893f and a build check enforce it"
 DEV-018: "TinyNES's HDMI showed thin lines, then flicker and signal loss, once the package passed about 41 C while every internal check stayed correct; with the serial-clock PLL moved from PLL_L[3] (9.86 ns of general routing to the OSER10s) to PLL_R[3] (2.12 ns) and the clock lane on an OSER10, the picture held to 62 C with the Pmods unplugged and to 69.8 C with both seated, which closed the defect; the mechanism remains a lead and the sub-ambient corner is unmeasured"
 DEV-019: "The GW5AST-138C has two on-die ADCs, ADCLRC and ADCULC, with a temperature mode (ADCVALUE / 4 in degrees C); the aquasock Apicula fork places and routes them but cannot configure them, so the open flow cannot read the temperature yet"
+DEV-020: "HDLMI audio works on this board when the transmitter's audio inputs live on the pixel clock: the I2S unit flips a toggle per frame and holds the frame's pair, the pixel side latches the pair on the flip and raises clk_audio for one pixel clock, and the clock regeneration packet measures CTS against the pixel clock so it declares the true frame rate, 75 MHz / 1536 = 48,828.125 Hz, with no table for it; the Pmod I2S2 and HDMI both play, and a test tone proved the packet path before any sample was wired"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
 BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
@@ -2918,6 +2920,19 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 ```
 
 ---
+
+- record_id: DEV-020
+  kind: DEVICE
+  topic_id: DEV
+  title: "HDMI audio: the sample handoff into the pixel domain and the rate the sink is told"
+  status: VERIFIED
+  verified_date: 2026-10-21
+  statement: "hdl-util's HDMI transmitter takes one audio word per clk_audio cycle and its audio logic is clocked by clk_audio: packet_picker samples that clock in the pixel domain and detects its rising edge, and audio_clock_regeneration_packet counts those edges over N/128 samples to measure CTS against the pixel clock, so any real sample rate is declared correctly without a table of its own (N is the 48 kHz value, which only sizes the measurement window). On this board the I2S unit's frame rate is 75 MHz / 1536 = 48,828.125 Hz, so a design that feeds the transmitter that stream must put clk_audio and the words in the pixel domain: the I2S side flips a toggle once per frame and mirrors the shifter's own frame register, and the pixel side latches the pair when the two-stage synchronised toggle changes and raises clk_audio for exactly one pixel clock. Two other shapes were built and carried no audio: a free-running 48,828.125 Hz clock made by dividing bus_clk, and the same handshake with the FIFO's pop-cycle value sampled at the frame boundary, which is zero outside the cycle it is popped."
+  consequence: "Treat the transmitter's audio inputs as pixel-domain signals. Gating the pixel clock for one cycle per sample is deliberate and is what the working image does; do not hand the module a clock from another domain and expect its audio logic to run. The sink accepts a non-nominal declared rate: 48,828.125 Hz played on the television this board drives, so the exact-48 kHz option (a 12.288 MHz master clock and another PLL) is not needed for correct pitch. A test tone generated in the pixel domain and fed through the same path is the fastest way to separate a broken packet path from a silent sample source, and it was what located this fault."
+  sources:
+    - "fpga/hdmi/packet_picker.sv audio_sample_word_transfer and clk_audio_old; fpga/hdmi/audio_clock_regeneration_packet.sv N_48K and the CTS counter; fpga/hdmi/hdmi.sv audio input wiring"
+    - "fpga/ae350_soc/i2s_out.sv (MCLK_DIV 6, frame at tick 255, audio_toggle and the mirrored frame pair); fpga/ae350_soc/ae350_soc.sv (pixel-side toggle synchroniser and the one-cycle clk_audio)"
+  verification: "On 2026-10-21, seed 8 of an eight-seed sweep of the audio-wired design (design.bin SHA-256 188d6a961d75e47ccf537b731746d669c5a96e80f7d3857efd53bb7843475723, bus_clk 79.38 MHz, pix_clk 92.15 MHz, no hold violations, pixel clock on SPINE16+SPINE25, AE350 dedicated hop present) was installed as /root/cores/console138k/tinynes.bin and the user launched Castlevania from the desktop launcher and reported perfect audio on the Pmod I2S2 and on HDMI together. Before the wiring, a 1.1 kHz tone generated from the pixel counter and sent through the same packets was audible on HDMI, which proved the data islands, the ACR packets and the synchronisers; with the tone gated on the I2S pair being non-zero it fell silent, which located the fault in the sample handoff rather than the packet path."
 
 ## 6. Record template
 

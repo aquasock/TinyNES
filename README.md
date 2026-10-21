@@ -227,9 +227,15 @@ every video block RAM is written and read on one clock.
 The HDMI transmitter under `fpga/hdmi/` is hdl-util's
 (https://github.com/hdl-util/hdmi, MIT, Copyright (c) 2019 Sameer Puri),
 vendored whole with its licence in `fpga/hdmi/LICENSE-MIT`; `video.sv` is now
-only the pixel source that drives it. Audio is silent in this image: the
-sample words are zero, so the transmitter's audio sample and clock
-regeneration packets are present but carry nothing.
+only the pixel source that drives it. The transmitter carries the same audio
+the Pmod I2S2 gets: `i2s_out` flips a toggle once per frame and holds that
+frame's pair, the pixel side latches the pair when it sees the flip and raises
+the transmitter's `clk_audio` for one pixel clock, and the clock regeneration
+packet measures CTS against the pixel clock so it declares the true frame rate,
+75 MHz / 1536 = 48,828.125 Hz, with no table for it. The first two attempts
+failed on that handoff rather than on the packets: a free-running 48 kHz clock
+from the bus domain carried nothing, and sampling the FIFO's pop-cycle value at
+a frame boundary handed over zeros.
 
 The testbench drives each AHB port directly. `TEST=0` covers the ROM, the RAM's
 byte lanes, ERROR responses and zero-reading fetches, the EXTS registers, the
