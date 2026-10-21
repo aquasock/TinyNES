@@ -22,6 +22,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import shlex
 import statistics
 import subprocess
@@ -75,10 +76,50 @@ class Tools:
         return proc.returncode, time.monotonic() - start, usage.ru_maxrss / 1024
 
 
+
+def slang_reads(design, out):
+    """The read_slang line for designs whose sources Yosys's classic front end
+    cannot parse, plus the cell-library shim and blackbox list it needs.
+
+    hdl-util's HDMI transmitter takes unpacked-array ports, which read_verilog
+    rejects, so those files come in through read_slang.  The project's own
+    sources stay on read_verilog so their memory inference is unchanged: the
+    two front ends model an array differently, and moving video.sv to slang
+    turned a 9-bit desk-layer store into a 1-bit DPB, which the gates refuse.
+    """
+    slang = design.get("slang_sources") or []
+    if not slang:
+        return []
+    shim = out / "shim"
+    shim.mkdir(parents=True, exist_ok=True)
+    suite = pathlib.Path(TOOLS_SUITE)
+    gowin = suite / "share" / "yosys" / "gowin"
+    stripped = re.sub(r"(?ms)^\s*specify\s*$.*?^\s*endspecify\s*$", "",
+                      (gowin / "cells_sim.v").read_text())
+    (shim / "cells_sim_nospecify.v").write_text(stripped)
+    shutil.copy(gowin / "cells_xtra_gw5a.v", shim / "cells_xtra_gw5a.v")
+    ext = (gowin / "cells_xtra_gw5a.v").read_text()
+    libmods = set(re.findall(r"(?m)^\s*module\s+([A-Za-z_]\w*)", stripped + ext))
+    dnames = set()
+    for src in list(design["sources"]) + list(slang):
+        dnames |= set(re.findall(r"(?m)^\s*([A-Za-z_]\w*)",
+                                 (ROOT / src).read_text(errors="ignore")))
+    flags = " ".join(f"--blackboxed-module {m}" for m in sorted(libmods & dnames))
+    files = " ".join(str(ROOT / src) for src in slang)
+    print(f"slang: {len(slang)} sources, {len(libmods & dnames)} primitives blackboxed",
+          flush=True)
+    return [f"read_slang --std 1800-2017 -U SYNTHESIS -D GW_IDE "
+            f"--allow-use-before-declare --allow-lib-module-redef {flags} "
+            f"-v {shim / 'cells_sim_nospecify.v'} -v {shim / 'cells_xtra_gw5a.v'} {files}"]
+
+
 def synthesise(tools, design, name, params, out):
     out.mkdir(parents=True, exist_ok=True)
     reads = [f"read_verilog -lib {src.format(suite=tools.suite)}"
              for src in design.get("lib_sources", [])]
+    global TOOLS_SUITE
+    TOOLS_SUITE = tools.suite
+    reads += slang_reads(design, out)
     reads += [f"read_verilog -sv {ROOT / src}" for src in design["sources"]]
     chparams = [f"chparam -set {key} {value} {design['top']}"
                 for key, value in params.items()]

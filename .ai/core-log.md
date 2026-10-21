@@ -1406,3 +1406,50 @@ Entry 37's boot test of every cartridge, now on the card as zips, is still held 
 - User Test: N/A
 
 ---
+
+## 41 COMMIT Unreleased 2026-10-21T11:58:24-07:00
+
+#### Coming From:
+
+Unreleased 50cd89e
+
+#### Purpose:
+
+Replace the hand-written DVI encoder with hdl-util's HDMI transmitter so the picture can carry audio, and prove the picture still works before any sound is wired up.
+
+#### Outcome:
+
+`fpga/hdmi/` now holds hdl-util's transmitter whole -- `hdmi.sv`, the packet assembler and picker, the audio sample, clock-regeneration and info-frame modules, the serializer and the TMDS channel -- MIT licensed with its notice at `fpga/hdmi/LICENSE-MIT`, since this repository ignores `third_party/` and a notice placed there would never be committed. `fpga/hdmi/hdmi_silent.sv` is the door this project opens it by: the transmitter takes its samples as an unpacked array port, which Yosys's classic front end cannot build, so the wrapper is read by `read_slang` and the top level sees only scalars. `video.sv` stopped owning the raster and the wire: it takes the transmitter's `cx`/`cy`, delays them by its four-stage pipeline depth so its colour lands on the pixel being shown, and outputs 24-bit RGB; the DVI `tmds_encoder` and its three instances are gone. The top instantiates the wrapper, deletes the four `OSER10`s and the five-bit clock lane, keeps the differential buffers and the 371.25 to 74.25 `CLKDIV`, and runs the transmitter with zeroed sample words at a 48 kHz `clk_audio` counted from the pixel clock, so the image sends silence. The build reads the project's own sources with `read_verilog -sv` and only hdl-util with `read_slang`, because moving `video.sv` to slang changed synthesis: `screen.cells4`, which holds one bit of the 37-bit desk-layer cell, came out as a 1-bit DPB instead of 9-bit DPX9B and the 9-bit gate refused it. `tools/sweep.py` gained a `slang_sources` list for the design description, and `tools/designs/ae350_soc.json` lists the eleven files. An eight-seed sweep with the pixel clock routed first produced 7 of 8 timing-clean placements with `bus_clk` 76.04 to 81.00 MHz and `pix_clk` 85.42 to 92.63 MHz and no hold violations; with `bus_clk` routed first instead, the pixel clock went to SPINE19+SPINE26 and SPINE27 on five seeds, which reference record DEV-017 lists as unmeasured or dead. Seed 7 of the pixel-clock-first sweep (`design.bin` SHA-256 `54ac4e82ac7f04659b205ef6c22d8200ea59b46d1a50b9bec281925a9703f24a`, `bus_clk` 81.00 MHz, `pix_clk` 91.47 MHz, AE350 dedicated hop present, pixel clock on SPINE16+SPINE25) was put on the card as `/root/cores/console138k/tinynes_hdmi_test.bin` and loaded with `tangload`; the user saw the colour bars, then loaded Castlevania and reported it plays exactly as before. The build's bridge gate now accepts SPINE26 alone or SPINE16+SPINE25 together and still refuses every other set, `NPNR_GOWIN_CLK_FIRST` defaults to `pix_clk`, and a rebuild at seed 7 reproduced the deployed `.bin` byte for byte. `.ai/core-reference.md`'s DEV-017 gained the measurement, and the README describes the vendored transmitter, its licence and the gate. Audio is silent and the sink was not yet checked for an audio stream. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry as number 41 of 100 with exactly six sections and allowed Status values.
+
+#### Next Steps:
+
+Ask the sink what it makes of the silent stream: if the television or receiver reports PCM at 48 kHz instead of no audio, the sample and clock-regeneration packets are being received, and the rest is wiring. Then feed real samples into the packetiser from `i2s_out`'s FIFO, which already runs at 75 MHz / 1536 = 48,828.125 Hz: either compute the ACR N/CTS for that rate or give the I2S unit a 12.288 MHz master clock so it runs at exactly 48 kHz, which means a further PLL. The pixel clock's two-spine route is measured but the individual spines are not: only the pair has been shown to work, so a future design that lands on SPINE16 alone or SPINE25 alone still needs its own test.
+
+#### Files Modified:
+
+- README.md
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/video.sv
+- fpga/hdmi/LICENSE-MIT
+- fpga/hdmi/audio_clock_regeneration_packet.sv
+- fpga/hdmi/audio_info_frame.sv
+- fpga/hdmi/audio_sample_packet.sv
+- fpga/hdmi/auxiliary_video_information_info_frame.sv
+- fpga/hdmi/hdmi.sv
+- fpga/hdmi/hdmi_silent.sv
+- fpga/hdmi/packet_assembler.sv
+- fpga/hdmi/packet_picker.sv
+- fpga/hdmi/serializer.sv
+- fpga/hdmi/source_product_description_info_frame.sv
+- fpga/hdmi/tmds_channel.sv
+- tools/build_ae350_soc.sh
+- tools/designs/ae350_soc.json
+- tools/sweep.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

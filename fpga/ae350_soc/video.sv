@@ -103,9 +103,15 @@ module video #(
 
     input  wire        pix_clk,
     input  wire        pix_reset,
-    output wire [9:0]  tmds_blue,
-    output wire [9:0]  tmds_green,
-    output wire [9:0]  tmds_red
+
+    // The raster, from the HDMI transmitter that owns the timing.  Its frame
+    // is 1650x750 with the same porches this unit used to count, so cx/cy are
+    // the hcnt/vcnt it generated for itself.  They are taken four clocks late,
+    // which is this unit's pipeline depth, so the colour it outputs lands in
+    // the cycle the transmitter is showing that pixel.
+    input  wire [10:0] cx,
+    input  wire [9:0]  cy,
+    output wire [23:0] rgb
 );
     localparam integer H_ACTIVE = 1280, H_FP = 110, H_SYNC = 40, H_BP = 220;
     localparam integer V_ACTIVE = 720, V_FP = 5, V_SYNC = 5, V_BP = 20;
@@ -354,11 +360,11 @@ module video #(
     // is five 9-bit slices so that it maps to block RAM in 9-bit mode, as the
     // palette and emphasis do; that mode is the one shown to work on this
     // chip (core-log entry 14, TOOL-020).
-    reg [8:0] cells0 [0:4095];
-    reg [8:0] cells1 [0:4095];
-    reg [8:0] cells2 [0:4095];
-    reg [8:0] cells3 [0:4095];
-    reg [8:0] cells4 [0:4095];
+    (* ram_style = "block" *) reg [8:0] cells0 [0:4095];
+    (* ram_style = "block" *) reg [8:0] cells1 [0:4095];
+    (* ram_style = "block" *) reg [8:0] cells2 [0:4095];
+    (* ram_style = "block" *) reg [8:0] cells3 [0:4095];
+    (* ram_style = "block" *) reg [8:0] cells4 [0:4095];
     wire [44:0] c_wide = {8'd0, c_data};
     reg [7:0] font [0:1023];
     initial $readmemh(FONT_FILE, font);
@@ -387,8 +393,21 @@ module video #(
                        shown_aspect == 2'd2 ? PIC_4_3 : PIC_1_1;
     wire [10:0] x0 = (H_ACTIVE - pic_w) >> 1;
 
-    reg [10:0] hcnt = 11'd0;
-    reg [9:0] vcnt = 10'd0;
+    // Stage 0 addresses the raster four clocks behind the transmitter, so the
+    // colour that reaches it after the four stages below is the current pixel.
+    reg [10:0] cx1 = 11'd0, cx2 = 11'd0, cx3 = 11'd0, cx4 = 11'd0;
+    reg [9:0] cy1 = 10'd0, cy2 = 10'd0, cy3 = 10'd0, cy4 = 10'd0;
+    always @(posedge pix_clk) begin
+        if (pix_reset) begin
+            cx1 <= 11'd0; cx2 <= 11'd0; cx3 <= 11'd0; cx4 <= 11'd0;
+            cy1 <= 10'd0; cy2 <= 10'd0; cy3 <= 10'd0; cy4 <= 10'd0;
+        end else begin
+            cx1 <= cx; cx2 <= cx1; cx3 <= cx2; cx4 <= cx3;
+            cy1 <= cy; cy2 <= cy1; cy3 <= cy2; cy4 <= cy3;
+        end
+    end
+    wire [10:0] hcnt = cx4;
+    wire [9:0] vcnt = cy4;
     reg [11:0] cell_row = 12'd0;
     reg [7:0] nx = 8'd0, ny = 8'd0;   // the NES pixel at (hcnt, vcnt)
     reg [9:0] hacc = 10'd0;           // ...and how far into it the column is
@@ -416,8 +435,6 @@ module video #(
         if (hs_take)
             hs_ack <= hs_req_sync[1];
         if (pix_reset) begin
-            hcnt <= 11'd0;
-            vcnt <= 10'd0;
             nx <= 8'd0;
             hacc <= 10'd0;
             ny <= 8'd0;
@@ -428,7 +445,6 @@ module video #(
             pix_vblank <= 1'b0;
             cell_row <= 12'd0;
         end else begin
-            hcnt <= h_next;
             if (h_next == x0) begin
                 nx <= 8'd0;
                 hacc <= 10'd0;
@@ -439,7 +455,6 @@ module video #(
                 hacc <= hacc_next[9:0];
             end
             if (h_last) begin
-                vcnt <= v_next;
                 // The first cell of the cell row the next line is in.
                 if (v_next == 10'd0)
                     cell_row <= 12'd0;
@@ -586,64 +601,9 @@ module video #(
         vs4 <= vs3;
     end
 
-    tmds_encoder enc_blue (.clk(pix_clk), .reset(pix_reset), .de(de4), .ctrl({vs4, hs4}),
-                           .d(colour4[7:0]), .q(tmds_blue));
-    tmds_encoder enc_green (.clk(pix_clk), .reset(pix_reset), .de(de4), .ctrl(2'b00),
-                            .d(colour4[15:8]), .q(tmds_green));
-    tmds_encoder enc_red (.clk(pix_clk), .reset(pix_reset), .de(de4), .ctrl(2'b00),
-                          .d(colour4[23:16]), .q(tmds_red));
+    // The transmitter owns the syncs and the serialisers; this unit only
+    // names the colour of the pixel it asked for.
+    assign rgb = colour4;
+
 endmodule
 
-// DVI 1.0 TMDS encoder (section 3.3.3); q[0] is the first bit on the wire.
-// From TinyTang's fpga/hdmi_test/hdmi_test.v (MIT), without its clock enable.
-module tmds_encoder (
-    input  wire       clk,
-    input  wire       reset,
-    input  wire       de,
-    input  wire [1:0] ctrl,
-    input  wire [7:0] d,
-    output reg  [9:0] q
-);
-    wire [3:0] n1d = d[0] + d[1] + d[2] + d[3] + d[4] + d[5] + d[6] + d[7];
-    wire use_xnor = n1d > 4'd4 || (n1d == 4'd4 && d[0] == 1'b0);
-
-    wire [8:0] qm;
-    assign qm[0] = d[0];
-    genvar k;
-    generate
-        for (k = 1; k < 8; k = k + 1) begin : stage
-            assign qm[k] = use_xnor ? ~(qm[k-1] ^ d[k]) : (qm[k-1] ^ d[k]);
-        end
-    endgenerate
-    assign qm[8] = ~use_xnor;
-
-    wire [3:0] n1q = qm[0] + qm[1] + qm[2] + qm[3] + qm[4] + qm[5] + qm[6] + qm[7];
-    wire signed [4:0] diff = $signed({1'b0, n1q}) - $signed(5'd8 - {1'b0, n1q});  // N1 - N0
-    wire signed [4:0] two_qm8  = qm[8] ? 5'sd2 : 5'sd0;
-    wire signed [4:0] two_nqm8 = qm[8] ? 5'sd0 : 5'sd2;
-
-    reg signed [4:0] cnt = 5'sd0;
-    initial q = 10'd0;
-    always @(posedge clk)
-        if (reset) begin
-            cnt <= 5'sd0;
-            q   <= 10'd0;
-        end else if (!de) begin
-            cnt <= 5'sd0;
-            case (ctrl)
-                2'b00: q <= 10'b1101010100;
-                2'b01: q <= 10'b0010101011;
-                2'b10: q <= 10'b0101010100;
-                2'b11: q <= 10'b1010101011;
-            endcase
-        end else if (cnt == 5'sd0 || diff == 5'sd0) begin
-            q   <= {~qm[8], qm[8], qm[8] ? qm[7:0] : ~qm[7:0]};
-            cnt <= qm[8] ? cnt + diff : cnt - diff;
-        end else if ((cnt > 5'sd0 && diff > 5'sd0) || (cnt < 5'sd0 && diff < 5'sd0)) begin
-            q   <= {1'b1, qm[8], ~qm[7:0]};
-            cnt <= cnt + two_qm8 - diff;
-        end else begin
-            q   <= {1'b0, qm[8], qm[7:0]};
-            cnt <= cnt - two_nqm8 + diff;
-        end
-endmodule

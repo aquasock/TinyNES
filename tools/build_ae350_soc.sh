@@ -42,7 +42,11 @@ export PYTHONPATH="$apycula:$pydeps:${PYTHONPATH:-}"
 # Temporary: the A25 bus dies when its clock reaches the AE350 through global
 # branch GB20, and works through GB10. The nextpnr fork's experimental knob
 # routes bus_clk first so it takes GB10. Remove once the GB20 fault is fixed.
-export NPNR_GOWIN_CLK_FIRST="${NPNR_GOWIN_CLK_FIRST:-bus_clk}"
+# The pixel clock is routed first: with the HDMI transmitter folded in, routing
+# bus_clk first sends the pixel clock onto SPINE19+SPINE26 (+SPINE27 on five
+# of eight seeds), none of which is measured, while pix_clk-first lands it on
+# SPINE16+SPINE25, which this board runs (core-log entry 41).
+export NPNR_GOWIN_CLK_FIRST="${NPNR_GOWIN_CLK_FIRST:-pix_clk}"
 
 [[ -x "$nextpnr" ]] || { echo "missing open nextpnr: $nextpnr" >&2; exit 2; }
 [[ -f "$apycula/apycula/$family.msgpack.xz" ]] || {
@@ -56,8 +60,33 @@ make -s -C "$root/firmware/boot"
 # The boot ROM's INIT_FILE is relative to the repository root.
 cd "$root"
 echo "Yosys synthesis"
+
+# The HDMI transmitter is hdl-util's, whose ports are unpacked arrays that
+# Yosys's classic front end rejects, so the design goes through read_slang.
+# Primitive visibility needs the cell libraries twice over: once as -v sources
+# and once as --blackboxed-module, or a primitive is dropped without a word.
+shim="$out/shim"
+mkdir -p "$shim"
+datdir=$(yosys-config --datdir 2>/dev/null)
+[[ -n "${datdir:-}" && -d "$datdir/gowin" ]] || datdir="$suite/share/yosys"
+awk '/^[[:space:]]*specify[[:space:]]*$/ { skip=1 }
+     !skip { print }
+     /^[[:space:]]*endspecify[[:space:]]*$/ { skip=0 }' \
+    "$datdir/gowin/cells_sim.v" > "$shim/cells_sim_nospecify.v"
+cp "$datdir/gowin/cells_xtra_gw5a.v" "$shim/cells_xtra_gw5a.v"
+
+export LC_ALL=C
+libmods=$(grep -hoE '^[[:space:]]*module [A-Za-z_][A-Za-z0-9_]*' "$shim"/cells_*.v |
+          awk '{print $2}' | sort -u)
+dnames=$(grep -rhoE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*' "$src" "$root/fpga/hdmi" \
+              --include=*.v --include=*.sv 2>/dev/null |
+         sed 's/^[[:space:]]*//' | sort -u)
+bb=$(comm -12 <(echo "$libmods") <(echo "$dnames")) || true
+bbflags=$(echo "$bb" | sed 's/^/--blackboxed-module /' | paste -sd' ')
+
 yosys -Q -T -q -l "$out/synth.log" -p "
-    read_verilog -lib $suite/share/yosys/gowin/cells_xtra_gw5a.v
+    read_verilog -lib $shim/cells_xtra_gw5a.v
+    read_slang --std 1800-2017 -U SYNTHESIS -D GW_IDE --allow-use-before-declare --allow-lib-module-redef $bbflags -v $shim/cells_sim_nospecify.v -v $shim/cells_xtra_gw5a.v -I $root/fpga/hdmi $root/fpga/hdmi/hdmi_silent.sv $root/fpga/hdmi/hdmi.sv $root/fpga/hdmi/packet_assembler.sv $root/fpga/hdmi/packet_picker.sv $root/fpga/hdmi/audio_sample_packet.sv $root/fpga/hdmi/audio_clock_regeneration_packet.sv $root/fpga/hdmi/audio_info_frame.sv $root/fpga/hdmi/auxiliary_video_information_info_frame.sv $root/fpga/hdmi/source_product_description_info_frame.sv $root/fpga/hdmi/serializer.sv $root/fpga/hdmi/tmds_channel.sv
     read_verilog -sv $src/ahb_boot_rom.sv $src/ahb_ram.sv $src/ahb_sdram.sv $src/exts_uart.sv $src/desk_link.sv $src/video.sv $src/wii_pads.sv $src/i2s_out.sv $src/ae350_soc.sv
     $synth_param
     synth_gowin -family gw5a -top ae350_soc_top
@@ -130,9 +159,15 @@ if other_modes:
 # to clock (core-log entry 14): (27,96) and (81,96) SPINE26 <= CBRIDGEOUT_BOTTOM2.
 pix_route = design["modules"]["top"]["netnames"]["pix_clk"]["attributes"]["ROUTING"].split(";")
 bridges = sorted({p.split("/", 1)[1] for p in pix_route[1::3] if "/CBRIDGEOUT" in p})
-if bridges != ["SPINE26/CBRIDGEOUT_BOTTOM2"]:
+# Measured on this board (core-log entry 41): SPINE26 alone (the DVI image) and
+# SPINE16+SPINE25 together (the HDMI transmitter at seed 7, where Castlevania
+# played).  SPINE17 and SPINE18 clock nothing (DEV-017), and every other set is
+# still unmeasured, so it is refused rather than guessed at.
+measured = [{"SPINE26/CBRIDGEOUT_BOTTOM2"},
+            {"SPINE16/CBRIDGEOUT_BOTTOM2", "SPINE25/CBRIDGEOUT_BOTTOM2"}]
+if set(bridges) not in measured:
     raise SystemExit(f"pixel clock uses unmeasured clock bridge pips: {bridges}")
-print("Pixel clock bridge: SPINE26 <= CBRIDGEOUT_BOTTOM2 only")
+print("Pixel clock bridges: " + ", ".join(bridges))
 PY
 "$suite/py3bin/python3" -m apycula.gowin_pack \
     -d "$family" \

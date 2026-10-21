@@ -1,6 +1,13 @@
 {
     "top": "ae350_soc_top",
-    "prebuild": [["make", "-s", "-C", "firmware/boot"]],
+    "prebuild": [
+        [
+            "make",
+            "-s",
+            "-C",
+            "firmware/boot"
+        ]
+    ],
     "sources": [
         "fpga/ae350_soc/ahb_boot_rom.sv",
         "fpga/ae350_soc/ahb_ram.sv",
@@ -12,7 +19,9 @@
         "fpga/ae350_soc/i2s_out.sv",
         "fpga/ae350_soc/ae350_soc.sv"
     ],
-    "lib_sources": ["{suite}/share/yosys/gowin/cells_xtra_gw5a.v"],
+    "lib_sources": [
+        "{suite}/share/yosys/gowin/cells_xtra_gw5a.v"
+    ],
     "synth_family": "gw5a",
     "family": "GW5AST-138C",
     "device": "GW5AST-LV138PG484AC1/I0",
@@ -21,5 +30,18 @@
     "sdc": "fpga/ae350_soc/ae350_soc.sdc",
     "variants": {
         "normal": {}
-    }
+    },
+    "slang_sources": [
+        "fpga/hdmi/hdmi_silent.sv",
+        "fpga/hdmi/hdmi.sv",
+        "fpga/hdmi/packet_assembler.sv",
+        "fpga/hdmi/packet_picker.sv",
+        "fpga/hdmi/audio_sample_packet.sv",
+        "fpga/hdmi/audio_clock_regeneration_packet.sv",
+        "fpga/hdmi/audio_info_frame.sv",
+        "fpga/hdmi/auxiliary_video_information_info_frame.sv",
+        "fpga/hdmi/source_product_description_info_frame.sv",
+        "fpga/hdmi/serializer.sv",
+        "fpga/hdmi/tmds_channel.sv"
+    ]
 }

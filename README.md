@@ -220,8 +220,16 @@ fails if nextpnr did not apply it. A sweep of `ae350_soc` (below) needs the
 same variable set. The Apicula fork must be at `cd3893f` or later, which
 keeps the HDMI pixel clock off clock-bridge paths that clock nothing on this
 chip (reference record DEV-017); the script fails unless the pixel clock
-reaches the clock spines only through the one bridge path measured to work,
-and unless every video block RAM is written and read on one clock.
+reaches the clock spines through a bridge path measured to work — SPINE26
+alone, or SPINE16+SPINE25, which the HDMI transmitter image uses — and unless
+every video block RAM is written and read on one clock.
+
+The HDMI transmitter under `fpga/hdmi/` is hdl-util's
+(https://github.com/hdl-util/hdmi, MIT, Copyright (c) 2019 Sameer Puri),
+vendored whole with its licence in `fpga/hdmi/LICENSE-MIT`; `video.sv` is now
+only the pixel source that drives it. Audio is silent in this image: the
+sample words are zero, so the transmitter's audio sample and clock
+regeneration packets are present but carry nothing.
 
 The testbench drives each AHB port directly. `TEST=0` covers the ROM, the RAM's
 byte lanes, ERROR responses and zero-reading fetches, the EXTS registers, the

@@ -362,8 +362,11 @@ module ae350_soc_top #(
     // by 5 to the 74.25 MHz pixel clock. 50 * 27 = 1350 MHz VCO / 50; 27 * 55
     // = 1485 MHz VCO / 4.
     wire clk27;
-    wire pix_clk5;
-    wire pix_clk;
+    // Kept so the netlist carries both names: the build's gates find the pixel
+    // clock by name to check which bridge pips it uses, and synthesis drops a
+    // name whose net only connects a cell to a port.
+    (* keep *) wire pix_clk5;
+    (* keep *) wire pix_clk;
     PLL #(
         .FCLKIN("50"),
         .IDIV_SEL(1),
@@ -503,7 +506,52 @@ module ae350_soc_top #(
             pix_reset_sync <= {pix_reset_sync[1:0], 1'b0};
     wire pix_reset = pix_reset_sync[2];
 
-    wire [9:0] tmds_ch [0:2];   // blue, green, red
+    // The HDMI transmitter owns the raster, the syncs, the auxiliary packets
+    // and the serialisers; the video unit is now only a pixel source driven by
+    // the transmitter's cx/cy.  VIDEO_ID_CODE 4 is 1280x720 at 1650x750 with
+    // the porches the video unit used to count itself.
+    wire [10:0] cx;
+    wire [9:0] cy;
+    wire [23:0] pixel_rgb;
+    wire [2:0] tmds_data;
+    wire tmds_clock_out;
+
+    // Audio is silent in this image: the words are zero and the rate selector
+    // says 48 kHz, which is what the clock regeneration packets declare.  The
+    // sample clock is the pixel clock divided to about 48 kHz, which is the
+    // rate the transmitter hands a word to the packetiser.
+    reg [10:0] audio_div = 11'd0;
+    reg clk_audio = 1'b0;
+    always @(posedge pix_clk) begin
+        if (pix_reset) begin
+            audio_div <= 11'd0;
+            clk_audio <= 1'b0;
+        end else if (audio_div == 11'd1546) begin  // 74.25 MHz / 1547 ~ 48.0 kHz
+            audio_div <= 11'd0;
+            clk_audio <= !clk_audio;
+        end else begin
+            audio_div <= audio_div + 1'b1;
+        end
+    end
+    wire [15:0] audio_sample_word [1:0];
+    assign audio_sample_word[0] = 16'd0;
+    assign audio_sample_word[1] = 16'd0;
+
+    // The transmitter's video mode is its elaboration-time default: 720p60,
+    // the only mode this picture has ever used.  read_slang binds the
+    // parameter when it reads the module, so it cannot be overridden here.
+    hdmi_silent hdmi_tx (
+        .clk_pixel_x5(pix_clk5),
+        .clk_pixel(pix_clk),
+        .clk_audio(clk_audio),
+        .reset(pix_reset),
+        .rgb(pixel_rgb),
+        .tmds(tmds_data),
+        .tmds_clock(tmds_clock_out),
+        .cx(cx),
+        .cy(cy)
+    );
+
     video screen (
         .clk(bus_clk),
         .resetn(resetn),
@@ -530,35 +578,13 @@ module ae350_soc_top #(
         .cell_ready(cell_ready),
         .pix_clk(pix_clk),
         .pix_reset(pix_reset),
-        .tmds_blue(tmds_ch[0]),
-        .tmds_green(tmds_ch[1]),
-        .tmds_red(tmds_ch[2])
+        .cx(cx),
+        .cy(cy),
+        .rgb(pixel_rgb)
     );
 
-    // The TMDS clock lane is serialised like the data lanes, five bits high
-    // and five low per pixel, so that all four leave the same kind of
-    // output register on the same two clocks.
-    wire [9:0] tmds_ch_clk = 10'b0000011111;
-    wire [3:0] tmds;   // {clock lane, red, green, blue}
-    genvar lane;
-    generate
-        for (lane = 0; lane < 4; lane = lane + 1) begin : hdmi_ser
-            wire [9:0] d;
-            if (lane == 3) begin : clock_lane
-                assign d = tmds_ch_clk;
-            end else begin : data_lane
-                assign d = tmds_ch[lane];
-            end
-            OSER10 ser (
-                .Q(tmds[lane]),
-                .D0(d[0]), .D1(d[1]), .D2(d[2]), .D3(d[3]), .D4(d[4]),
-                .D5(d[5]), .D6(d[6]), .D7(d[7]), .D8(d[8]), .D9(d[9]),
-                .PCLK(pix_clk),
-                .FCLK(pix_clk5),
-                .RESET(pix_reset)
-            );
-        end
-    endgenerate
+    // {clock lane, red, green, blue}, the order the ELVDS buffer takes.
+    wire [3:0] tmds = {tmds_clock_out, tmds_data};
     ELVDS_OBUF tmds_buf [3:0] (
         .I(tmds),
         .O({tmds_clk_p, tmds_d_p}),
