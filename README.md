@@ -287,8 +287,8 @@ In two-wire mode the BL616 runs TinyTang and holds the FPGA UART, so both
 the image and the programs go through it. `tools/deploy_tinytang.sh` puts
 `build/ae350_soc/ae350_soc.bin` on the SD card as
 `/root/cores/console138k/tinynes.bin` with TinyTang's `tinytang_put.py` and loads
-it with `tangload`, and also installs the NES player and the handler that opens
-a cartridge from the Files app (see *Playing from the desktop*). It leaves the
+it with `tangload`, and also installs the NES player (see *Playing from the
+desktop*). It leaves the
 desk layer as it is: whatever talks to the AE350 holds the UART meanwhile, and
 the boot ROM's loader skips any display frames the layer sent in between.
 `load_ae350.py --tinytang` then uses
@@ -458,36 +458,30 @@ python3 tools/load_ae350.py --tinytang build/firmware/apps/nes_play/nes_bench.el
 
 ### Playing from the desktop
 
-With no PC attached, a `.nes` file opened in TinyDesk's Files app or on its
-desktop plays. TinyTang runs `/root/scripts/open/<ext>.tdsh` for an opened
-file whose extension has one, with `FILE` set to its path, and
-`scripts/open/nes.tdsh` loads the TinyNES core, runs TinyTang's
-`ae350run /root/ae350/tinynes-play.elf "$FILE"`, which sends the player and
-then the cartridge from the card, follows the game to its end (HOME and `-`)
-and loads the desktop core again. `tools/deploy_tinytang.sh` installs the
-player without its debug sections (about 840 KB) and the script. A launch
-takes about ten seconds: the core, the 625 KB player at the link's 186 KB/s,
-and the cartridge. From the shell:
+With no PC attached, a cartridge is started from TinyTang's **TinyNES**
+window: its **Library** tab browses `/root/media/nes` and the folders under it,
+lists the `.nes` and `.zip` cartridges, and starts the one chosen. No shell is
+involved. The window loads `tinynes.bin`, runs TinyTang's `ae350run` on
+`/root/ae350/tinynes-play.elf`, which sends the player and then the cartridge
+from the card and follows the game to its end (HOME and `-`), and loads the
+desktop core again. It does that in a task of its own, through the same
+routines `tangload` and `ae350run` call, because a script started from the open
+desktop could be refused its worker task or its line table and printed `not
+enough memory to load the script` instead of starting a game. That is TinyTang
+`d399c9b` and later. A launch takes about ten seconds: the core, the 625 KB
+player at the link's 186 KB/s, and the cartridge. `tools/deploy_tinytang.sh`
+installs the core image and the player without its debug sections (about
+840 KB), and nothing else.
 
-```sh
-FILE="/root/media/nes/Castlevania (USA) (Rev 1).nes"; tdsh run /root/scripts/open/nes.tdsh
-```
+That window is the only way to start TinyNES. A cartridge double-clicked in
+the Files app or on the desktop is neither launched nor opened as text: it
+says where cartridges start, so a ROM cannot be opened in the Editor and saved
+over. The desktop's `/root/scripts/open/<ext>.tdsh` handler mechanism went
+with it, so there is no `nes.tdsh` and none is installed.
 
-A zipped cartridge is started the same way from the shell, with `FILE` naming
-the `.zip`; by the user's decision a `.zip` opened on the desktop does not
-start TinyNES, so there is no `zip.tdsh`. The desktop's way to one is
-TinyTang's **TinyNES** window, whose **Library** tab browses `/root/media/nes`,
-its folders and the cartridges in them, and starts the one chosen, with a
-`.zip` listed beside the `.nes` files. The Library does not use the script: it
-loads the core, runs the player and loads the desktop core again in a task of
-its own, through the same routines `tangload` and `ae350run` call, because a
-script started from the open desktop could be refused its worker task or its
-line table and printed `not enough memory to load the script` instead of
-starting a game. That is TinyTang `d399c9b` and later; an earlier firmware
-starts the chosen game with the script, as the Files app and the desktop icon
-still do. The same window's Input, Video and Saves tabs hold the settings it
-used to keep in a second window. `ae350run` names the save after the file with
-its extension replaced, so `Game.zip` and `Game.nes` share
+The same window's Input, Video and Saves tabs hold the settings it used to
+keep in a second window. `ae350run` names the save after the file with its
+extension replaced, so `Game.zip` and `Game.nes` share
 `/root/saves/nes/Game.sav`.
 
 ### Accuracy tests and the FCEUmm patches

@@ -3,9 +3,9 @@
 #
 # Two-wire deploy: put the AE350 SoC image on TinyTang's SD card and load it
 # into the FPGA with the BL616's own JTAG programmer, and put the NES player
-# (nes_bench's PLAY=1 build, without its debug sections) and its launcher
-# script, scripts/open/nes.tdsh, beside it, so a .nes file opened on the
-# desktop plays (TinyTang's ae350run and its TinyDesk open rule). Uses
+# (nes_bench's PLAY=1 build, without its debug sections) beside it, so the
+# TinyNES app's Library tab can start a cartridge (TinyTang's tang_core_load
+# and tang_ae350_run). Uses
 # TinyTang's host tools, which ask the console whether it is at a shell
 # prompt before sending.
 #
@@ -24,7 +24,6 @@ image="${1:-$root/build/ae350_soc/ae350_soc.bin}"
 remote="${TINYNES_REMOTE:-/root/cores/console138k/tinynes.bin}"
 player="$root/build/firmware/apps/nes_play/nes_bench.elf"
 player_remote=/root/ae350/tinynes-play.elf
-launcher_remote=/root/scripts/open/nes.tdsh
 strip="${RISCV_BIN:-$HOME/tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin}/riscv-none-elf-strip"
 
 [[ -f "$image" ]] || { echo "missing image: $image (run tools/build_ae350_soc.sh)" >&2; exit 2; }
@@ -37,10 +36,13 @@ stripped="$root/build/firmware/apps/nes_play/tinynes-play.elf"
 
 sha256sum "$image" "$stripped"
 python3 "$tinytang/tools/tinytang_run.py" --port "$port" --seconds 1 \
-    "mkdir /root/scripts/open" "echo tinynes: folders ready"
+    "echo tinynes: console ready"
 python3 "$tinytang/tools/tinytang_put.py" --port "$port" "$image" "$remote"
 python3 "$tinytang/tools/tinytang_put.py" --port "$port" "$stripped" "$player_remote"
-python3 "$tinytang/tools/tinytang_put.py" --port "$port" "$root/scripts/open/nes.tdsh" "$launcher_remote"
+# Nothing else is installed: a cartridge starts from the TinyNES app's Library
+# tab, which loads and runs in-process. An older card still holding
+# /root/scripts/open/nes.tdsh is inert, because no firmware reads that folder
+# any more.
 # The last command is sent only once the prompt is back, so the script ends
 # after tangload has.
 python3 "$tinytang/tools/tinytang_run.py" --port "$port" --wait 120 --seconds 1 \

@@ -1545,3 +1545,35 @@ A `.tdsh` started from the desktop's open handler still goes through `tdsh run`,
 - User Test: N/A
 
 ---
+
+## 45 COMMIT Unreleased 2026-10-22T06:46:12-07:00
+
+#### Coming From:
+
+Unreleased a9e4db6
+
+#### Purpose:
+
+Take the .nes launcher out of TinyDesk's Files app and the desktop, at the user's direction, so a cartridge starts only from the TinyNES window's Library tab.
+
+#### Outcome:
+
+`scripts/open/nes.tdsh` is deleted, the only handler script this project shipped, and `tools/deploy_tinytang.sh` no longer installs it or creates `/root/scripts/open`; the deploy now puts the core image and the player and nothing else. The capability itself is TinyTang's, and its entry 15 records the part that mattered: deleting the script alone would have sent a double-clicked cartridge to TinyDesk's Editor, because the generic open-handler rule falls through to it, so the rule was removed and a smaller patch makes the Editor refuse a `.nes` with a message naming the Library. The board was deployed and the user reported PASS: a cartridge double-clicked in Files is refused rather than opened, and a game still starts from the Library. The card's `/root/scripts/open/nes.tdsh` was removed with `rm -r`, so a card that was deployed before this cycle no longer carries a script nothing reads. Two deploy facts are recorded because they are easy to get wrong again. `tools/deploy_tinytang.sh` defaults to `build/ae350_soc/ae350_soc.bin`, which is the build script's seed-11 default and has never been on hardware, while the card has carried seed 8 of entry 42's sweep since 2026-10-21, so this cycle passed `build/e44_audio_final/normal/seed8/design.bin` (SHA-256 `188d6a961d75e47ccf537b731746d669c5a96e80f7d3857efd53bb7843475723`, 4,746,220 bytes) explicitly rather than letting an unswept placement replace it. The player was rebuilt from the sources with `PLAY=1`, because `main.cpp` was newer than the last build, and its stripped image came out at 868,224 bytes with SHA-256 `961d8ecfa5b348d1e08c585150e41e40d904d71529a315a82b9795ba6a963e00`, identical to the player qualified in entry 39. TinyTang's firmware `d399c9b-dirty.a6c8ba4` was installed and its `platform` confirmed after the power cycle, the deploy loaded the core with `tangload`, and the board's heap read 50,528 bytes free of 101,192 with no refused allocation since boot. `README.md` no longer describes a double-clicked cartridge playing or a shell line that starts one, and the two-wire paragraph no longer says a handler is installed. `.ai/core-reference.md` revised TDESK-017, whose statement still named the open-handler patch, and TOOL-022, which still said the deploy installs a launcher; both gained the dated revision note and moved their verified dates. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry as number 45 of 100 with exactly six sections and allowed Status values.
+
+#### Next Steps:
+
+The seed mismatch is a live hazard rather than a one-off: a plain `tools/deploy_tinytang.sh` puts an unswept placement on the card, so either the build script's default should become a swept seed or the deploy should refuse an image that is not one, and that is the next cycle this repository owes. The launch task's stack margin is still unread, though the run completed on 8 KiB. A `.zip` opened in Files still goes to the Editor, which the user has not asked to change. The rest is unchanged: the boot test of every cartridge that entry 37 holds, the AccuracyCoin work of entry 37, the authentic-NES list of entry 36, and TinyDesk's 47-byte name and 63-file folder limits.
+
+#### Files Modified:
+
+- README.md
+- scripts/open/nes.tdsh (removed)
+- tools/deploy_tinytang.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
