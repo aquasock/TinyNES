@@ -1515,3 +1515,33 @@ Nothing is owed here for the merge. The open TinyNES work is unchanged: the boot
 - User Test: N/A
 
 ---
+
+## 44 COMMIT Unreleased 2026-10-22T06:33:44-07:00
+
+#### Coming From:
+
+Unreleased 7ad18d8
+
+#### Purpose:
+
+Correct the README where it said the TinyNES window's Library tab starts a game through `scripts/open/nes.tdsh`, after TinyTang moved that launch in-process.
+
+#### Outcome:
+
+TinyTang's entry 14 moved the Library's launch off the shell: picking a cartridge there now loads the core, runs the player and reloads the desktop core in a task of its own, through `tang_ae350_run()` in place of `tdsh run /root/scripts/open/nes.tdsh`, because a script started from the open desktop could be refused its worker task or its line table and printed `not enough memory to load the script` instead of starting a game. Two paragraphs of the README described the old path. The desktop section said the tab "starts the one chosen through this same script, so picking a game in the app is the shell line above typed for you"; it now says the Library does not use the script, names the reason, and records that this is TinyTang `d399c9b` and later, an earlier firmware still starting the chosen game with the script as the Files app and the desktop icon still do. The two-wire deploy paragraph said `tools/deploy_tinytang.sh` installs "the NES player and its launcher"; the script it uploads is the open handler rather than a launcher, and there has been no separate launcher window since entry 43, so the sentence now names the handler and what it serves. `scripts/open/nes.tdsh` itself is unchanged and still installs: it remains the path a double-clicked `.nes` takes, which this cycle does not change. No engineering file changed, so there was no build, deployment or hardware test to run. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry as number 44 of 100 with exactly six sections and allowed Status values.
+
+#### Next Steps:
+
+A `.tdsh` started from the desktop's open handler still goes through `tdsh run`, so the Files app and the desktop icon remain exposed to the refusal this cycle documented around rather than fixed; moving them in-process as the Library was is the work that would close it, and it is TinyTang's. The stack margin of the Library's launch task was never measured, so a board session should read the `nes: done (0), N bytes of stack left` line. The rest is unchanged: the boot test of every cartridge that entry 37 holds, the AccuracyCoin work of entry 37, the authentic-NES list of entry 36, and TinyDesk's 47-byte name and 63-file folder limits.
+
+#### Files Modified:
+
+- README.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

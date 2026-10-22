@@ -287,10 +287,11 @@ In two-wire mode the BL616 runs TinyTang and holds the FPGA UART, so both
 the image and the programs go through it. `tools/deploy_tinytang.sh` puts
 `build/ae350_soc/ae350_soc.bin` on the SD card as
 `/root/cores/console138k/tinynes.bin` with TinyTang's `tinytang_put.py` and loads
-it with `tangload`, and also installs the NES player and its launcher (see
-*Playing from the desktop*). It leaves the desk layer as it is: whatever
-talks to the AE350 holds the UART meanwhile, and the boot ROM's loader skips
-any display frames the layer sent in between. `load_ae350.py --tinytang` then uses
+it with `tangload`, and also installs the NES player and the handler that opens
+a cartridge from the Files app (see *Playing from the desktop*). It leaves the
+desk layer as it is: whatever talks to the AE350 holds the UART meanwhile, and
+the boot ROM's loader skips any display frames the layer sent in between.
+`load_ae350.py --tinytang` then uses
 TinyTang's USB console, `/dev/ttyACM0`: it checks the shell is at a prompt
 with the console status probe and runs TinyTang's `fpgapipe`, which passes
 the console's bytes to the FPGA UART and back unchanged until the tool
@@ -476,12 +477,18 @@ A zipped cartridge is started the same way from the shell, with `FILE` naming
 the `.zip`; by the user's decision a `.zip` opened on the desktop does not
 start TinyNES, so there is no `zip.tdsh`. The desktop's way to one is
 TinyTang's **TinyNES** window, whose **Library** tab browses `/root/media/nes`,
-its folders and the cartridges in them, and starts the one chosen through this
-same script, so picking a game in the app is the shell line above typed for
-you, and a `.zip` is listed beside the `.nes` files. The same window's Input,
-Video and Saves tabs hold the settings it used to keep in a second window. `ae350run` names the save
-after the file with its extension replaced, so `Game.zip` and `Game.nes`
-share `/root/saves/nes/Game.sav`.
+its folders and the cartridges in them, and starts the one chosen, with a
+`.zip` listed beside the `.nes` files. The Library does not use the script: it
+loads the core, runs the player and loads the desktop core again in a task of
+its own, through the same routines `tangload` and `ae350run` call, because a
+script started from the open desktop could be refused its worker task or its
+line table and printed `not enough memory to load the script` instead of
+starting a game. That is TinyTang `d399c9b` and later; an earlier firmware
+starts the chosen game with the script, as the Files app and the desktop icon
+still do. The same window's Input, Video and Saves tabs hold the settings it
+used to keep in a second window. `ae350run` names the save after the file with
+its extension replaced, so `Game.zip` and `Game.nes` share
+`/root/saves/nes/Game.sav`.
 
 ### Accuracy tests and the FCEUmm patches
 
