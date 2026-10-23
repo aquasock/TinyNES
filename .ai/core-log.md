@@ -1712,3 +1712,37 @@ The state has no creation time while the board has no clock; the Saves page can 
 - User Test: PASS
 
 ---
+
+## 50 COMMIT Unreleased 2026-10-22T21:34:13-07:00
+
+#### Coming From:
+
+Unreleased 80e5403
+
+#### Purpose:
+
+Give TinyNES one master volume and a mute for HDMI and the I2S2 together, set from a new Audio tab in TinyTang's TinyNES window and applied by the player, as the user approved for TinyNES and TinyGBC alike.
+
+#### Outcome:
+
+The user first asked for a volume each for HDMI and the I2S2 and then settled on one master volume for both, which keeps the work out of the fabric: `i2s_out` hands the HDMI transmitter the same pair it shifts to the DAC, so a gain in the player covers both outputs, and the core, its seed and `ae350_soc.bin` `50dc3754` are unchanged. `firmware/include/tinynes.h` gained `tn_volume_gain(percent, mute)`, a gain out of `TN_VOLUME_UNITY` (256) that is the square of the percentage's fraction, so 50 percent is 64, about -12 dB, and every 5 percent step is louder than the last, with 100 percent exactly 256 and the mute 0, and `tn_volume_apply`, which scales a sample by it. `firmware/apps/nes_bench/main.cpp`'s `HostSettings` grew a volume and a mute after the palette, defaulting to 100 and 0, so a host that sends the old eighteen bytes leaves unity gain; the PLAY build computes `audio_gain` from them after `receive_settings`, prints `TinyNES NES VOLUME=<percent> GAIN=<n>`, and `send_audio` scales every sample, the level top-up repeating the scaled pair. `tests/test_volume.sh` builds `tests/volume_host.c` against the header with the address and undefined-behaviour sanitizers and passed nine checks, among them that 100 percent leaves all 65,536 sample values unchanged, that the mute and 0 percent are silent, that the twenty steps rise monotonically and that no step leaves the 16-bit range; the benchmark builds are untouched because the gain is compiled only into the PLAY build. TinyTang's half is its entry 20: `[audio] volume` and `mute` in `/nes.ini`, sent as bytes 19 and 20 of the settings blob, and the Audio tab with a slider in 5 percent steps, a percentage, a mute and Save. The PLAY and DIAG builds compiled clean, and the stripped player `0435d849bbc2fa450205856c9d0cb68ef06f3b2faf9080cf0bdb0e4c13667408`, 876,284 bytes, was put at `/root/ae350/tinynes-play.elf` with `tinytang_put.py`; the core was not redeployed. Before the test the card's `/nes.ini` was found to still hold the `[audio]` section TinyTang entry 78 stopped reading, with `volume = 75`, so the window opened at 75 percent and the user set it back to 100 and saved as part of the test; the user then reported PASS for the volume and mute on HDMI and the Line Out. The board was off USB when this entry was written, so the player's `VOLUME` line and the saved file were not read back. README describes the two bytes and the gain beside the settings request in its *Save states* section, and the tab in *Playing from the desktop*. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry as number 50 of 100 with exactly six sections, prose in Purpose, Outcome and Next Steps, allowed Status values and only eligible paths in Files Modified.
+
+#### Next Steps:
+
+The volume is taken when a game starts, so a change made over a running game waits for the next one; hearing it at once needs the BL616 to reach the player during play, which the link has no path for, so that would be a fabric change in `desk_link.sv` and a seed sweep, to be proposed only if the user wants it. The older items stand: the state's creation time waits on TinyTang's RTC, a lost state send is visible only on TinyTang's console, and the SoC testbench repair of entry 47.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/main.cpp
+- firmware/include/tinynes.h
+- tests/test_volume.sh
+- tests/volume_host.c
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

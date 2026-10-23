@@ -496,13 +496,25 @@ and Castlevania from 900 on the A25 with the PC's checksums.
 After the cartridge and any battery save, the player prints `TinyNES SETTINGS
 WANT <address> <bytes>` and takes its settings, headerless, straight into its
 own `HostSettings`: player 1's and player 2's button mappings, eight bytes
-each, then the pixel aspect (the video unit's `ASPECT` values) and the palette,
-an index into the names `tools/gen_fceumm_palettes.py` lists. TinyTang's
-`ae350run` answers it from `/nes.ini` (`[video] palette = <name>`), sending no
+each, then the pixel aspect (the video unit's `ASPECT` values), the palette,
+an index into the names `tools/gen_fceumm_palettes.py` lists, then the master
+volume in percent and the mute. TinyTang's `ae350run` answers it from
+`/nes.ini` (`[video] palette = <name>`, `[audio] volume = <0-100>` and
+`mute = yes|no`), sending no
 more bytes than were asked for, and a host that sends fewer leaves the
 compiled-in defaults, which are `/nes.ini`'s own: so the two repositories can
 be deployed in either order. The player prints `TinyNES NES PALETTE=<name>`
-for the palette it used.
+for the palette it used and `TinyNES NES VOLUME=<percent> GAIN=<n>` for the
+volume.
+
+The volume is one master level for HDMI and the I2S2 together, because both
+play the one sample stream: the player scales every sample before the FIFO
+(`tn_volume_gain` and `tn_volume_apply` in `firmware/include/tinynes.h`). The
+gain is out of 256 and is the square of the percentage's fraction, so 50
+percent is 64, about -12 dB, and each 5 percent step of the window's slider
+sounds about as large as the last; 100 percent is exactly 256, which leaves
+every sample as it was, and the mute is a gain of 0 that keeps the volume.
+`tests/test_volume.sh` checks it on the PC.
 
 ```sh
 make -C firmware/apps/nes_bench PLAY=1
@@ -533,8 +545,9 @@ says where cartridges start, so a ROM cannot be opened in the Editor and saved
 over. The desktop's `/root/scripts/open/<ext>.tdsh` handler mechanism went
 with it, so there is no `nes.tdsh` and none is installed.
 
-The same window's Input, Video and Saves tabs hold the settings it used to
-keep in a second window. `ae350run` names the save after the file with its
+The same window's Input, Video, Audio and Saves tabs hold the settings it used
+to keep in a second window; Audio is the master volume's slider and the mute,
+taken when the next game starts. `ae350run` names the save after the file with its
 extension replaced, so `Game.zip` and `Game.nes` share
 `/root/saves/nes/Game.sav`.
 

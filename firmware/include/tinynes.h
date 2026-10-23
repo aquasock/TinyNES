@@ -127,6 +127,29 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 #define TN_AUDIO_RATE_NUM  75000000u
 #define TN_AUDIO_RATE_DEN  1536u
 
+/* The master volume, applied by the player to every sample before the FIFO,
+ * so HDMI and the I2S2 follow it together: they play the one stream, and the
+ * CS4344 has no volume of its own. The host sends a percentage and a mute
+ * (TinyTang's [audio] in /nes.ini); the gain is out of TN_VOLUME_UNITY and is
+ * the square of the fraction, so each 5 percent step sounds about as large as
+ * the last instead of the top half of the slider barely changing anything.
+ * 100 percent is exactly unity, so the default leaves every sample as it was. */
+#define TN_VOLUME_UNITY 256u
+
+static inline uint32_t tn_volume_gain(unsigned percent, unsigned mute)
+{
+	if (mute || percent == 0)
+		return 0;
+	if (percent >= 100)
+		return TN_VOLUME_UNITY;
+	return (percent * percent * TN_VOLUME_UNITY + 5000u) / 10000u;
+}
+
+static inline int32_t tn_volume_apply(int32_t sample, uint32_t gain)
+{
+	return (sample * (int32_t)gain) / (int32_t)TN_VOLUME_UNITY;
+}
+
 #define TN_UART_BAUD 2000000u
 #define TN_CORE_HZ   750000000u
 

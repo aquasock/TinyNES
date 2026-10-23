@@ -374,7 +374,8 @@ const unsigned PAD_BITS = sizeof PAD_BIT / sizeof PAD_BIT[0];
 // What the host fills, in one headerless blob: which controller button answers
 // to each NES button -- one index into PAD_BIT per NES button, in the order
 // JOY_* has them, player 1's eight then player 2's -- and then the picture's
-// pixel aspect, then the palette, an index into nes_palette_name[].  These
+// pixel aspect, then the palette, an index into nes_palette_name[], then the
+// master volume in percent and the mute (TN_VOLUME_UNITY).  These
 // bytes are the ABI with the host (TinyTang
 // ports/bl616/tang_fpga_uart.c), so the two sides change together, and the
 // core asks for sizeof this rather than for a count of its own.  What is here
@@ -384,6 +385,8 @@ struct HostSettings {
 	uint8_t pad_map[2 * 8];
 	uint8_t aspect;
 	uint8_t palette;
+	uint8_t volume;
+	uint8_t mute;
 };
 HostSettings host_settings = {
 	{
@@ -392,7 +395,10 @@ HostSettings host_settings = {
 	},
 	TN_VIDEO_ASPECT_8_7,	// /nes.ini's own default
 	NES_PALETTE,		// FCEUmm's own, /nes.ini's default too
+	100, 0,			// full volume, not muted: unity gain
 };
+// The gain every sample is scaled by, from the volume and mute above.
+uint32_t audio_gain = TN_VOLUME_UNITY;
 // The left stick's 6-bit axes centre near 32; this far off centre it
 // counts as the D-pad.
 const unsigned STICK = 12;
@@ -470,13 +476,16 @@ void send_audio(const int32_t *sound, int32_t count, uint32_t level,
 		stats.dropped++;
 	}
 	// Each element is a 16-bit mono sample, as FCEUmm's libretro driver
-	// takes it: the same in both halves.
-	for (int32_t i = 0; i < n; i++)
-		TN_AUDIO_DATA = (uint32_t)sound[i] << 16 | ((uint32_t)sound[i] & 0xffffu);
+	// takes it: the same in both halves, at the master volume.
+	uint32_t pair = 0;
+	for (int32_t i = 0; i < n; i++) {
+		const uint32_t v = (uint32_t)tn_volume_apply(sound[i], audio_gain);
+		pair = v << 16 | (v & 0xffffu);
+		TN_AUDIO_DATA = pair;
+	}
 	stats.pushed += (uint32_t)n;
 	if (level < AUDIO_TARGET - AUDIO_BAND) {
-		TN_AUDIO_DATA = (uint32_t)sound[n - 1] << 16 |
-				((uint32_t)sound[n - 1] & 0xffffu);
+		TN_AUDIO_DATA = pair;
 		stats.repeated++;
 		stats.pushed++;
 	}
@@ -896,8 +905,9 @@ bool save_is_blank()
 	return true;
 }
 
-// Ask the host which controller button answers to each NES button, and for the
-// picture's aspect and palette, and take the answer into host_settings.  Headerless,
+// Ask the host which controller button answers to each NES button, for the
+// picture's aspect and palette and for the master volume, and take the answer
+// into host_settings.  Headerless,
 // exactly as a save is, and for the same reason: it lands directly in the
 // buffer.  The host always has an answer -- its defaults at worst -- so this
 // does not wait the way a save that may not exist does, and nothing arriving
@@ -1165,6 +1175,11 @@ int main()
 	// unit's palette store as it goes, before the first frame is shown.
 	printf("TinyNES NES PALETTE=%s\n",
 	       nes_palette_name[set_palette(host_settings.palette)]);
+	// The master volume, from the same answer, for every sample from the
+	// first frame on.
+	audio_gain = tn_volume_gain(host_settings.volume, host_settings.mute);
+	printf("TinyNES NES VOLUME=%u%s GAIN=%lu\n", (unsigned)host_settings.volume,
+	       host_settings.mute ? " MUTED" : "", (unsigned long)audio_gain);
 	// Link mode last: the host answers the save request as a line, which it
 	// can only do while the link is still the boot ROM's, and from here on
 	// this program's bytes go out as TinyDesk text frames instead.
