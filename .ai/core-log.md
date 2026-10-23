@@ -1608,3 +1608,41 @@ Any future change to the SoC image must move the build's default seed to the new
 - User Test: PASS
 
 ---
+
+## 47 COMMIT Unreleased 2026-10-22T18:31:17-07:00
+
+#### Coming From:
+
+Unreleased 37158e4
+
+#### Purpose:
+
+Move player 1's Wii Classic Controller from PMOD0 to the USB-A port the way TinyGBC does, as the user approved, keeping the button mapping exactly as it was on PMOD0.
+
+#### Outcome:
+
+TinyGBC's entries 13 and 14 put its pad's first I2C bus on USB-A port 2, the dock's only populated port, through Adafruit's Wii adapter fed from VBUS, and that change was ported here unchanged in shape: `fpga/ae350_soc/ae350_soc.sv` gained `usb_sda` and `usb_scl`, with `wii_pads` bus 0 on two open-drain `IOBUF`s on D+ (H13, SDA) and D- (G13, SCL) and buses 1 to 3 left on PMOD0's second to fourth pairs, so PMOD0's first pair is no longer read; `fpga/ae350_soc/ae350_soc.cst` places the pair as LVCMOS33 with pull-ups; and `fpga/ae350_soc/wii_pads.sv` gained LINES at offset 0x008, every bus's SDA and SCL pin levels, with its address in the access-valid term, whose absence had trapped TinyGBC's first build. `firmware/include/tinynes.h` names `TN_PAD_LINES` and `firmware/apps/pad_test/main.c` prints it at the start and with each status line. The player was not changed: bus 0 remains player 1 and `desk_link`'s HOME tap reads bus 0, so both follow the controller to USB-A, and at the user's direction the mapping is exactly the PMOD0 one, B as the NES's A, Y as its B, minus and plus as Select and Start, the D-pad and stick as directions. `tests/wii_pads_tb.sv` gained a bus with no pull-ups, which LINES must read as 0 and then follow back up, and passed; a build without `is_lines` in the access-valid term and one with LINES hard-wired to 0xff each failed it. `tests/ae350_soc_tb.sv` gained the two ports and a LINES read but could not be run: it has not elaborated since entry 41, first because the README's recipe omits `fpga/hdmi/` and then because its video-fetch test assigns to `screen.hcnt` and `screen.vcnt`, which entry 41 made wires, a fault present at `37158e4` before this cycle. An eight-seed sweep with `pix_clk` routed first (`build/e47_usb_pad/`) was 8 of 8 clean, every seed with the pixel clock on SPINE16+SPINE25, the AE350 hop and 13 single-clock 9-bit video block RAMs; seed 1, with the best margin on both clocks together at 87.17 MHz on `bus_clk` and 85.46 MHz on `pix_clk`, is now the build default, and `tools/build_ae350_soc.sh` reproduced its `.fs` byte for byte as SHA-256 `5960e0b319d12a768abfc28213f911bc6440517918135ab9b3230dac45c35a93`, `ae350_soc.bin` `50dc3754da996a41e0aa2b46cb9bb356b099232b4b1e84856b06e84fd60419ff`, 4,682,732 bytes. A plain `tools/deploy_tinytang.sh` put it on the card beside the unchanged player `961d8ecfa5b348d1e08c585150e41e40d904d71529a315a82b9795ba6a963e00`. `pad_test` through `fpgapipe` found the controller on bus 0 as a Classic with identity `00 00 A4 20 01 01` and no failed transfer over about 750,000 reads, LINES `ff` at idle, and the user's presses of every button in a stated order each reported that button alone, the layout WiiBrew publishes, which TinyGBC's record had said this controller does not follow; at about 110 s into that run the FPGA dropped the loaded image and came back running the factory core of its own flash (core 0, DEV-006) while the BL616 stayed up, which the user chose not to pursue, and an earlier run had ended in a reboot by the user. The user then started Castlevania (USA) (Rev 1) from the TinyNES window's Library: `PAD1=classic`, 4,558 frames at 180.8 percent, `LATE=0`, `MISSED=0`, no audio underrun or drop, exit 0 by HOME and minus, and the launch task printed `nes: done (0), 5400 bytes of stack left`, the margin entries 44 and 45 left unread, so about 2.8 KiB of its 8 KiB was used; after the desktop core reloaded TinyTang printed `tang.ini: the core did not take the socket declaration`. The user reported every button and the HOME toggle working and passed the cycle. In `.ai/core-reference.md` BRD-003 now records the populated port, its pull-downs and SW4, and its use here, WII-002 and WII-003 are carried from TinyGBC with WII-003 corrected to match WiiBrew, and PMOD-007 and EMU-005 follow the moved bus; the README describes the wiring, LINES and the seed. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, checked that the reference's records and fast index list the same 172 ids, with DEV-020's index line out of record order as it already was at `37158e4`, and validated this entry as number 47 of 100 with exactly six sections and allowed Status values.
+
+#### Next Steps:
+
+The SoC testbench needs repairing before it can check anything again: its recipe should read `fpga/hdmi/` and its video-fetch test should drive the transmitter's `cx` and `cy` instead of assigning the counters entry 41 made wires. The FPGA's fall back to its flash image during `pad_test` is unexplained and was set aside by the user; if it recurs, the first question is whether it follows controller activity on the USB-A pair. TinyGBC's WII-003 should be corrected in that repository, and the desktop core's refused `tang.ini` socket declaration is TinyTang's to look at. The rest is unchanged: a `.zip` opened in Files still goes to the Editor, the boot test of every cartridge that entry 37 holds, the AccuracyCoin work of entry 37, the authentic-NES list of entry 36, and TinyDesk's 47-byte name and 63-file folder limits.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/pad_test/main.c
+- firmware/include/tinynes.h
+- fpga/ae350_soc/ae350_soc.cst
+- fpga/ae350_soc/ae350_soc.sv
+- fpga/ae350_soc/wii_pads.sv
+- tests/ae350_soc_tb.sv
+- tests/wii_pads_tb.sv
+- tools/build_ae350_soc.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

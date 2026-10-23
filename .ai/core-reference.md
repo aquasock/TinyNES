@@ -307,6 +307,8 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | How does FCEUmm's picture reach HDMI, and how fast does the game run with it? | EMU | EMU-004, EMU-006 |
 | How is FCEUmm played with Wii Classic Controllers, and how fast does it run under play? | EMU | EMU-005 |
 | How is a Wii Classic Controller initialized and read over I2C? | WII | WII-001 |
+| How is a controller wired to USB-A through Adafruit's adapter, and what voltage reaches the pin? | WII | WII-002, BRD-003 |
+| Which bit is which button in a Classic Controller's report? | WII | WII-003 |
 | Which PMOD0 pins are used for four Wii extension buses? | PMOD | PMOD-007 |
 | Which PMOD1 pins carry the Pmod I2S2's DAC? | PMOD | PMOD-008 |
 | Which clocks and sample rates does the I2S2's CS4344 accept, and how does TinyNES clock it? | AUD | AUD-001 |
@@ -350,7 +352,7 @@ DEV-019: "The GW5AST-138C has two on-die ADCs, ADCLRC and ADCULC, with a tempera
 DEV-020: "HDLMI audio works on this board when the transmitter's audio inputs live on the pixel clock: the I2S unit flips a toggle per frame and holds the frame's pair, the pixel side latches the pair on the flip and raises clk_audio for one pixel clock, and the clock regeneration packet measures CTS against the pixel clock so it declares the true frame rate, 75 MHz / 1536 = 48,828.125 Hz, with no table for it; the Pmod I2S2 and HDMI both play, and a test tone proved the packet path before any sample was wired"
 BRD-001: "BL616 to FPGA JTAG: TMS GPIO0, TCK GPIO1, TDO GPIO2, TDI GPIO3"
 BRD-002: "SD is gated behind GPIO 16 held high; without it f_mount returns FR_NOT_READY (3)"
-BRD-003: "The two USB-A controller ports are FPGA pins: usb1_dp/dn H13/G13, usb2_dp/dn M15/M16, all IO_TYPE=LVCMOS33"
+BRD-003: "The USB-A ports are FPGA pins with no PHY, nestang's usb1_dp/dn H13/G13 and usb2_dp/dn M15/M16, LVCMOS33; on a stock dock only H13/G13 (USB_A2, the populated port) is connected, with 15K pull-downs, and TinyNES runs its first Wii controller bus on it, SDA on H13 and SCL on G13"
 BRD-004: "The onboard debug bridge is a SIPEED FT2232 (0403:6010, product 'USB Debugger'), a separate USB path from the BL616's CDC"
 BRD-005: "The board has two power inputs and runs on either; a power cycle is unplugging both and restoring power first"
 BRD-006: "Which firmware the BL616 runs is chosen at a cold power-up: with the power input it runs TinyTang and the CDC (two-wire); on the OTG cable alone it comes up as the vendor's FT2232 USB Debugger (one-wire) and TinyTang does not run; removing the power cable from a running board changes nothing, since the OTG cable keeps it powered"
@@ -365,7 +367,7 @@ PMOD-001: "Two PMOD sockets: PMOD1 beside HDMI on W19 W20 F19 F20 E22 D22 E21 D2
 PMOD-002: "/tang.ini at the SD root is the socket contract (pmod0/pmod1 plus _flip, flat under [tang]); a missing file or absent entry releases the socket and unknown modules are refused; modules carry no ID pins, so presence can never be detected; this firmware parses it (tang_ini.c) and, by the user's choice, does not enforce flip safety"
 PMOD-004: "On the merged Phosphor core the socket control register is 0xc0: hold 0, PMOD0 personality 7:4, PMOD1 11:8, flips 12/13; personalities 0 none, 1 oledrgb, 2 vga J1, 3 vga J2, 4 rotary encoder; both sockets power up released, so a host must declare them; the bring-up core has the same layout at 0x10, which is not extended frame type 0x10"
 PMOD-006: "tangload declares /tang.ini to core 0x50 at ABI 1.8+ and reads it back; names none, oledrgb, encoder, i2s2 (personality 5, ABI 1.10), vga_j1, vga_j2; qualified: I2S2 on PMOD0 0x0050; encoder face up on PMOD1 pins 7-12 needs flip=yes, 0x2400, or 0x2410 with OLED on PMOD0; PmodVGA face up has J1 on PMOD1 and J2 on PMOD0, 0x0230; missing-file release and unknown-module refusal pass"
-PMOD-007: "PMOD0's eight LVCMOS33 signal pins can form four independent I2C pairs: Digilent pins 1/7 V18/V19, 2/8 G21/G22, 3/9 F18/E18, 4/10 C22/B22; 3.3 V and ground use pins 6/12 and 5/11; a Classic Controller Pro on pair 1 works at about 100 kHz with internal pull-ups"
+PMOD-007: "PMOD0's eight LVCMOS33 signal pins can form four independent I2C pairs: Digilent pins 1/7 V18/V19, 2/8 G21/G22, 3/9 F18/E18, 4/10 C22/B22; 3.3 V and ground use pins 6/12 and 5/11; a Classic Controller Pro on pair 1 worked at about 100 kHz with internal pull-ups; since entry 47 pair 1 is not read, controller 1 being on USB-A"
 PMOD-008: "A Pmod I2S2 seated normally on PMOD1 has its CS4344 DAC's MCLK, LRCK, SCLK and SDIN on Digilent pins 1-4, FPGA W19, F19, E22 and E21; pins 7-10, the ADC, are W20, F20, D22 and D21"
 BL6-001: "USB_BASE 0x20072000; OTG_CSR +0x80 (ID 21, CROLE 20, SPD 23:22, VBUS_VLD 19, A_SESS 18, B_SESS 17, A_BUS_DROP 5, A_BUS_REQ 4); PDS usb_ctl 0x2000E500 (IDDIG 5, DRVBUS_POL 4)"
 BL6-002: "OCRAM is 320 KB at 0x20FC0000; the PSRAM window is declared but this board has no external RAM"
@@ -501,11 +503,13 @@ EMU-001: "libretro Nestopia 135dfa6 runs Castlevania on the A25 with checksums m
 EMU-002: "libretro FCEUmm ac0d00a runs Castlevania on the A25 with checksums matching a PC build, at 19.07 ms a frame: 87.2 percent of full speed and 1.2 times Nestopia (1.8 times on the PC); it is the core TinyNES keeps"
 EMU-003: "8.23 ms of FCEUmm's 19.14 ms XRGB8888 frame on the A25 is the 8-bit to XRGB8888 conversion; RGB565 cuts it to 5.01 ms and the frame to 15.85 ms, 104.9 percent; -O3 is slower and the prefetch and write-around bits do not exist"
 EMU-004: "With its own driver in place of libretro.c, FCEUmm's core draws straight into the SDRAM frame buffers and Castlevania runs on HDMI at 10.82 ms a frame (max 12.02), 153.7 percent, every frame shown at the next vertical blank, checksums matching the PC"
-EMU-005: "Played by hand with a Wii Classic Controller Pro on PMOD0 bus 1, nes_bench's PLAY=1 build ran Castlevania at 11.34 to 11.53 ms a frame (max 12.50) over three runs of 3,799 to 4,530 frames, no frame over the period, LATE 0 and MISSED 0; since entry 21 the player runs in link mode with TinyDesk over the game on a HOME tap"
+EMU-005: "Played by hand with a Wii Classic Controller Pro on PMOD0 bus 1 (since entry 47 player 1 is on USB-A), nes_bench's PLAY=1 build ran Castlevania at 11.34 to 11.53 ms a frame (max 12.50) over three runs of 3,799 to 4,530 frames, no frame over the period, LATE 0 and MISSED 0; since entry 21 the player runs in link mode with TinyDesk over the game on a HOME tap"
 EMU-006: "FCEUI_Initialize clears FSettings, leaving the five APU channel volumes at 0, so nes_bench's own driver mixed silence until it set them to 256 as the libretro driver does; with real sound Castlevania still runs at 153.5 percent, and the play build plays it on the I2S2 with no underrun"
 EMU-007: "AccuracyCoin on FCEUmm ac0d00a under nes_bench: 84 of 146 with page 19 skipped, 83 with only its Misaligned OAM Behavior skipped, which hangs; TinyNES's seven patches and the Four Score turned off raise that to 90, the user saw 90 on the board, and the A25 benchmark slows from 10.93 to 11.08 ms a frame with identical checksums"
 EMU-008: "Zelda II's title screen polls $2002 about 1,900 times a frame and FCEUmm rebuilt a 256-entry palette table on each resulting partial-line render, so its intro took 17.45 ms a frame on the A25 (1,690 of 1,800 frames over 16.64 ms); patch 0008 rebuilds the table only when its 16 palette bytes change, giving 9.95 ms, and Castlevania's benchmark 9.03 ms, with identical checksums"
 WII-001: "Wii extensions use I2C address 0x52; write F0=55 then FB=00 to disable encryption, read six identity bytes at FA and six format-1 data bytes after setting pointer 00; NintendoExtensionCtrl waits 10 ms, 20 ms and 175 us at those steps and accepts Classic IDs 00/01 00 A4 20 00..03 01; buttons in bytes 4-5 are active low"
+WII-002: "Adafruit's Wii Nunchuck Breakout Adapter (4836) level-shifts SCL/SDA for 3-5 V with a 10K pull-up on each; fed from USB-A's 5 V VBUS its pull-ups divide against the dock's 15K pull-downs to about 3.0 V at the FPGA pin, which is how TinyNES's controller 1 is wired; the CYBERDECK HAT must not go on the 2x20 SDRAM headers"
+WII-003: "The Classic Controller's buttons are WiiBrew's layout, measured here: byte 4 bit 1 R, 2 Plus, 3 Home, 4 Minus, 5 L, 6 Down, 7 Right; byte 5 bit 0 Up, 1 Left, 2 ZR, 3 X, 4 A, 5 Y, 6 B, 7 ZL, active low; TinyGBC's record saying otherwise is mistaken"
 AUD-001: "The CS4344 takes a 256x MCLK at 2 to 50 kHz (MCLK 0.512 to 50 MHz, 45 to 55 percent duty) in I2S, with MCLK, SCLK and LRCK synchronous but no phase set; TinyNES counts all three from the 75 MHz bus clock, MCLK 12.5 MHz, Fs 48,828.125 Hz, measured 48,827.968 Hz on the board"
 LORA-001: "The REYAX RYLR998 (UPC 612789267033) is a five-pin 3.3 V UART LoRa module, AT-command controlled, 820 to 960 MHz, -20 to +22 dBm out, -129 dBm sensitivity, 140 mA transmitting at +22 dBm; RYLR998_M4 has an I-PEX MHF4 connector instead of the built-in antenna; not fitted or tested here"
 ```
@@ -791,13 +795,15 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   topic_id: BRD
   title: "The two USB-A controller ports are FPGA pins, not BL616 pins"
   status: VERIFIED
-  verified_date: 2026-10-03
-  statement: "The Tang Console's two USB-A ports reach the FPGA on four pins, all IO_TYPE=LVCMOS33: usb1_dp H13 and usb1_dn G13 (the left port), usb2_dp M15 and usb2_dn M16. There is no PHY or transceiver on them."
-  consequence: "Nothing the BL616's firmware does can change those ports. They are driven by the FPGA design loaded into the fabric, which is why the keyboard question is a core question and not a firmware one."
+  verified_date: 2026-10-22
+  statement: "The Tang Console's USB-A ports reach the FPGA with no PHY or transceiver, all IO_TYPE=LVCMOS33: nestang names usb1_dp H13 and usb1_dn G13, usb2_dp M15 and usb2_dn M16. On a stock dock only the H13/G13 pair is connected: the dock schematic shows USB_A2, the populated port, on R59/R60 to H13/G13, and USB_A1 on R55/R56 to M15/M16 with those two 0R links not fitted. Each pair has a 15 kOhm pull-down to ground on the dock (R129/R130 for H13/G13) and passes through SW4, which selects the FPGA or the BL616 debugger."
+  consequence: "Nothing the BL616's firmware does can change those ports; they are driven by the FPGA design loaded into the fabric. Since core-log entry 47 TinyNES uses the H13/G13 pair as its first Wii controller bus, D+ (H13) as SDA and D- (G13) as SCL, with the FPGA's pull-ups on; an adapter's 10 kOhm pull-ups divide against the dock's 15 kOhm pull-downs to about 3.0 V at the pin (WII-002), and a pair with nothing powered on it reads 0 on both lines, which the pad unit's LINES register at 0xe8040008 shows."
   sources:
     - "nestang, src/boards/console.cst: 'USB1 and USB2 (usb1 is on the left)' with the four IO_LOC/IO_PORT lines"
     - "nestang, src/nestang_top.sv: usb_hid_host and usb_hid_host2 instantiated on usb1_dn/dp and usb2_dn/dp under ifdef USB1/USB2"
-  verification: "Read from the constraint file and the instantiation, and consistent with the observed behaviour of the ports under nestang."
+    - "TinyGBC, .ai/core-reference.md record BRD-003 at 9a5701f, revised from the dock schematic (PERIPHERALS, pages 7 and 9) in its core-log entry 14"
+    - "This project's fpga/ae350_soc/ae350_soc.cst (usb_sda H13, usb_scl G13) and fpga/ae350_soc/wii_pads.sv (LINES)"
+  verification: "Read from the constraint file and the instantiation, and consistent with the observed behaviour of the ports under nestang. Revised 2026-10-22 (core-log entry 47): the populated port, the unfitted links, the pull-downs and SW4 are carried from TinyGBC's record, which read them from the dock schematic and used the pair as an I2C bus on this board; TinyNES then read a Classic Controller on H13/G13 through Adafruit's adapter with zero failed transfers, LINES at 0xff when idle, and the user played Castlevania with it."
 
 - record_id: BRD-004
   kind: BOARD
@@ -987,9 +993,9 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   topic_id: PMOD
   title: "PMOD0 signal pairs and power pins for four Wii extension buses"
   status: SOURCED
-  verified_date: 2026-10-13
+  verified_date: 2026-10-22
   statement: "PMOD0's Sipeed signal order maps Digilent pins 1/7 to FPGA V18/V19, pins 2/8 to G21/G22, pins 3/9 to F18/E18, and pins 4/10 to C22/B22, all LVCMOS33 (PMOD-001). The standard PMOD power positions are 3.3 V on pins 6 and 12 and ground on pins 5 and 11. A Wii extension requires 3.3 V power and has separate SCL and SDA signals (WII-001)."
-  consequence: "For TinyNES's four independent buses, controller n uses Digilent pin n for SCL and pin n+6 for SDA, n=1..4. The FPGA pins must release the line or pull it low, with pull-ups on both signals; fpga/ae350_soc/ae350_soc.cst enables the FPGA's internal pull-ups. This is the user's chosen wiring, not a PMOD-wide standard. One firsthand cable report used red/white/yellow/green for 3.3 V/ground/SCL/SDA, while another used white for detect and black for ground; cable color alone is not enough to establish another controller's wiring. The user verified the tested cable as red/white/yellow/green for 3.3 V/ground/SCL/SDA. At about 100 kHz, the internal pull-ups worked for that controller on PMOD0; its electrical rise time was not measured."
+  consequence: "For TinyNES's four independent buses, controller n uses Digilent pin n for SCL and pin n+6 for SDA, n=1..4. The FPGA pins must release the line or pull it low, with pull-ups on both signals; fpga/ae350_soc/ae350_soc.cst enables the FPGA's internal pull-ups. This is the user's chosen wiring, not a PMOD-wide standard. Since core-log entry 47 the first pair, pins 1/7, is no longer read: controller 1 moved to USB-A (BRD-003) and controllers 2 to 4 stay on pairs 2 to 4. One firsthand cable report used red/white/yellow/green for 3.3 V/ground/SCL/SDA, while another used white for detect and black for ground; cable color alone is not enough to establish another controller's wiring. The user verified the tested cable as red/white/yellow/green for 3.3 V/ground/SCL/SDA. At about 100 kHz, the internal pull-ups worked for that controller on PMOD0; its electrical rise time was not measured."
   sources:
     - "Tang-Phosphor, src/boards/console138k_pmod.cst and .ai/core-reference.md, Dock PMOD Sockets record (PMOD-001)"
     - "Sipeed Tang Console board photograph, top side: https://raw.githubusercontent.com/sipeed/sipeed_wiki/main/docs/hardware/zh/tang/tang-console/assert/console_bdt.jpg"
@@ -998,7 +1004,7 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "HTLAB Wii extension cable teardown, connector pin and cable color table: https://htlab.net/electronics/game/wii-remote-extension-controller/"
     - "aalmada's photographed Wii extension connector and cable, original photo description: https://commons.wikimedia.org/wiki/File:Wiimote_Extension_Connector_Pin-Out_(Nunchuck,_MotionPlus_and_Classic_Controller)_(7085452395).png"
     - "User wiring decision for TinyNES cycle 16, 2026-10-12"
-  verification: "Pin mapping and voltage were read from the cited sources and the planned wiring was agreed with the user. Revised 2026-10-13 (core-log entry 16): the user verified the cable colors and wired a Classic Controller Pro to PMOD0's first signal pair and power positions. TinyNES identified and repeatedly read that controller with zero reported PAD1 failures; the user confirmed the button and analog reports matched their actions. The other three signal pairs were checked by simulation but not with physical controllers."
+  verification: "Pin mapping and voltage were read from the cited sources and the planned wiring was agreed with the user. Revised 2026-10-13 (core-log entry 16): the user verified the cable colors and wired a Classic Controller Pro to PMOD0's first signal pair and power positions. TinyNES identified and repeatedly read that controller with zero reported PAD1 failures; the user confirmed the button and analog reports matched their actions. The other three signal pairs were checked by simulation but not with physical controllers. Revised 2026-10-22 (core-log entry 47): the first pair is no longer read, its bus having moved to USB-A."
 
 - record_id: PMOD-008
   kind: BOARD
@@ -2828,13 +2834,13 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   topic_id: EMU
   title: "FCEUmm played with Wii Classic Controllers keeps full speed on HDMI"
   status: VERIFIED
-  verified_date: 2026-10-13
-  statement: "nes_bench built with PLAY=1 reads PMOD0's first two Wii buses (WII-001, PMOD-007) as players 1 and 2, in bits 0 to 7 and 8 to 15 of the word FCEUmm's UpdateGP splits into joy[0] and joy[1], runs until HOME and SELECT are held together, and otherwise drives the core as EMU-004 does. Played by hand with one Classic Controller Pro on bus 1, three runs of Castlevania (USA) (Rev A) lasted 4,530, 3,799 and 4,077 frames at averages of 11,534, 11,340 and 11,385 us, minimum 3,930 us, maximum 12,501 us, against the 16,639 us period: 144.2, 146.7 and 146.1 percent, no frame over, SHOW about 607 us, LATE 0 and MISSED 0, each exiting 0. The start took 64 to 66 ms and the program is 753,604 bytes."
+  verified_date: 2026-10-22
+  statement: "nes_bench built with PLAY=1 reads Wii buses 0 and 1 (WII-001) as players 1 and 2 -- since core-log entry 47 bus 0 is USB-A port 2 (BRD-003) and bus 1 PMOD0's second pair (PMOD-007), before it PMOD0's first two pairs -- in bits 0 to 7 and 8 to 15 of the word FCEUmm's UpdateGP splits into joy[0] and joy[1], runs until HOME and SELECT are held together, and otherwise drives the core as EMU-004 does. Played by hand with one Classic Controller Pro on bus 1, three runs of Castlevania (USA) (Rev A) lasted 4,530, 3,799 and 4,077 frames at averages of 11,534, 11,340 and 11,385 us, minimum 3,930 us, maximum 12,501 us, against the 16,639 us period: 144.2, 146.7 and 146.1 percent, no frame over, SHOW about 607 us, LATE 0 and MISSED 0, each exiting 0. The start took 64 to 66 ms and the program is 753,604 bytes."
   consequence: "The game holds 60 frames a second under play with about 4 ms of each frame spare; since core-log entry 18 the play build also plays the sound on the I2S2 (EMU-006, AUD-001), and since entry 19 it takes its cartridge at start (TinyNES WANT, then TNR1, the length and the .nes file in the load protocol) instead of having one built in, so a .nes file opened on the desktop plays it through TinyTang's ae350run. The mapping is the user's choice, not a standard: the Classic's B is the NES's A and its Y the NES's B, A and X do nothing, the D-pad or the left stick (6-bit axes, 12 counts off 32) gives the directions with opposite directions cancelled, - is Select and + is Start. An absent or non-Classic pad reads as nothing pressed. The scripted benchmark build is unchanged and gives the same PC checksums as before."
   sources:
     - "This project's firmware/apps/nes_bench/main.cpp (read_pad, quit_held, NES_PLAY) and Makefile (PLAY=1)"
     - "libretro/libretro-fceumm ac0d00a: src/input.c UpdateGP and FCEUI_SetInput"
-  verification: "Measured on this board on 2026-10-13 (core-log entry 17), loaded in two-wire mode through TinyTang's fpgapipe (TOOL-022) onto the ae350_soc image 4d1b27e8; the user played each run on HDMI, called the play perfect, chose the face-button mapping after the first run and confirmed the rest of the buttons on the third. Revised 2026-10-13 (core-log entry 18): the play build now sends the sound to the Pmod I2S2. Revised 2026-10-13 (core-log entry 19): the play build takes its cartridge over the UART; Castlevania (USA) (Rev 1) from the card, CRC 12a6cb14, ran 2,400 frames at 156.8 percent with no underrun, and the user played a game opened by double-click on the desktop and returned to it. Revised 2026-10-13 (core-log entry 21): after its cartridge the player prints TinyNES LINK and sets link mode (PROT-010), and while TinyDesk's layer is over the game (TN_LINK_SHOWN) it gives the game no controller input; the user toggled TinyDesk over the running game with HOME and quit with HOME and -."
+  verification: "Measured on this board on 2026-10-13 (core-log entry 17), loaded in two-wire mode through TinyTang's fpgapipe (TOOL-022) onto the ae350_soc image 4d1b27e8; the user played each run on HDMI, called the play perfect, chose the face-button mapping after the first run and confirmed the rest of the buttons on the third. Revised 2026-10-13 (core-log entry 18): the play build now sends the sound to the Pmod I2S2. Revised 2026-10-13 (core-log entry 19): the play build takes its cartridge over the UART; Castlevania (USA) (Rev 1) from the card, CRC 12a6cb14, ran 2,400 frames at 156.8 percent with no underrun, and the user played a game opened by double-click on the desktop and returned to it. Revised 2026-10-13 (core-log entry 21): after its cartridge the player prints TinyNES LINK and sets link mode (PROT-010), and while TinyDesk's layer is over the game (TN_LINK_SHOWN) it gives the game no controller input; the user toggled TinyDesk over the running game with HOME and quit with HOME and -. Revised 2026-10-22 (core-log entry 47): with controller 1 on USB-A the user played Castlevania (USA) (Rev 1) from the TinyNES window's Library for 4,558 frames at 180.8 percent, LATE 0, MISSED 0, no audio underrun or drop, with every mapped button and the HOME toggle working and HOME and - ending it with exit 0."
 
 - record_id: EMU-006
   kind: EXTERNAL
@@ -2890,6 +2896,34 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "WiiBrew Wiimote/Extension Controllers/Classic Controller, Data Format 0x01: https://wiibrew.org/wiki/Wiimote/Extension_Controllers/Classic_Controller"
     - "dmadison/NintendoExtensionCtrl 2bec2355c85e5cae2d159182d1982e59de707ec0, src/internal/ExtensionController.cpp initialize and requestControlData, src/internal/NXC_Comms.h I2C_ConversionDelay, src/internal/ExtensionController.h I2C_Addr, src/internal/NXC_Identity.h decodeIdentity and examples/Any/SpeedTest/SpeedTest.ino"
   verification: "The cited WiiBrew records and exact library commit were read on 2026-10-12. tests/wii_pads_tb.sv models the transactions and passed. Revised 2026-10-13 (core-log entry 16): on this board the unencrypted initialization returned Classic Controller Pro ID 01 00 A4 20 01 01 and PAD1 reported changing active-low buttons, both sticks and both triggers at the default 100-kHz setting, with zero PAD1 failures; the user confirmed the values matched the controller actions."
+
+- record_id: WII-002
+  kind: EXTERNAL
+  topic_id: WII
+  title: "Adafruit's Wii Nunchuck Breakout Adapter between a controller and the board"
+  status: VERIFIED
+  verified_date: 2026-10-22
+  statement: "Adafruit's Wii Nunchuck Breakout Adapter (product 4836) takes a Wii extension controller's connector and exposes its I2C on a STEMMA QT/Qwiic JST-SH socket. VIN is the power pin and the logic reference; 3V is a regulated 3.3 V output good for 100 mA; SCL and SDA are level shifted for 3 to 5 V logic with a 10 kOhm pull-up on each; the controller's address is fixed at 0x52. A Classic Controller uses the same connector and protocol as a Nunchuck."
+  consequence: "TinyNES's first controller bus is the adapter fed from USB-A port 2's 5 V VBUS, with SDA on D+ (H13) and SCL on D- (G13) and no added parts: the adapter's 10 kOhm pull-ups divide against the dock's 15 kOhm host pull-downs (BRD-003) to about 3.0 V at the FPGA pin, above the LVCMOS33 input threshold, and the fabric's outputs only pull low. On a PMOD socket the adapter takes 3.3 V on VIN. Adafruit's CYBERDECK HAT is a Raspberry Pi HAT and must not be mated to this board's 2x20 headers, which are the SDRAM connectors (BRD-008)."
+  sources:
+    - "Adafruit Wii Nunchuck Breakout Adapter, product 4836, https://www.adafruit.com/product/4836, and its Pinouts page https://learn.adafruit.com/adafruit-wii-nunchuck-breakout-adapter/pinouts (as read by TinyGBC on 2026-10-22)"
+    - "TinyGBC, .ai/core-reference.md record WII-002 at 9a5701f, from its core-log entries 12 and 13"
+    - "This project's fpga/ae350_soc/ae350_soc.cst and fpga/ae350_soc/wii_pads.sv"
+  verification: "Carried from TinyGBC's record on 2026-10-22 (core-log entry 47), where the adapter worked on a PMOD0 pair at 3.3 V and on USB-A's VBUS with zero failed transfers over 25,124 polls. In TinyNES the adapter on USB-A read the Classic Controller as present and Classic with zero failed transfers over about 750,000 reads, LINES at 0xff when idle, and the user played Castlevania with it."
+
+- record_id: WII-003
+  kind: EXTERNAL
+  topic_id: WII
+  title: "The Classic Controller's button bits, measured, matching WiiBrew"
+  status: VERIFIED
+  verified_date: 2026-10-22
+  statement: "WiiBrew's Classic Controller data format gives byte 4, bit 7 to bit 0, as Right, Down, L, Minus, Home, Plus, R and a constant 1, and byte 5 as ZL, B, Y, A, X, ZR, Left and Up, all 0 when pressed. Measured one press at a time on this board, the Classic Controller (identity 00 00 A4 20 01 01) behind Adafruit's adapter sets exactly those bits. The left stick is in bytes 0 and 1 and centres near 32; L and R report their analog travel in the trigger fields and set their button bit only at the end-of-travel click."
+  consequence: "firmware/apps/nes_bench/main.cpp's WII_ constants and firmware/apps/pad_test/main.c's button table already follow this layout, so no decode change was needed when controller 1 moved to USB-A. TinyGBC's record of the same measurement says WiiBrew's table does not match this controller; the measured bits are WiiBrew's, and the wrong buttons TinyGBC first saw came from that build's own decode."
+  sources:
+    - "WiiBrew Wiimote/Extension Controllers/Classic Controller, Data Format 0x01 table, https://wiibrew.org/wiki/Wiimote/Extension_Controllers/Classic_Controller (read 2026-10-22)"
+    - "TinyGBC, .ai/core-reference.md record WII-003 at 9a5701f, from its core-log entry 13"
+    - "This project's firmware/apps/pad_test/main.c and its board run in core-log entry 47"
+  verification: "Measured on this board on 2026-10-22 (core-log entry 47): with pad_test running, the user pressed A, B, X, Y, L, R, ZL, ZR, Minus, Home, Plus, the D-pad and the left stick in order, and each press reported exactly the expected button alone; the stick reached LY 58 and 8 and LX 6 and 53 from a centre of 32 and 31. The WiiBrew table was read the same day and matches bit for bit."
 
 - record_id: AUD-001
   kind: EXTERNAL

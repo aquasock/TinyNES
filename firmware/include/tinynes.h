@@ -86,13 +86,15 @@ volatile uint32_t *tn_host_reg(uint32_t offset);
 #define TN_VIDEO_HEIGHT    240u
 #define TN_VIDEO_PALETTE_SIZE 768u
 
-/* Wii Classic Controller inputs on PMOD0. Four separate I2C buses run in
- * fabric, one per adjacent PMOD signal pair. Reading DATA also captures its
+/* Wii Classic Controller inputs. Four separate I2C buses run in fabric: bus 0
+ * on USB-A port 2's data pair, buses 1 to 3 on PMOD0's second to fourth
+ * signal pairs. Reading DATA also captures its
  * upper two bytes for a subsequent DATA2 read. Buttons in bytes 4 and 5 are
  * active low. A pad may answer without identifying as a Classic Controller;
  * check both PRESENT and CLASSIC before decoding its data. */
 #define TN_PAD_ID          TN_REG(0x40000) /* read: TN_PAD_ID_VALUE */
 #define TN_PAD_CTRL        TN_REG(0x40004) /* read/write: quarter bit clocks; write restarts masters */
+#define TN_PAD_LINES       TN_REG(0x40008) /* read: pin levels, SDA 7:4, SCL 3:0 */
 #define TN_PAD_STATUS(n)   TN_REG(0x40010 + 0x10u * (n))
 #define TN_PAD_DATA(n)     TN_REG(0x40014 + 0x10u * (n))
 #define TN_PAD_DATA2(n)    TN_REG(0x40018 + 0x10u * (n))

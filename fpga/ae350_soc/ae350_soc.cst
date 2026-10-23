@@ -147,3 +147,11 @@ IO_PORT "tmds_d_p[1]" IO_TYPE=LVCMOS33D PULL_MODE=NONE;
 IO_PORT "tmds_d_n[1]" IO_TYPE=LVCMOS33D PULL_MODE=NONE;
 IO_PORT "tmds_d_p[2]" IO_TYPE=LVCMOS33D PULL_MODE=NONE;
 IO_PORT "tmds_d_n[2]" IO_TYPE=LVCMOS33D PULL_MODE=NONE;
+
+// USB-A port 2's data pair carries the pad's first I2C bus: D+ is SDA and
+// D- is SCL. The dock's 15K pull-downs stay; a 5V adapter's pull-ups divide
+// against them, so the pin sees about 3.0V.
+IO_LOC "usb_sda" H13;
+IO_LOC "usb_scl" G13;
+IO_PORT "usb_sda" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_PORT "usb_scl" IO_TYPE=LVCMOS33 PULL_MODE=UP;

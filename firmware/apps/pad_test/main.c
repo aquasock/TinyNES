@@ -51,8 +51,10 @@ int main(void)
 	}
 	if (TN_PAD_CTRL != PAD_QUARTER)
 		TN_PAD_CTRL = PAD_QUARTER;
-	printf("TinyNES PAD TEST Q=%lu (four buses, PMOD0)\n",
-	       (unsigned long)TN_PAD_CTRL);
+	// LINES: bus 0 is USB-A port 2, buses 1 to 3 PMOD0. A bus with nothing
+	// powered on it reads 0 on USB-A, where the dock pulls both lines down.
+	printf("TinyNES PAD TEST Q=%lu LINES=%02lx (bus 0 USB-A, 1-3 PMOD0)\n",
+	       (unsigned long)TN_PAD_CTRL, (unsigned long)TN_PAD_LINES);
 	uint32_t old_status[4] = {0};
 	uint32_t old_reads[4] = {0};
 	uint64_t old_data[4] = {0};
@@ -87,11 +89,12 @@ int main(void)
 			}
 		}
 		if (tick % 250u == 249u)
-			printf("PAD STATUS %08lx %08lx %08lx %08lx\n",
+			printf("PAD STATUS %08lx %08lx %08lx %08lx LINES=%02lx\n",
 			       (unsigned long)TN_PAD_STATUS(0),
 			       (unsigned long)TN_PAD_STATUS(1),
 			       (unsigned long)TN_PAD_STATUS(2),
-			       (unsigned long)TN_PAD_STATUS(3));
+			       (unsigned long)TN_PAD_STATUS(3),
+			       (unsigned long)TN_PAD_LINES);
 		uint32_t start = tn_cycles();
 		while ((uint32_t)(tn_cycles() - start) < TN_CORE_HZ / 50u)
 			;

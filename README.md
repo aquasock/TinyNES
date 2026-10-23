@@ -202,11 +202,12 @@ in two-wire mode:
 bash tools/build_ae350_soc.sh
 ```
 
-The SoC build uses nextpnr seed 8 by default, the placement the board runs:
-with the HDMI transmitter and its audio handoff in, 7 of 8 seeds were clean in
-a sweep with the pixel clock routed first, and seed 8, at 79.38 MHz on the bus
-and 92.15 MHz on the pixel clock against 75 and 74.25, with the pixel clock on
-SPINE16+SPINE25, is the image that was tested on the board. The default has
+The SoC build uses nextpnr seed 1 by default, the placement the board runs:
+with the pad's first bus on USB-A, all 8 seeds were clean in a sweep with the
+pixel clock routed first, and seed 1, at 87.17 MHz on the bus and 85.46 MHz
+on the pixel clock against 75 and 74.25, with the pixel clock on
+SPINE16+SPINE25, has the best margin on both clocks together and is the
+image that was tested on the board. The default has
 to stay the tested seed, because `tools/deploy_tinytang.sh` takes this build's
 image unless given another. Set `TINY_NES_SEED=N` to evaluate another
 placement.
@@ -427,7 +428,8 @@ prints `TinyNES NES ZIP <name> <bytes>`, or `TinyNES NES BAD ZIP <why>` and
 ends as for a bad cartridge. `tests/test_cart_zip.sh <folder>` runs the same
 code on the PC over every `.zip` in a folder and compares each with the
 `.nes` of the same name beside it. The Wii Classic Controllers on
-PMOD0's first two buses are players 1 and 2: the D-pad or the left stick
+buses 0 and 1, USB-A port 2 and PMOD0's second pair (see *Wii Classic
+Controller inputs*), are players 1 and 2: the D-pad or the left stick
 for the directions, B for the NES's A, Y for its B, `-` for Select and `+`
 for Start; A and X do nothing. A controller that is absent or not a Classic reads as
 nothing pressed. The game runs until HOME and `-` are held together, prints
@@ -829,10 +831,18 @@ palette index alone (`build/ae350_soc_index/`).
 ### Wii Classic Controller inputs
 
 The SoC polls four Wii extension controllers on four separate open-drain I2C
-buses on PMOD0. Connect controller 1's SCL to Digilent pin 1 (FPGA V18) and
-SDA to pin 7 (V19); controller 2 uses pins 2 and 8 (G21/G22), controller 3
-pins 3 and 9 (F18/E18), and controller 4 pins 4 and 10 (C22/B22). Power each
-from PMOD0's 3.3 V on pin 6 or 12 and ground on pin 5 or 11. The signals use
+buses. Controller 1, player 1 and the one whose HOME tap shows TinyDesk, is
+on USB-A port 2, the populated port, whose data pair reaches the FPGA: D+
+(H13) is SDA and D- (G13) is SCL, the arrangement TinyGBC proved. It goes
+through Adafruit's Wii Nunchuck Breakout Adapter fed from the port's 5 V
+VBUS: the adapter's 10K pull-ups divide against the dock's 15K USB host
+pull-downs to about 3.0 V at the pin, so no level shifting is needed, and
+with nothing powered on the pair both lines read low. Controllers 2 to 4
+are on PMOD0: controller 2 uses Digilent pins 2 and 8 (G21/G22) for SCL and
+SDA, controller 3 pins 3 and 9 (F18/E18), and controller 4 pins 4 and 10
+(C22/B22); PMOD0's first pair, pins 1 and 7, is no longer read. Power a
+PMOD0 controller from PMOD0's 3.3 V on pin 6 or 12 and ground on pin 5 or
+11. The signals use
 internal pull-ups first; an external pull-up or a slower clock may be needed
 if the measured rise time is too long. Do not feed 5 V into the signal pins.
 For a four-wire Wii extension cable, red/white/yellow/green often mean
@@ -840,7 +850,8 @@ For a four-wire Wii extension cable, red/white/yellow/green often mean
 contacts or breakout labels with a continuity meter before applying power.
 On the tested red/white/yellow/green cable, the user confirmed that mapping.
 With the board's component side up and HDMI at the top, PMOD0 is the lower
-socket on the right. Its holes run this way (inside column, outside column):
+socket on the right. Its holes run this way (inside column, outside column);
+the first pair is shown as it was wired before controller 1 moved to USB-A:
 
 ```text
 toward HDMI:       1 yellow SCL    7 green SDA
@@ -861,6 +872,7 @@ under the EXTS base `0xe8040000`:
 | --- | --- | --- |
 | `0x000` | read | ID `TNP1` (`0x544e5031`) |
 | `0x004` | read/write | Quarter-bit clocks; write a nonzero value to change it and restart all four buses (`187` for about 100 kHz, `375` for 50 kHz) |
+| `0x008` | read | LINES: each bus's pin levels, SDA in bits 7:4 and SCL in bits 3:0, bit n for bus n; a bus with no pull-ups reads 0 |
 | `0x010 + 0x10n` | read | Pad n status: present bit 0, Classic identity bit 1, successful reads bits 23:8, failures bits 31:24 |
 | `0x014 + 0x10n` | read | Data bytes 0-3; captures bytes 4-5 for the next DATA2 read |
 | `0x018 + 0x10n` | read | Captured data bytes 4-5 in bits 15:0, identity bytes 4-5 in bits 31:16 |
@@ -881,8 +893,11 @@ python3 tools/load_ae350.py build/firmware/apps/pad_test/pad_test.elf \
 ```
 
 The testbench models two controllers and two empty sockets, checks identity,
-data bytes, clock stretching, unplug and retry, and the writable clock
-divider. On 2026-10-13 the Classic Controller Pro on PMOD0 pins 1/7/5/6
+data bytes, clock stretching, unplug and retry, the writable clock divider,
+and LINES reading 0 for a bus with no pull-ups and following it back up.
+`pad_test` prints LINES at the start and with each status line, which tells
+an open cable or an unpowered adapter (both lines 0 on USB-A) from a
+controller that is wired but not answering. On 2026-10-13 the Classic Controller Pro on PMOD0 pins 1/7/5/6
 reported a Classic Pro identity, zero PAD1 I2C failures, changing buttons,
 both sticks and both triggers at the default clock; the user confirmed the
 reports matched their inputs. The other three buses remain untested with pads.

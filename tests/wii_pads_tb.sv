@@ -139,12 +139,15 @@ module wii_pads_tb;
     wire [7:0] wakes [0:3];
     wire [3:0] stretched;
     reg [3:0] attached = 4'b0011;
+    // A dead bus has no pull-ups, as USB-A's pair does with nothing powered
+    // on it, where the dock's pull-downs hold both lines low.
+    reg [3:0] dead = 4'b0000;
     wire [3:0] model_scl_low, model_sda_low;
 
     genvar n;
     generate for (n = 0; n < 4; n = n + 1) begin : bus
-        assign scl_in[n] = !(scl_low[n] || model_scl_low[n]);
-        assign sda_in[n] = !(sda_low[n] || model_sda_low[n]);
+        assign scl_in[n] = !(dead[n] || scl_low[n] || model_scl_low[n]);
+        assign sda_in[n] = !(dead[n] || sda_low[n] || model_sda_low[n]);
         wii_classic_model #(.INDEX(n)) controller (
             .clk(clk), .attached(attached[n]),
             .scl(scl_in[n]), .sda(sda_in[n]),
@@ -234,6 +237,22 @@ module wii_pads_tb;
         read_reg(12'h030, status);
         if (status & 1)
             $fatal(1, "absent port present");
+        // LINES: a dead bus reads 0 on both lines, and the bits follow the
+        // pins back up once the bus has pull-ups again.
+        dead[2] = 1'b1;
+        @(posedge clk);
+        read_reg(12'h008, value);
+        if (value[31:8] != 24'd0 || value[2] || value[6])
+            $fatal(1, "LINES with bus 2 dead: %08x", value);
+        dead[2] = 1'b0;
+        timeout = 0;
+        value = 0;
+        while ((value & 32'h44) != 32'h44 && timeout < 100000) begin
+            read_reg(12'h008, value);
+            timeout = timeout + 1;
+        end
+        if (timeout >= 100000)
+            $fatal(1, "LINES bus 2 never read high: %08x", value);
         attached[0] = 1'b0;
         repeat (5000) @(posedge clk);
         read_reg(12'h010, status);

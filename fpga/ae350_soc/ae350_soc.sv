@@ -49,6 +49,12 @@ module ae350_soc_top #(
     output wire [2:0]  tmds_d_p,
     output wire [2:0]  tmds_d_n,
     inout  wire [7:0]  pmod0,
+    // USB-A port 2's data pair, which carries the pad's first I2C bus: D+ is
+    // SDA (H13) and D- is SCL (G13). The dock puts 15 kOhm pull-downs on both
+    // for the USB host it was wired for, so a 5 V-fed adapter divides down to
+    // about 3.0 V at the pin rather than 5 V (BRD-003, WII-002).
+    inout  wire        usb_sda,
+    inout  wire        usb_scl,
     // Pmod I2S2 seated normally on PMOD1: its DAC's MCLK, LRCK, SCLK and
     // SDIN on Digilent pins 1-4. Pins 7-10, the ADC, are left unused.
     output wire [3:0]  pmod1_dac
@@ -318,9 +324,21 @@ module ae350_soc_top #(
     );
 
     wire [3:0] pad_scl_in, pad_sda_in, pad_scl_low, pad_sda_low;
+
+    // Bus 0 is on USB-A port 2's data pair; buses 1 to 3 stay on PMOD0's
+    // remaining pairs (Digilent pins 2/8, 3/9 and 4/10), so PMOD0's first
+    // pair is not read. Both are open drain: the buffer only pulls low and
+    // the pin is read back directly.
+    IOBUF pad_scl0 (
+        .I(1'b0), .OEN(!pad_scl_low[0]), .O(pad_scl_in[0]), .IO(usb_scl)
+    );
+    IOBUF pad_sda0 (
+        .I(1'b0), .OEN(!pad_sda_low[0]), .O(pad_sda_in[0]), .IO(usb_sda)
+    );
+
     genvar pad_index;
     generate
-        for (pad_index = 0; pad_index < 4; pad_index = pad_index + 1) begin : pad_io
+        for (pad_index = 1; pad_index < 4; pad_index = pad_index + 1) begin : pad_io
             // Digilent pins 1-4 are SCL, pins 7-10 are SDA. Sipeed's IO
             // numbering interleaves the rows: each controller uses a pair.
             IOBUF scl_buf (
