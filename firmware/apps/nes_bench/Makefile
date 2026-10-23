@@ -66,13 +66,18 @@ else
 BUILD ?= $(abspath ../../../build/firmware/apps/nes_play)
 endif
 endif
+# A save state's header names the core it came from: the first 32 bits of the
+# FCEUmm commit tools/fetch_fceumm.sh pins, and a checksum of the patch series.
+FCEUMM_COMMIT8 := $(shell sed -n 's/^commit=\(........\).*/\1/p' ../../../tools/fetch_fceumm.sh)
+PATCH_SUM := $(shell cat ../../../patches/fceumm/*.patch | cksum | cut -d' ' -f1)
 APP_DEFS := $(if $(filter 1,$(PLAY)),-DNES_PLAY) \
             $(if $(filter 1,$(DIAG)),-DNES_DIAG) \
             $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
             $(if $(INPUT),-DNES_INPUT='"$(INPUT)"') \
             $(if $(MCACHE),-DNES_MCACHE=$(MCACHE)) \
             $(if $(PALETTE),-DNES_PALETTE=$(PALETTE)) \
-            $(if $(STATE),-DNES_STATE=$(STATE))
+            $(if $(STATE),-DNES_STATE=$(STATE)) \
+            -DNES_FCEUMM_COMMIT=0x$(FCEUMM_COMMIT8)u -DNES_PATCH_SUM=$(PATCH_SUM)u
 CPPFLAGS += $(APP_DEFS)
 
 include ../../rt/rt.mk

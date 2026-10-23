@@ -441,24 +441,42 @@ PMOD1*): FCEUmm runs at 48,909 Hz, the DAC's 48,828.125 Hz times the NES's
 HDMI frame plays, and a one-sample correction a frame holds the FIFO near
 1,100 pairs. The summary adds an `AUDIO` line with underruns, dropped
 samples, the FIFO level range, the corrections and the time to send a
-frame's sound, and the program fails on any underrun or drop. HOME with R
-and HOME with L save and load a save state (see *Save states*).
+frame's sound, and the program fails on any underrun or drop. HOME with L
+and HOME with R save and load the game's save state (see *Save states*).
 
 ### Save states
 
 A save state is FCEUmm's own (`src/state.c`): the CPU, its RAM, the PPU,
 the APU, the controller ports and the cartridge's mapper and RAM in one
 buffer, about 22 KB for Castlevania and Zelda and 14 KB for Kirby's
-Adventure. The player keeps one quick slot in the SDRAM: HOME with R saves
-the game into it and HOME with L loads it, once a press and only while the
-game has the controller, printing `TinyNES NES STATE SAVE OK F=<frame>
-US=<us>` or `LOAD OK`, `LOAD EMPTY` before anything was saved, and the slot's
-size as `TinyNES NES STATE SLOT=<bytes>` at the start. Neither combination is
-a tap of HOME, so TinyDesk stays where it is. On the A25 a save takes about
-0.93 ms and a load 1.07 ms. The state holds the cartridge's battery RAM, so a
-loaded state's RAM is what is written back as the battery save at exit: the
-state wins. The slot lasts until the game ends; states are not yet kept on
-the card.
+Adventure. There is one state per cartridge, as on the NES Classic: HOME
+with L saves the game into the player's slot in the SDRAM and HOME with R
+loads it, at once and only while the game has the controller; neither is a
+tap of HOME, so TinyDesk stays where it is. On the A25 a save takes about
+0.93 ms and a load 1.07 ms. A save also goes to the card in the background:
+two `TinyNES STATE BEGIN` lines, `TinyNES STATE DATA <bytes> <crc32>`, then
+the file as bytes, 256 a frame, about 1.5 s for 22 KB, with nothing else
+printed until it has gone and a save made meanwhile sent after it. TinyTang
+keeps it as `/root/states/nes/<cartridge>.state`, written as a `.part`, read
+back and checked against the CRC-32 before it replaces the old one, so a
+lost frame leaves the previous state in place. At launch the player asks
+for that file (`TinyNES STATE WANT <address> <bytes>`) and takes it into the
+slot without loading it, so R loads it in a later session, and the game
+never resumes on its own; nothing is sent or loaded at exit. A state file is
+a 32-byte header, `TNS1`, the CRC-32 of the `.nes` it was taken in, the first
+32 bits of FCEUmm's commit, the patch series' checksum, the frame, the
+state's length and its CRC-32, then FCEUmm's state; R refuses a state for
+another cartridge or one that does not match its CRC (`TinyNES NES STATE LOAD
+REFUSED <why>`), and a different core is reported as `CORE=OTHER` and loaded,
+as FCEUmm loads states across its versions. The player prints `TinyNES NES
+STATE SLOT=<bytes>`, `STATE READY F=<frame>` for a state taken from the card,
+and `STATE SAVE OK`, `LOAD OK`, `LOAD EMPTY`, `STATE SENT` as they happen. The
+TinyNES window's Saves page shows the state of the cartridge selected in the
+Library: its file, size and CRC-32, the game's CRC-32 and frame, and the core;
+there is no creation time while the board has no clock. A state can be
+swapped by copying `.state` files in TinyDesk's Files app. The state holds
+the cartridge's battery RAM, so a loaded state's RAM is what is written back
+as the battery save at exit: the state wins.
 
 `make ROM=<file.nes> STATE=<n>` builds the benchmark to save a state before
 frame `n`, load it once the run ends and play the frames after it again with
@@ -469,7 +487,9 @@ TinyNES NES STATE AT=<n> BYTES=<bytes> SAVE=<us> LOAD=<us>
     VIDEO=<run>/<replay> AUDIO=<run>/<replay> MATCH
 ```
 
-and failing unless the replay's checksums are the run's own. Castlevania,
+and failing unless the replay's checksums are the run's own, the replay
+loading only through the header check, which must first refuse the state
+for another cartridge and with one byte changed. Castlevania,
 Zelda and Kirby's Adventure match from frames 300, 900 and 1500 on the PC,
 and Castlevania from 900 on the A25 with the PC's checksums.
 

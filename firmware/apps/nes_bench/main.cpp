@@ -65,10 +65,14 @@
 // SELECT are held together on either controller, and the report lines come
 // once a minute and at the end:
 //   TinyNES NES PLAY PAD1=<state> PAD2=<state> SOUND=<Hz>
-// where <state> is classic, other or absent. HOME with R saves a save state
-// into one slot in the SDRAM and HOME with L loads it, reported as
-//   TinyNES NES STATE SAVE OK F=<frame> US=<us>      (or LOAD OK, LOAD EMPTY)
-// after the slot's size as TinyNES NES STATE SLOT=<bytes>. A controller that is absent or
+// where <state> is classic, other or absent. HOME with L saves the game's one
+// save state into a slot in the SDRAM, and sends it to the host for the card
+// in the background, and HOME with R loads it; at start the card's state is
+// asked for with TinyNES STATE WANT and taken into the slot, not loaded:
+//   TinyNES NES STATE SLOT=<bytes>, STATE READY F=<frame> CORE=<same|other>
+//   TinyNES NES STATE SAVE OK F=<frame> US=<us>, STATE SENT <bytes> <crc>
+//   TinyNES NES STATE LOAD OK F=<frame> FROM=<frame> US=<us>
+//       (or LOAD EMPTY, LOAD REFUSED <why>) A controller that is absent or
 // not a Classic Controller reads as nothing pressed. The sound plays on the
 // Pmod I2S2 on PMOD1 (fpga/ae350_soc/i2s_out.sv), FCEUmm's mono sample in
 // both channels. The DAC takes 75 MHz / 1536 = 48,828.125 pairs a second,
@@ -110,6 +114,7 @@
 //   TinyNES DIAG PERIOD F=<frame> CYC=<cycles>
 // the last two at most three times a second each.
 
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -646,12 +651,33 @@ void diag_second(Diag &d, uint64_t t)
 // state's length depends on the cartridge and not on when it is taken, so
 // it is measured once, by saving into a buffer larger than any state, as
 // FCEUmm's libretro driver does, and the slot is that long.
+//
+// A slot is a state file as the card keeps it: TinyNES's header, then the
+// state.  The header names the cartridge, so a state is never loaded into
+// another game, and the core it came from, which is reported but not
+// enforced, since FCEUmm loads states across its own versions.
 const size_t STATE_PROBE = 1u << 20;
+const char STATE_MAGIC[4] = { 'T', 'N', 'S', '1' };
+
+struct StateHeader {
+	char magic[4];			// "TNS1"
+	uint16_t header_bytes;		// sizeof(StateHeader)
+	uint16_t version;		// 1
+	uint32_t rom_crc;		// CRC-32 of the .nes the state was taken in
+	uint32_t fceumm;		// the first 32 bits of FCEUmm's commit
+	uint32_t patches;		// the patch series' checksum (Makefile)
+	uint32_t frame;			// the player's frame count when saved
+	uint32_t length;		// bytes of state after the header
+	uint32_t crc;			// CRC-32 of those bytes
+};
+static_assert(sizeof(StateHeader) == 32, "the state header is 32 bytes");
 
 struct StateSlot {
-	uint8_t *buf = nullptr;
-	size_t size = 0;
+	uint8_t *buf = nullptr;		// header, then state
+	size_t size = 0;		// the state's own length
 	bool full = false;
+	StateHeader *header() const { return reinterpret_cast<StateHeader *>(buf); }
+	size_t file_bytes() const { return sizeof(StateHeader) + size; }
 };
 
 bool state_alloc(StateSlot &slot)
@@ -663,20 +689,50 @@ bool state_alloc(StateSlot &slot)
 	free(probe);
 	if (size == 0 || size >= STATE_PROBE)
 		return false;
-	slot.buf = static_cast<uint8_t *>(malloc(size));
+	slot.buf = static_cast<uint8_t *>(malloc(sizeof(StateHeader) + size));
 	slot.size = slot.buf ? size : 0;
 	return slot.buf != nullptr;
 }
 
-bool state_save(StateSlot &slot)
+bool state_save(StateSlot &slot, uint32_t rom_crc, uint32_t frame)
 {
-	slot.full = FCEUSS_Save_Mem(slot.buf, slot.size) == slot.size;
-	return slot.full;
+	uint8_t *const state = slot.buf + sizeof(StateHeader);
+	slot.full = FCEUSS_Save_Mem(state, slot.size) == slot.size;
+	if (!slot.full)
+		return false;
+	StateHeader &h = *slot.header();
+	memcpy(h.magic, STATE_MAGIC, sizeof h.magic);
+	h.header_bytes = sizeof(StateHeader);
+	h.version = 1;
+	h.rom_crc = rom_crc;
+	h.fceumm = NES_FCEUMM_COMMIT;
+	h.patches = NES_PATCH_SUM;
+	h.frame = frame;
+	h.length = (uint32_t)slot.size;
+	h.crc = crc_update(0, state, slot.size);
+	return true;
+}
+
+// Why a slot's file cannot be loaded into this game, or nullptr if it can.
+const char *state_refusal(const StateSlot &slot, uint32_t rom_crc)
+{
+	const StateHeader &h = *slot.header();
+	if (memcmp(h.magic, STATE_MAGIC, sizeof h.magic) != 0 ||
+	    h.header_bytes != sizeof(StateHeader) || h.version != 1)
+		return "NOT A STATE";
+	if (h.rom_crc != rom_crc)
+		return "OTHER GAME";
+	if (h.length != slot.size)
+		return "WRONG LENGTH";
+	if (h.crc != crc_update(0, slot.buf + sizeof(StateHeader), slot.size))
+		return "BAD CRC";
+	return nullptr;
 }
 
 bool state_load(const StateSlot &slot)
 {
-	return slot.full && FCEUSS_Load_Mem(slot.buf, slot.size) != 0;
+	return slot.full &&
+	       FCEUSS_Load_Mem(slot.buf + sizeof(StateHeader), slot.size) != 0;
 }
 #endif
 
@@ -897,6 +953,113 @@ void receive_save()
 	printf("\n");
 	fflush(stdout);
 }
+
+// Ask the host for the cartridge's save state, which the card keeps as its
+// .state, and take it into the quick slot without loading it: R loads it, as
+// it loads one saved since.  Nothing arriving within about a second means the
+// game has none, the usual case.  A file whose header names another game, or
+// whose state does not match its own checksum, leaves the slot empty.
+void receive_state(StateSlot &slot, uint32_t rom_crc)
+{
+	printf("TinyNES STATE WANT %08lx %08lx\n", (unsigned long)(uintptr_t)slot.buf,
+	       (unsigned long)slot.file_bytes());
+	fflush(stdout);
+	tn_load_reset();
+	uint32_t got = 0;
+	for (int step = 0; step < 10 && !got; step++)
+		got = tn_load_poll(TN_CORE_HZ / 10);
+	if (got != (uintptr_t)slot.buf)
+		return;
+	if (const char *why = state_refusal(slot, rom_crc)) {
+		printf("TinyNES NES STATE BAD %s\n", why);
+		return;
+	}
+	const StateHeader &h = *slot.header();
+	slot.full = true;
+	printf("TinyNES NES STATE READY F=%lu CORE=%s\n", (unsigned long)h.frame,
+	       h.fceumm == NES_FCEUMM_COMMIT && h.patches == NES_PATCH_SUM ? "SAME" : "OTHER");
+}
+
+// A saved state goes to the host, which keeps it on the card as the
+// cartridge's .state, while the game runs: two lines to wake the link, whose
+// first frame after a quiet spell is where it loses bytes (save_pace), the
+// file's length and CRC-32, then the file itself, STATE_CHUNK bytes a frame,
+// as bytes rather than hex and through tn_put_char rather than printf, whose
+// newline gains a carriage return.  The host counts the payload by its
+// length, so nothing else may be printed until it has gone: a line that comes
+// due meanwhile waits in note, and a newer save waits behind the one going.
+const size_t STATE_CHUNK = 256;
+
+struct StateSender {
+	uint8_t *buf = nullptr;		// a copy of the slot, which L may overwrite
+	size_t len = 0, sent = 0;
+	uint32_t crc = 0;
+	unsigned phase = 0;		// 0 idle, 1-2 wake lines, 3 header, 4 payload
+	bool again = false;
+	char note[112] = "";
+	bool busy() const { return phase != 0; }
+};
+
+void sender_start(StateSender &tx, const StateSlot &slot)
+{
+	memcpy(tx.buf, slot.buf, slot.file_bytes());
+	tx.len = slot.file_bytes();
+	tx.crc = crc_update(0, tx.buf, tx.len);
+	tx.sent = 0;
+	tx.phase = 1;
+	tx.again = false;
+}
+
+// A line now, or once the payload has gone.  Only the newest waits.
+void state_say(StateSender &tx, const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	if (tx.busy()) {
+		vsnprintf(tx.note, sizeof tx.note, format, args);
+	} else {
+		vprintf(format, args);
+		printf("\n");
+		fflush(stdout);
+	}
+	va_end(args);
+}
+
+// One frame's share of the send, then whatever waited for it.
+void sender_step(StateSender &tx, const StateSlot &slot)
+{
+	if (tx.phase == 1 || tx.phase == 2) {
+		printf("TinyNES STATE BEGIN\n");
+		fflush(stdout);
+		tx.phase++;
+		return;
+	}
+	if (tx.phase == 3) {
+		printf("TinyNES STATE DATA %lu %08lx\n", (unsigned long)tx.len,
+		       (unsigned long)tx.crc);
+		fflush(stdout);
+		tx.phase = 4;
+		return;
+	}
+	if (tx.phase == 4) {
+		const size_t n = tx.len - tx.sent < STATE_CHUNK ? tx.len - tx.sent : STATE_CHUNK;
+		for (size_t i = 0; i < n; i++)
+			tn_put_char((char)tx.buf[tx.sent + i]);
+		tx.sent += n;
+		if (tx.sent < tx.len)
+			return;
+		tx.phase = 0;
+		printf("TinyNES NES STATE SENT %lu %08lx\n", (unsigned long)tx.len,
+		       (unsigned long)tx.crc);
+	}
+	if (tx.note[0]) {
+		printf("%s\n", tx.note);
+		tx.note[0] = 0;
+	}
+	if (tx.again)
+		sender_start(tx, slot);
+	fflush(stdout);
+}
 #endif
 
 // Show the game in palette n, an index into nes_palette_name[]: 0 is the
@@ -966,9 +1129,9 @@ int main()
 	FCEUI_DisableFourScore(1);
 	start = ticks() - start;
 
+	const uint32_t rom_crc = crc_update(0, nes_rom, rom_size);
 	printf("TinyNES NES CORE=%s ROM=%u CRC=%08lx START=%llu\n", NES_CORE,
-	       (unsigned)rom_size,
-	       (unsigned long)crc_update(0, nes_rom, rom_size),
+	       (unsigned)rom_size, (unsigned long)rom_crc,
 	       (unsigned long long)to_us(start));
 #ifndef NES_PLAY
 	printf("TinyNES NES PALETTE=%s\n", nes_palette_name[set_palette(NES_PALETTE)]);
@@ -978,6 +1141,18 @@ int main()
 	// into the core's own buffer, before the first frame runs.
 	save_ram = nes_bench_battery(&save_len);
 	receive_save();
+	// The one save state, in the SDRAM: L saves into it, R loads it.  The
+	// card's copy of the cartridge's state is taken into it now, not loaded.
+	StateSlot quick;
+	StateSender state_tx;
+	const bool quick_ok = state_alloc(quick);
+	if (quick_ok)
+		state_tx.buf = static_cast<uint8_t *>(malloc(quick.file_bytes()));
+	printf("TinyNES NES STATE SLOT=%u\n",
+	       quick_ok && state_tx.buf ? (unsigned)quick.size : 0u);
+	if (quick_ok)
+		receive_state(quick, rom_crc);
+	uint16_t combo_prev = 0;
 	receive_settings();
 	// The picture's pixel aspect, from /nes.ini through the host.  Written
 	// here because the register is taken at the next vertical blank and this
@@ -1053,13 +1228,7 @@ int main()
 	uint8_t *const core_xbuf = XBuf;
 	static_assert(XBUF_BYTES <= 65536, "a frame must fit its buffer slot");
 
-#if defined(NES_PLAY)
-	// One quick save slot in the SDRAM, for HOME with R and HOME with L.
-	StateSlot quick;
-	const bool quick_ok = state_alloc(quick);
-	printf("TinyNES NES STATE SLOT=%u\n", quick_ok ? (unsigned)quick.size : 0u);
-	uint16_t combo_prev = 0;
-#elif NES_STATE
+#if !defined(NES_PLAY) && NES_STATE
 	StateSlot bench_state;
 	if (!state_alloc(bench_state)) {
 		printf("TinyNES NES STATE NO MEMORY\n");
@@ -1073,6 +1242,9 @@ int main()
 	uint64_t total = 0, low = UINT64_MAX, high = 0, part = 0, part_high = 0;
 	uint64_t show_total = 0, part_show = 0;
 	unsigned over = 0, part_frames = 0, back = 1, played = 0;
+#ifdef NES_PLAY
+	bool report_due = false;
+#endif
 
 	for (unsigned f = 0; frames == 0 || f < frames; f++) {
 #ifdef NES_PLAY
@@ -1083,28 +1255,42 @@ int main()
 		// The desktop is over the game: its pointer has the controller.
 		if (TN_LINK_STATUS & TN_LINK_SHOWN)
 			joypads = 0;
-		// HOME with R saves the quick slot and HOME with L loads it, once
-		// a press, while the game has the controller. Neither is a tap of
-		// HOME (desk_link.sv), so TinyDesk is not brought up by them.
+		// HOME with L saves the state and HOME with R loads it, once a press,
+		// while the game has the controller. Neither is a tap of HOME
+		// (desk_link.sv), so TinyDesk is not brought up by them. A save goes
+		// to the card as well, in the background, except in the DIAG build,
+		// whose once-a-second lines would land inside the payload.
 		{
 			const uint16_t held = held1 | held2;
 			const uint16_t combo = held & WII_HOME ? held & (WII_L | WII_R) : 0;
 			const uint16_t pressed = combo & (uint16_t)~combo_prev;
 			combo_prev = combo;
-			if (pressed && quick_ok && !(TN_LINK_STATUS & TN_LINK_SHOWN)) {
+			if (pressed && quick_ok && state_tx.buf &&
+			    !(TN_LINK_STATUS & TN_LINK_SHOWN)) {
 				const uint64_t t0 = ticks();
-				if (pressed & WII_R) {
-					const bool ok = state_save(quick);
-					printf("TinyNES NES STATE SAVE %s F=%u US=%llu\n",
-					       ok ? "OK" : "FAILED", f,
-					       (unsigned long long)to_us(ticks() - t0));
+				if (pressed & WII_L) {
+					const bool ok = state_save(quick, rom_crc, f);
+					state_say(state_tx, "TinyNES NES STATE SAVE %s F=%u US=%llu",
+						  ok ? "OK" : "FAILED", f,
+						  (unsigned long long)to_us(ticks() - t0));
+#ifndef NES_DIAG
+					if (ok) {
+						if (state_tx.busy())
+							state_tx.again = true;
+						else
+							sender_start(state_tx, quick);
+					}
+#endif
 				} else if (!quick.full) {
-					printf("TinyNES NES STATE LOAD EMPTY F=%u\n", f);
+					state_say(state_tx, "TinyNES NES STATE LOAD EMPTY F=%u", f);
+				} else if (const char *why = state_refusal(quick, rom_crc)) {
+					state_say(state_tx, "TinyNES NES STATE LOAD REFUSED %s", why);
 				} else {
 					const bool ok = state_load(quick);
-					printf("TinyNES NES STATE LOAD %s F=%u US=%llu\n",
-					       ok ? "OK" : "FAILED", f,
-					       (unsigned long long)to_us(ticks() - t0));
+					state_say(state_tx, "TinyNES NES STATE LOAD %s F=%u FROM=%lu US=%llu",
+						  ok ? "OK" : "FAILED", f,
+						  (unsigned long)quick.header()->frame,
+						  (unsigned long long)to_us(ticks() - t0));
 				}
 			}
 		}
@@ -1128,7 +1314,7 @@ int main()
 #if NES_STATE
 		if (f == NES_STATE) {
 			const uint64_t t0 = ticks();
-			if (!state_save(bench_state)) {
+			if (!state_save(bench_state, rom_crc, f)) {
 				printf("TinyNES NES STATE SAVE FAILED\n");
 				return 1;
 			}
@@ -1236,7 +1422,14 @@ int main()
 				dump_frame(dump, f + 1, pixels, XDBuf);
 #endif
 		}
+#ifdef NES_PLAY
+		// A report that comes due while a state is going out waits for it.
+		report_due = report_due || (f + 1) % NES_REPORT == 0;
+		if (report_due && !state_tx.busy()) {
+			report_due = false;
+#else
 		if ((f + 1) % NES_REPORT == 0 || f + 1 == frames) {
+#endif
 			printf("TinyNES NES F=%u AVG=%llu MAX=%llu SHOW=%llu "
 			       "VIDEO=%08lx AUDIO=%08lx\n", f + 1,
 			       (unsigned long long)to_us(part / part_frames),
@@ -1246,7 +1439,19 @@ int main()
 			part = part_high = part_show = 0;
 			part_frames = 0;
 		}
+#ifdef NES_PLAY
+		sender_step(state_tx, quick);
+#endif
 	}
+#ifdef NES_PLAY
+	// A state still going out is finished before anything else is printed,
+	// paced as the battery save is, or the host would count the summary as
+	// its payload.
+	while (state_tx.busy() || state_tx.again) {
+		sender_step(state_tx, quick);
+		save_pace();
+	}
+#endif
 
 #ifdef __riscv
 	const unsigned late = TN_VIDEO_LATE - late0;
@@ -1280,8 +1485,16 @@ int main()
 	// Back to the state taken before frame NES_STATE, and the same frames
 	// again with the same script: their checksums must be the run's own.
 	{
+		// The header must refuse the state for another cartridge and with a
+		// byte of it changed, and pass it as taken.
+		uint8_t *const first = bench_state.buf + sizeof(StateHeader);
+		const bool refuses =
+			state_refusal(bench_state, rom_crc ^ 1u) != nullptr &&
+			(*first ^= 0x55u, state_refusal(bench_state, rom_crc) != nullptr);
+		*first ^= 0x55u;
+		const char *const why = state_refusal(bench_state, rom_crc);
 		uint64_t load_t = ticks();
-		const bool loaded = state_load(bench_state);
+		const bool loaded = refuses && !why && state_load(bench_state);
 		load_t = ticks() - load_t;
 		uint32_t replay_video = 0, replay_audio = 0;
 		for (unsigned f = NES_STATE; loaded && f < played; f++) {
@@ -1303,6 +1516,7 @@ int main()
 		       (unsigned long long)to_us(load_t),
 		       (unsigned long)state_video_crc, (unsigned long)replay_video,
 		       (unsigned long)state_audio_crc, (unsigned long)replay_audio,
+		       !refuses ? "HEADER ACCEPTS ANY" : why ? why :
 		       !loaded ? "LOAD FAILED" : match ? "MATCH" : "DIFFER");
 		if (!match)
 			return 1;

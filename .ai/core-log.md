@@ -1680,3 +1680,35 @@ Part 3 of the approved plan is next, across TinyNES and TinyTang: the player sen
 - User Test: PASS
 
 ---
+
+## 49 COMMIT Unreleased 2026-10-22T19:42:14-07:00
+
+#### Coming From:
+
+Unreleased c1e00b8
+
+#### Purpose:
+
+Make save states work the way the user set out after entry 48: one state per cartridge as on the NES Classic, L to save and R to load, kept on the card when saved and taken back at launch without loading, nothing at exit, and the TinyNES window's Saves page showing the selected cartridge's state.
+
+#### Outcome:
+
+The user replaced entry 48's next steps, which proposed several states, saving at exit and resuming at start, with this behaviour, and chose that L also write the card and that there be one state per cartridge. In `firmware/apps/nes_bench/main.cpp` a slot is now a state file: a 32-byte header, `TNS1`, the CRC-32 of the `.nes`, the first 32 bits of FCEUmm's commit and a checksum of the patch series (`NES_FCEUMM_COMMIT` and `NES_PATCH_SUM`, which the Makefile derives from `tools/fetch_fceumm.sh` and `patches/fceumm/`), the frame, the length and the state's CRC-32, then FCEUmm's state. HOME with L saves and HOME with R loads, the reverse of entry 48, and R refuses a state whose header names another cartridge or whose CRC does not match, while a different core is reported and loaded. A save is copied to a send buffer and goes out in the background through TinyTang's existing binary receive path, two `TinyNES STATE BEGIN` lines to wake the link, `TinyNES STATE DATA <bytes> <crc32>`, then the file as bytes through `tn_put_char`, because `_write` adds a carriage return to every newline, 256 bytes a frame, about 1.5 s for 22 KB; nothing else is printed while it goes, a line that comes due waits, a save made meanwhile follows it, and a send still going at exit is finished first so the host never counts the summary as payload. At launch the player asks with `TinyNES STATE WANT <address> <bytes>` after the battery save and takes the file into the slot without loading it, waiting about a second when the card has none. The DIAG build saves and loads but does not send, since its once-a-second lines would land in the payload. The benchmark's `STATE=<n>` replay now loads only through the header check and first proves it refuses another cartridge's state and one with a byte changed; Castlevania, Zelda and Kirby's Adventure matched from frames 300 and 900 on the PC, the benchmark's checksums stayed `VIDEO=f2160661 AUDIO=4512be2f` and AccuracyCoin stayed at 90 of 146. TinyTang's half is its entry 19: `tang_ae350_run` answers `STATE WANT` from `/root/states/nes/<cartridge>.state` and writes `STATE DATA` there through the battery save's verified `.part` replace, and the Saves page shows the selected cartridge's file, size, CRC-32, game CRC-32, frame and core. `tools/deploy_tinytang.sh` installed the player `a865a41d497f93a4e1b410bbdcaad7313318766fd8088071477dcce4f4b51ad4`, 876,064 bytes, beside the unchanged `ae350_soc.bin` `50dc3754`, and TinyTang `42ea867-dirty.f1b9751` was flashed; the user power-cycled, tested and reported that everything works perfectly, and afterwards `platform` read `tinytang 42ea867-dirty.f1b9751` and the card held `/root/states/nes/Castlevania.state` at 22,047 bytes, Castlevania's 22,015-byte state and its header. The player's own lines from that session were not captured, because the user tested before a listener was started. The README's *Save states* section and EMU-009 now describe this behaviour. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry as number 49 of 100 with exactly six sections and allowed Status values.
+
+#### Next Steps:
+
+The state has no creation time while the board has no clock; the Saves page can show the file's time once TinyTang's RTC work turns FatFS timestamps on. A state that loses a frame on the way to the card leaves the previous file in place, reported only on TinyTang's console, so a lost send is invisible during play; a later cycle could show that on the desk layer if it proves to happen. The SoC testbench repair of entry 47 and the older items stand.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
