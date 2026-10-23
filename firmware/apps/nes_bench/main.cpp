@@ -22,6 +22,8 @@
 //   TinyNES NES FRAMES=<n> AVG=<us> MIN=<us> MAX=<us> SHOW=<us> OVER=<n>
 //       SPEED=<x.y>% LATE=<n> MISSED=<n>
 //   TinyNES NES VIDEO=<crc> AUDIO=<crc>
+//   TinyNES NES STATE AT=<n> BYTES=<bytes> SAVE=<us> LOAD=<us>
+//       VIDEO=<run>/<replay> AUDIO=<run>/<replay> MATCH    (STATE=<n> only)
 //
 // The F= lines cover the frames since the last one. AVG, MIN and MAX time
 // FCEUI_Emulate alone. SHOW is the mean time to hand a frame to the video
@@ -63,7 +65,10 @@
 // SELECT are held together on either controller, and the report lines come
 // once a minute and at the end:
 //   TinyNES NES PLAY PAD1=<state> PAD2=<state> SOUND=<Hz>
-// where <state> is classic, other or absent. A controller that is absent or
+// where <state> is classic, other or absent. HOME with R saves a save state
+// into one slot in the SDRAM and HOME with L loads it, reported as
+//   TinyNES NES STATE SAVE OK F=<frame> US=<us>      (or LOAD OK, LOAD EMPTY)
+// after the slot's size as TinyNES NES STATE SLOT=<bytes>. A controller that is absent or
 // not a Classic Controller reads as nothing pressed. The sound plays on the
 // Pmod I2S2 on PMOD1 (fpga/ae350_soc/i2s_out.sv), FCEUmm's mono sample in
 // both channels. The DAC takes 75 MHz / 1536 = 48,828.125 pairs a second,
@@ -140,6 +145,10 @@ void nes_bench_apu_volumes(int volume);
 uint8_t *nes_bench_battery(uint32_t *len);
 // fceu_settings.c: show the loaded game in a palette of 64 RGB triples.
 void nes_bench_palette(const uint8_t *rgb);
+// src/state.c: the whole machine as a save state, written into or read from
+// a buffer; the save returns the state's length, the load nonzero on success.
+size_t FCEUSS_Save_Mem(void *buf, size_t size);
+int FCEUSS_Load_Mem(const void *buf, size_t size);
 }
 // The presets, generated into the build directory from the core's libretro
 // driver: nes_palette_name[] and nes_palette_rgb[] (Makefile).
@@ -213,6 +222,12 @@ void FCEUD_DispMessage(int, unsigned, const char *s) { printf("fceumm %s\n", s);
 #endif
 #ifndef NES_REPORT
 #define NES_REPORT 120
+#endif
+// The frame before which the benchmark saves a state, then loads it once the
+// run ends and plays the frames after it again, which must give the same
+// checksums; 0 for no such test.
+#ifndef NES_STATE
+#define NES_STATE 0
 #endif
 // <first frame>+<frames>=<button>[,<button>...], space separated. The
 // default starts Castlevania, waits out the walk to the gate and then
@@ -339,7 +354,8 @@ bool parse_input(const char *s)
 const uint16_t WII_B = 1u << 14, WII_Y = 1u << 13, WII_LEFT = 1u << 9,
 	       WII_UP = 1u << 8,
 	       WII_RIGHT = 1u << 7, WII_DOWN = 1u << 6, WII_SELECT = 1u << 4,
-	       WII_HOME = 1u << 3, WII_START = 1u << 2;
+	       WII_HOME = 1u << 3, WII_START = 1u << 2, WII_L = 1u << 5,
+	       WII_R = 1u << 1;
 
 // The controller buttons this program can tell apart, in the order the host's
 // setting file indexes them.  The Classic's word carries sixteen bits and only
@@ -619,6 +635,64 @@ void diag_second(Diag &d, uint64_t t)
 	d.late0 = late;
 	d.under0 = TN_AUDIO_UNDERRUNS(status);
 	d.drops0 = drops;
+}
+#endif
+
+#if defined(NES_PLAY) || NES_STATE
+// Save states are FCEUmm's own (src/state.c): the CPU, its RAM, the PPU, the
+// APU, the controller ports and the cartridge's mapper and RAM, one buffer.
+// The cartridge's RAM is in it, so a loaded state's battery RAM is what the
+// play build writes back as the battery save at exit: the state wins.  A
+// state's length depends on the cartridge and not on when it is taken, so
+// it is measured once, by saving into a buffer larger than any state, as
+// FCEUmm's libretro driver does, and the slot is that long.
+const size_t STATE_PROBE = 1u << 20;
+
+struct StateSlot {
+	uint8_t *buf = nullptr;
+	size_t size = 0;
+	bool full = false;
+};
+
+bool state_alloc(StateSlot &slot)
+{
+	uint8_t *probe = static_cast<uint8_t *>(malloc(STATE_PROBE));
+	if (!probe)
+		return false;
+	const size_t size = FCEUSS_Save_Mem(probe, STATE_PROBE);
+	free(probe);
+	if (size == 0 || size >= STATE_PROBE)
+		return false;
+	slot.buf = static_cast<uint8_t *>(malloc(size));
+	slot.size = slot.buf ? size : 0;
+	return slot.buf != nullptr;
+}
+
+bool state_save(StateSlot &slot)
+{
+	slot.full = FCEUSS_Save_Mem(slot.buf, slot.size) == slot.size;
+	return slot.full;
+}
+
+bool state_load(const StateSlot &slot)
+{
+	return slot.full && FCEUSS_Load_Mem(slot.buf, slot.size) != 0;
+}
+#endif
+
+#if !defined(NES_PLAY) && NES_STATE
+// One frame into a pair of checksums, as the run's own VIDEO and AUDIO take
+// it: every frame's sound, and the picture and line emphasis of every
+// NES_CHECK-th frame.
+void fold_frame(uint32_t &video, uint32_t &audio, unsigned f,
+		const uint8_t *pixels, const int32_t *sound, int32_t sound_size)
+{
+	audio = crc_update(audio, sound, (size_t)sound_size * sizeof(int32_t));
+	if ((f + 1) % NES_CHECK == 0) {
+		video = crc_update(video, pixels, WIDTH * HEIGHT);
+		for (unsigned y = 0; y < HEIGHT; y++)
+			video = crc_update(video, XDBuf + y * 256u, 1);
+	}
 }
 #endif
 
@@ -979,6 +1053,22 @@ int main()
 	uint8_t *const core_xbuf = XBuf;
 	static_assert(XBUF_BYTES <= 65536, "a frame must fit its buffer slot");
 
+#if defined(NES_PLAY)
+	// One quick save slot in the SDRAM, for HOME with R and HOME with L.
+	StateSlot quick;
+	const bool quick_ok = state_alloc(quick);
+	printf("TinyNES NES STATE SLOT=%u\n", quick_ok ? (unsigned)quick.size : 0u);
+	uint16_t combo_prev = 0;
+#elif NES_STATE
+	StateSlot bench_state;
+	if (!state_alloc(bench_state)) {
+		printf("TinyNES NES STATE NO MEMORY\n");
+		return 1;
+	}
+	uint32_t state_video_crc = 0, state_audio_crc = 0;
+	uint64_t state_save_t = 0;
+#endif
+
 	uint32_t video_crc = 0, audio_crc = 0;
 	uint64_t total = 0, low = UINT64_MAX, high = 0, part = 0, part_high = 0;
 	uint64_t show_total = 0, part_show = 0;
@@ -993,6 +1083,31 @@ int main()
 		// The desktop is over the game: its pointer has the controller.
 		if (TN_LINK_STATUS & TN_LINK_SHOWN)
 			joypads = 0;
+		// HOME with R saves the quick slot and HOME with L loads it, once
+		// a press, while the game has the controller. Neither is a tap of
+		// HOME (desk_link.sv), so TinyDesk is not brought up by them.
+		{
+			const uint16_t held = held1 | held2;
+			const uint16_t combo = held & WII_HOME ? held & (WII_L | WII_R) : 0;
+			const uint16_t pressed = combo & (uint16_t)~combo_prev;
+			combo_prev = combo;
+			if (pressed && quick_ok && !(TN_LINK_STATUS & TN_LINK_SHOWN)) {
+				const uint64_t t0 = ticks();
+				if (pressed & WII_R) {
+					const bool ok = state_save(quick);
+					printf("TinyNES NES STATE SAVE %s F=%u US=%llu\n",
+					       ok ? "OK" : "FAILED", f,
+					       (unsigned long long)to_us(ticks() - t0));
+				} else if (!quick.full) {
+					printf("TinyNES NES STATE LOAD EMPTY F=%u\n", f);
+				} else {
+					const bool ok = state_load(quick);
+					printf("TinyNES NES STATE LOAD %s F=%u US=%llu\n",
+					       ok ? "OK" : "FAILED", f,
+					       (unsigned long long)to_us(ticks() - t0));
+				}
+			}
+		}
 #ifdef NES_DIAG
 		{
 			const uint16_t held = held1 | held2;
@@ -1010,6 +1125,16 @@ int main()
 		const uint32_t audio_level = TN_AUDIO_LEVEL(TN_AUDIO_STATUS);
 #else
 		joypads = pad_for(f);
+#if NES_STATE
+		if (f == NES_STATE) {
+			const uint64_t t0 = ticks();
+			if (!state_save(bench_state)) {
+				printf("TinyNES NES STATE SAVE FAILED\n");
+				return 1;
+			}
+			state_save_t = ticks() - t0;
+		}
+#endif
 #endif
 		XBuf = frame_buffer(back);
 
@@ -1096,6 +1221,11 @@ int main()
 		if (t > budget)
 			over++;
 
+#if !defined(NES_PLAY) && NES_STATE
+		if (f >= NES_STATE)
+			fold_frame(state_video_crc, state_audio_crc, f, pixels, sound,
+				   sound_size);
+#endif
 		audio_crc = crc_update(audio_crc, sound, (size_t)sound_size * sizeof(int32_t));
 		if ((f + 1) % NES_CHECK == 0) {
 			video_crc = crc_update(video_crc, pixels, WIDTH * HEIGHT);
@@ -1146,6 +1276,38 @@ int main()
 	       speed % 10, late, missed);
 	printf("TinyNES NES VIDEO=%08lx AUDIO=%08lx\n", (unsigned long)video_crc,
 	       (unsigned long)audio_crc);
+#if !defined(NES_PLAY) && NES_STATE
+	// Back to the state taken before frame NES_STATE, and the same frames
+	// again with the same script: their checksums must be the run's own.
+	{
+		uint64_t load_t = ticks();
+		const bool loaded = state_load(bench_state);
+		load_t = ticks() - load_t;
+		uint32_t replay_video = 0, replay_audio = 0;
+		for (unsigned f = NES_STATE; loaded && f < played; f++) {
+			joypads = pad_for(f);
+			XBuf = frame_buffer(back);
+			back ^= 1;
+			uint8_t *pixels;
+			int32_t *sound;
+			int32_t sound_size = 0;
+			FCEUI_Emulate(&pixels, &sound, &sound_size, 0);
+			fold_frame(replay_video, replay_audio, f, pixels, sound, sound_size);
+		}
+		const bool match = loaded && replay_video == state_video_crc &&
+				   replay_audio == state_audio_crc;
+		printf("TinyNES NES STATE AT=%u BYTES=%u SAVE=%llu LOAD=%llu "
+		       "VIDEO=%08lx/%08lx AUDIO=%08lx/%08lx %s\n", (unsigned)NES_STATE,
+		       (unsigned)bench_state.size,
+		       (unsigned long long)to_us(state_save_t),
+		       (unsigned long long)to_us(load_t),
+		       (unsigned long)state_video_crc, (unsigned long)replay_video,
+		       (unsigned long)state_audio_crc, (unsigned long)replay_audio,
+		       !loaded ? "LOAD FAILED" : match ? "MATCH" : "DIFFER");
+		if (!match)
+			return 1;
+	}
+#endif
 #ifdef NES_PLAY
 	printf("TinyNES NES AUDIO UNDER=%lu DROPS=%lu LEVEL=%lu-%lu ADJUST=+%u/-%u "
 	       "PUSH=%llu PUSHED=%lu PLAYED=%lu VBL=%lu\n", (unsigned long)under,

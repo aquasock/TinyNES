@@ -13,7 +13,9 @@
 # FRAMES=<n> and INPUT="<script>" replace the defaults in main.cpp, and
 # PALETTE=<n> the palette it starts with, an index into the names
 # tools/gen_fceumm_palettes.py lists (0, FCEUmm's own, by default); the
-# PLAY=1 build takes the palette from the host instead.
+# PLAY=1 build takes the palette from the host instead. STATE=<n> saves a
+# state before frame n, loads it when the run ends and plays the frames
+# after it again, failing unless their checksums are the run's own.
 # PLAY=1 builds the playable version instead (AE350 only), with the Wii
 # Classic Controllers as players 1 and 2 and the sound on the I2S2; it has
 # no cartridge built in and takes one over the UART when it starts.
@@ -69,7 +71,8 @@ APP_DEFS := $(if $(filter 1,$(PLAY)),-DNES_PLAY) \
             $(if $(FRAMES),-DNES_FRAMES=$(FRAMES)) \
             $(if $(INPUT),-DNES_INPUT='"$(INPUT)"') \
             $(if $(MCACHE),-DNES_MCACHE=$(MCACHE)) \
-            $(if $(PALETTE),-DNES_PALETTE=$(PALETTE))
+            $(if $(PALETTE),-DNES_PALETTE=$(PALETTE)) \
+            $(if $(STATE),-DNES_STATE=$(STATE))
 CPPFLAGS += $(APP_DEFS)
 
 include ../../rt/rt.mk

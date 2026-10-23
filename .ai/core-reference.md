@@ -316,6 +316,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Why was FCEUmm silent under nes_bench's own driver, and what does real sound cost? | EMU | EMU-006 |
 | How accurate is FCEUmm by AccuracyCoin, what do TinyNES's patches fix, and what do they cost? | EMU | EMU-007 |
 | Why did Zelda II's intro play slowly with broken sound, and what fixed it? | EMU | EMU-008 |
+| How are save states taken and loaded, how big and how fast are they, and what did FCEUmm's state leave out? | EMU | EMU-009 |
 | What are AccuracyCoin and TriCNES, and on what terms does TinyNES use them? | PROV | PROV-009 |
 | Which silicon revision is this board, and which revision is the core image? | PSX | PSX-001 |
 | How much logic and block RAM does the device have? | PSX | PSX-002 |
@@ -507,6 +508,7 @@ EMU-005: "Played by hand with a Wii Classic Controller Pro on PMOD0 bus 1 (since
 EMU-006: "FCEUI_Initialize clears FSettings, leaving the five APU channel volumes at 0, so nes_bench's own driver mixed silence until it set them to 256 as the libretro driver does; with real sound Castlevania still runs at 153.5 percent, and the play build plays it on the I2S2 with no underrun"
 EMU-007: "AccuracyCoin on FCEUmm ac0d00a under nes_bench: 84 of 146 with page 19 skipped, 83 with only its Misaligned OAM Behavior skipped, which hangs; TinyNES's seven patches and the Four Score turned off raise that to 90, the user saw 90 on the board, and the A25 benchmark slows from 10.93 to 11.08 ms a frame with identical checksums"
 EMU-008: "Zelda II's title screen polls $2002 about 1,900 times a frame and FCEUmm rebuilt a 256-entry palette table on each resulting partial-line render, so its intro took 17.45 ms a frame on the A25 (1,690 of 1,800 frames over 16.64 ms); patch 0008 rebuilds the table only when its 16 palette bytes change, giving 9.95 ms, and Castlevania's benchmark 9.03 ms, with identical checksums"
+EMU-009: "FCEUmm's state (FCEUSS_Save_Mem/Load_Mem) round-trips exactly once patch 0009 adds DMCDMABuf, sweepReload and the envelopes' reloaddec, without which Kirby's sound was wrong for up to 36 frames after a load; states are 14-22 KB, and on the A25 a save takes about 0.93-0.97 ms and a load 1.07-1.10 ms; the player's quick slot is HOME+R and HOME+L"
 WII-001: "Wii extensions use I2C address 0x52; write F0=55 then FB=00 to disable encryption, read six identity bytes at FA and six format-1 data bytes after setting pointer 00; NintendoExtensionCtrl waits 10 ms, 20 ms and 175 us at those steps and accepts Classic IDs 00/01 00 A4 20 00..03 01; buttons in bytes 4-5 are active low"
 WII-002: "Adafruit's Wii Nunchuck Breakout Adapter (4836) level-shifts SCL/SDA for 3-5 V with a 10K pull-up on each; fed from USB-A's 5 V VBUS its pull-ups divide against the dock's 15K pull-downs to about 3.0 V at the FPGA pin, which is how TinyNES's controller 1 is wired; the CYBERDECK HAT must not go on the 2x20 SDRAM headers"
 WII-003: "The Classic Controller's buttons are WiiBrew's layout, measured here: byte 4 bit 1 R, 2 Plus, 3 Home, 4 Minus, 5 L, 6 Down, 7 Right; byte 5 bit 0 Up, 1 Left, 2 ZR, 3 X, 4 A, 5 Y, 6 B, 7 ZL, active low; TinyGBC's record saying otherwise is mistaken"
@@ -2883,6 +2885,19 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "https://github.com/libretro/libretro-fceumm/issues/330"
   verification: "Measured on 2026-10-14 (core-log entry 38) with gprof on the PC build and on the board in two-wire mode with ae350_soc.bin 5d4f88cd, before and after the patch; the user then played the intro on HDMI with the patched player and passed it."
 
+
+- record_id: EMU-009
+  kind: EXTERNAL
+  topic_id: EMU
+  title: "FCEUmm's save state round-trips exactly on the A25 once three APU latches are added, and costs about a millisecond"
+  status: VERIFIED
+  verified_date: 2026-10-22
+  statement: "In libretro FCEUmm ac0d00a, FCEUSS_Save_Mem and FCEUSS_Load_Mem (src/state.c) write and read the whole machine as a 16-byte FCS header and chunks of SFORMAT fields -- CPU, PPU, controller ports, APU (FCEUSND_STATEINFO in src/sound.c) and the cartridge's mapper and RAM -- into a caller's buffer; libretro.c's retro_serialize only adds size bookkeeping and a Game Genie guard, and unknown chunks are skipped on load. FCEUSND_STATEINFO omits DMCDMABuf, sweepReload[2] and EnvUnits[].reloaddec, so a load keeps the running game's values for them. A state's length depends on the cartridge, not on when it is taken: 22,015 bytes for Castlevania (USA) (Rev A), 22,043 for The Legend of Zelda (USA) (Rev 1) and 13,876 for Kirby's Adventure (USA) (Rev 1), each with the three fields added."
+  consequence: "Without the three fields Kirby's Adventure replayed the picture exactly after a load but not the sound, for 36 frames after a state taken before frame 300 and 26 after one before frame 1500, the sample counts right and the values wrong from the eighth sample, which is a DMC level offset lasting until the next $4011 write or sample; TinyNES patch 0009 saves them, after which every frame of all three games matches from frames 300, 900 and 1500 on the PC. On the A25 a Castlevania save takes 974 us and a load 1,096 us in the benchmark, 926 us and about 1,070 us in play, against the 16,639 us frame of which the emulation uses about 9.1 ms, so a quick save or load fits inside a frame. The play build keeps one slot in the SDRAM, saved with HOME and R and loaded with HOME and L; because the state carries the cartridge's battery RAM, a loaded state's RAM becomes the battery save at exit."
+  sources:
+    - "libretro FCEUmm ac0d00a: src/state.c (FCEUSS_Save_Mem, FCEUSS_Load_Mem, ReadStateChunks), src/sound.c (FCEUSND_STATEINFO, DMCDMABuf, sweepReload, ENVUNIT.reloaddec), src/drivers/libretro/libretro.c (retro_serialize_size, retro_serialize, retro_unserialize)"
+    - "This project's patches/fceumm/0009-state-apu-latches.patch and firmware/apps/nes_bench/main.cpp (STATE=<n>, the PLAY=1 quick slot)"
+  verification: "Measured on 2026-10-22 (core-log entry 48): nes_bench STATE=<n> on the PC for the three games at frames 300, 900 and 1500, before and after patch 0009, with a per-frame audio comparison to locate Kirby's difference; on the board in two-wire mode with ae350_soc.bin 50dc3754, the A25 benchmark at STATE=900 matched with the PC's checksums; the user then saved once and loaded four times in Castlevania (USA) (Rev 1) with the play build 4570463d, saw each load return to the saved moment and passed it."
 - record_id: WII-001
   kind: EXTERNAL
   topic_id: WII

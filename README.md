@@ -441,7 +441,37 @@ PMOD1*): FCEUmm runs at 48,909 Hz, the DAC's 48,828.125 Hz times the NES's
 HDMI frame plays, and a one-sample correction a frame holds the FIFO near
 1,100 pairs. The summary adds an `AUDIO` line with underruns, dropped
 samples, the FIFO level range, the corrections and the time to send a
-frame's sound, and the program fails on any underrun or drop.
+frame's sound, and the program fails on any underrun or drop. HOME with R
+and HOME with L save and load a save state (see *Save states*).
+
+### Save states
+
+A save state is FCEUmm's own (`src/state.c`): the CPU, its RAM, the PPU,
+the APU, the controller ports and the cartridge's mapper and RAM in one
+buffer, about 22 KB for Castlevania and Zelda and 14 KB for Kirby's
+Adventure. The player keeps one quick slot in the SDRAM: HOME with R saves
+the game into it and HOME with L loads it, once a press and only while the
+game has the controller, printing `TinyNES NES STATE SAVE OK F=<frame>
+US=<us>` or `LOAD OK`, `LOAD EMPTY` before anything was saved, and the slot's
+size as `TinyNES NES STATE SLOT=<bytes>` at the start. Neither combination is
+a tap of HOME, so TinyDesk stays where it is. On the A25 a save takes about
+0.93 ms and a load 1.07 ms. The state holds the cartridge's battery RAM, so a
+loaded state's RAM is what is written back as the battery save at exit: the
+state wins. The slot lasts until the game ends; states are not yet kept on
+the card.
+
+`make ROM=<file.nes> STATE=<n>` builds the benchmark to save a state before
+frame `n`, load it once the run ends and play the frames after it again with
+the same script, reporting
+
+```text
+TinyNES NES STATE AT=<n> BYTES=<bytes> SAVE=<us> LOAD=<us>
+    VIDEO=<run>/<replay> AUDIO=<run>/<replay> MATCH
+```
+
+and failing unless the replay's checksums are the run's own. Castlevania,
+Zelda and Kirby's Adventure match from frames 300, 900 and 1500 on the PC,
+and Castlevania from 900 on the A25 with the PC's checksums.
 
 After the cartridge and any battery save, the player prints `TinyNES SETTINGS
 WANT <address> <bytes>` and takes its settings, headerless, straight into its
@@ -532,7 +562,11 @@ background palette table on every partial-line render, and a game polling
 once per read, so the intro took 17.45 ms a frame on the A25 against the
 16.64 ms period and played slow with broken sound. Rebuilding the table only
 when its 16 palette bytes change leaves every checksum as it was and brings
-the intro to 9.95 ms and the Castlevania benchmark to 9.03 ms.
+the intro to 9.95 ms and the Castlevania benchmark to 9.03 ms. The ninth is
+a save-state fix: FCEUmm's state left out the DMC's fetched sample byte and
+the sweep and envelope restart flags, so after a load Kirby's Adventure played
+the right picture with wrong sound for up to 36 frames; with them saved,
+`STATE=<n>` (see *Save states*) replays every frame exactly.
 
 ### Diagnosing the HDMI picture
 
@@ -662,7 +696,8 @@ frames a second while the emulation keeps up, and the last frame stays up.
 It plays a controller script, by default 1,800 frames of Castlevania: Start
 at frame 120, then walking right through the first stage from frame 720
 with whips and jumps. `FRAMES=<n>` and `INPUT="<first>+<frames>=<button> ..."`
-replace them at build time. The palette is FCEUmm's own unless `PALETTE=<n>`
+replace them at build time, and `STATE=<n>` adds a save state round trip
+(see *Save states*). The palette is FCEUmm's own unless `PALETTE=<n>`
 picks one of the 23 presets of FCEUmm's libretro driver, which
 `tools/gen_fceumm_palettes.py` generates into the build directory from the
 fetched `src/drivers/libretro/libretro.c`, so no GPL table is committed here;

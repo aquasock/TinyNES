@@ -1646,3 +1646,37 @@ The SoC testbench needs repairing before it can check anything again: its recipe
 - User Test: PASS
 
 ---
+
+## 48 COMMIT Unreleased 2026-10-22T19:17:44-07:00
+
+#### Coming From:
+
+Unreleased f1891b1
+
+#### Purpose:
+
+Give the NES player save states, as the user approved: prove FCEUmm's state round-trips exactly on the PC and the A25, then save and load one quick slot from the controller, with a loaded state's battery RAM winning over the battery save.
+
+#### Outcome:
+
+FCEUmm already serialises the whole machine through `FCEUSS_Save_Mem` and `FCEUSS_Load_Mem` in `src/state.c`, which libretro's `retro_serialize` only wraps, so `firmware/apps/nes_bench/main.cpp` calls them directly: a slot is measured once by saving into a 1 MiB probe, as the libretro driver does, and allocated at the state's length. The benchmark gained `STATE=<n>` (Makefile), which saves before frame `n`, loads the state when the run ends and plays the frames after it again with the same script, reporting `TinyNES NES STATE AT=... BYTES=... SAVE=... LOAD=... VIDEO=<run>/<replay> AUDIO=<run>/<replay> MATCH` and failing otherwise. On the PC, Castlevania (USA) (Rev A) and The Legend of Zelda (USA) (Rev 1) matched from frames 300, 900 and 1500, while Kirby's Adventure (USA) (Rev 1) matched its picture but not its sound from 300 and 1500; a temporary per-frame comparison, since removed, showed the sound wrong for 36 and 26 frames after the load, from the eighth sample of the first frame with every sample count right, and `src/sound.c`'s state list turned out to omit `DMCDMABuf`, `sweepReload[2]` and the envelopes' `reloaddec`. Patch `patches/fceumm/0009-state-apu-latches.patch` saves them, after which all nine runs match, the states being 22,015, 22,043 and 13,876 bytes; the benchmark's own checksums stay `VIDEO=f2160661 AUDIO=4512be2f`, `tools/accuracycoin.py --expect` is unchanged at 90 of 146, and `tools/fetch_fceumm.sh` accepts the checkout as the pinned commit plus nine patches. The plain benchmark first failed to build because the new helpers were unused under `-Werror`; they are now compiled only into the builds that use them. On the board in two-wire mode, with `ae350_soc.bin` `50dc3754` unchanged, the A25 benchmark at `STATE=900` ran at 183.2 percent and matched with the PC's checksums, a save taking 974 us and a load 1,096 us. The `PLAY=1` player keeps one slot in the SDRAM: HOME with R saves and HOME with L loads, once a press and only while TinyDesk is not shown, neither being a tap of HOME in `desk_link.sv`, and it reports `TinyNES NES STATE SLOT=<bytes>` and each `SAVE OK`, `LOAD OK` or `LOAD EMPTY` with the frame and the time. The battery RAM is part of the state, so a loaded state's RAM is what the existing exit path writes back, which is the user's choice that the state wins, with no further code. `tools/deploy_tinytang.sh` installed the stripped player `4570463dc86c9b82377e8f7b72801265914b4a7403a2b29d34cb3346adac836b`, 874,036 bytes; in Castlevania (USA) (Rev 1) from the Library the user pressed HOME and L before saving, which logged `LOAD EMPTY`, saved once at frame 2538 in 926 us and loaded four times in about 1,070 us each, and the session ran 4,210 frames at 180.3 percent with `LATE=0`, `MISSED=0`, no audio underrun or drop and exit 0, the launch task again leaving 5,400 bytes of stack. The user reported that saves and loads work and passed the cycle; a later comment-only change to `main.cpp` leaves the stripped player byte-identical. The README gained a *Save states* section and describes patch 0009, `patches/fceumm/README.md` no longer says every patch is an accuracy fix, and `.ai/core-reference.md` gained EMU-009. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, checked that the reference's records and fast index list the same 173 ids, and validated this entry as number 48 of 100 with exactly six sections and allowed Status values.
+
+#### Next Steps:
+
+Part 3 of the approved plan is next, across TinyNES and TinyTang: the player sends its slot to TinyTang at exit, as the battery save goes, and TinyTang keeps it as `/root/states/<game>` and offers to resume from it in the Library, sending it back after the cartridge for the player to load before the first frame, with the TinyNES window's Saves page listing and deleting states. The state should then carry a small header of its own, the core's commit and patch series and the cartridge's CRC, so a state from another build or game is refused rather than loaded. The paced hex path that carries the battery save would take several seconds for a 22 KB state, which is acceptable at exit, and a binary path is the improvement after that. The SoC testbench repair of entry 47 and the older items stand.
+
+#### Files Modified:
+
+- README.md
+- firmware/apps/nes_bench/Makefile
+- firmware/apps/nes_bench/main.cpp
+- patches/fceumm/0009-state-apu-latches.patch
+- patches/fceumm/README.md
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

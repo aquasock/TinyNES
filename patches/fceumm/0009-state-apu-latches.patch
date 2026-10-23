@@ -1,0 +1,40 @@
+Subject: Save the DMC sample byte, sweep reload and envelope restart flags in a state
+
+A save-state fix, not an accuracy one: it changes nothing while a game runs.
+FCEUSND_STATEINFO left out DMCDMABuf, the byte the DMC has fetched and not yet
+shifted, sweepReload[] and each envelope's reloaddec, so a load kept whatever
+the running game had in them. With nes_bench STATE=<n>, which saves a state,
+loads it at the end of the run and plays the same frames again, Kirby's
+Adventure (USA) (Rev 1) replayed the picture exactly but its sound differed
+for 36 frames after a load at frame 300 and 26 after one at 1500, the samples
+wrong from the eighth of the first frame on and the counts right, which is a
+DMC level offset until the next $4011 write or sample. With these fields
+saved every frame matches, as Castlevania and Zelda already did, the
+benchmark's checksums are unchanged and AccuracyCoin is still 90 of 146.
+States grow by 55 bytes; older states load, the missing chunks keeping the
+running values as before.
+
+License: GPL-2.0-or-later, as the FCEUmm code it changes (patches/fceumm/README.md).
+
+---
+diff --git a/src/sound.c b/src/sound.c
+index 54c17dd..c931994 100644
+--- a/src/sound.c
++++ b/src/sound.c
+@@ -1431,6 +1431,16 @@ SFORMAT FCEUSND_STATEINFO[] = {
+ 	{ &sexyfilter2_acc, sizeof(sexyfilter2_acc) | FCEUSTATE_RLSB, "FAC3" },
+ 	{ &lq_tcout, sizeof(lq_tcout) | FCEUSTATE_RLSB, "TCOU"},
+ 
++	/* The DMC's fetched sample byte, the sweep units' reload flags and the
++	 * envelopes' restart flags are live state too: without them a load
++	 * plays a wrong DMC byte, which offsets the DMC level until the next
++	 * $4011 write or sample, and can skip a sweep or envelope restart. */
++	{ &DMCDMABuf, 1, "5DMB" },
++	{ sweepReload, 2, "SWRL" },
++	{ &EnvUnits[0].reloaddec, sizeof(EnvUnits[0].reloaddec) | FCEUSTATE_RLSB, "E0RD" },
++	{ &EnvUnits[1].reloaddec, sizeof(EnvUnits[1].reloaddec) | FCEUSTATE_RLSB, "E1RD" },
++	{ &EnvUnits[2].reloaddec, sizeof(EnvUnits[2].reloaddec) | FCEUSTATE_RLSB, "E2RD" },
++
+ /* Historical note: this entry was excluded on big-endian hosts
+  * (2018-12-14, Wii state-load failures). The root causes are gone:
+  * FlipByteOrder's over-iteration no-op and ReadStateChunk's unchecked
