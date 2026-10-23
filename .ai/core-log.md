@@ -1779,3 +1779,35 @@ The user test is outstanding, on both cores: the colour bars starting at column 
 - User Test: NOT RUN
 
 ---
+
+## 52 COMMIT Unreleased 2026-10-23T14:26:27-07:00
+
+#### Coming From:
+
+Unreleased b5e1899
+
+#### Purpose:
+
+Make controller 1 work through 8BitDo's Retro Receiver for the NES/SNES Classic as well as with a Classic Controller plugged straight into Adafruit's adapter, as the user approved.
+
+#### Outcome:
+
+The receiver was read from TinyTang's console with `tangi2c` on its desktop core, the bus TinyNES uses (USB-A H13/G13 through the adapter): with a Wii Remote and Classic Controller paired to it, it identified as `00 00 a4 20 01 01`, accepted by the existing Classic check, but sent data format 3, eight bytes with the buttons in bytes 6 and 7, whatever `0xfe` said, reading `84 86 86 86 00 00 ff ff` at rest, `ff ef` with A held and `fb fe` with Start and Up held; a six-byte read would have taken its triggers, `00 00`, as every button held. The genuine Classic Controller read `0xfe` as `01`, switched to format 3 when `0x03` was written, reporting `03` in identity byte 4, and sent `80 83 7f 85 1a 11 ff ff`, `ff ef` with A held, the positions of its format-1 report `a0 1f 10 62 ff ff` at higher resolution. An Xbox Series controller cannot be used, the receiver's manual excluding it and BL616 Bluetooth having failed with it in TinyTang's records, and the user's Joy-Cons were flat. `fpga/ae350_soc/wii_pads.sv` now writes `0xfe = 0x03` after the wake-up and waits 20 ms, reads the six-byte identity from the top of a widened 64-bit read register, and polls eight bytes, packing each report into format 1's six bytes so DATA, DATA2, `pad0_held` and the AE350 software keep their layout; the genuine controller's rest report packs to exactly its format-1 bytes. The bench exposed a second fault: a clock-divider write's restart cut a transfer short and left a controller mid-byte holding SDA, which six-byte reads had only escaped by timing, so a restart now resets the sequencer and lets the transfer in flight finish with its STOP. `tests/wii_pads_tb.sv` models a Classic Controller that sends format 1 until told format 3 and the receiver, checks both packed reports and identities (pad 0 DATA `0x62101fa0`, DATA2 `0x0103fbff`; pad 1 `0x001021a1`, `0x0101fbff`), waits the wake-up's added 20 ms after the divider write, and passed; it failed on each of four planted faults, no `0xfe` write, a six-byte data read, buttons from the trigger bytes and the old cutting restart. An eight-seed sweep (`build/e52_fmt3`) was clean on all eight with no hold violation, `bus_clk` 76.14 to 87.03 MHz and `pix_clk` 86.78 to 93.25 MHz, and the default seed 6, 83.10 and 92.09 MHz, rebuilt through every gate (the AE350 hop present, 13 video block RAMs each on one clock, the pixel clock on SPINE16+SPINE25) to `ae350_soc.fs` `2a356060084bad434a19002e2187a00683fe44594f35809dabdf364eebdf9e99`, the sweep's seed-6 image byte for byte, and `ae350_soc.bin` `5cd4ab004f7af3c91d9cb34f6f5b5d44149c3bb3a12e1bf1922b958a8bf720f8`, 4,777,964 bytes, put at `/root/cores/console138k/tinynes.bin` with TinyTang's `tinytang_put.py` beside the unchanged player `0435d849`. The user started Castlevania from the TinyNES window with the Classic Controller in the adapter and with the Wii Remote and Classic Controller through the receiver, and passed both. Earlier that day the user had also played Castlevania on entry 51's image, started from the shell, with controls, play and F12 working and the exit freezing, which TinyTang's entry 23 records. The README describes the format-3 read, the packing and the restart. `.ai/core-reference.md` gains WII-004 and revises WII-001. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, found the reference's six YAML blocks parse with records and index in the same order but the index naming DEV-020, which has had no record since before this cycle, and validated this entry as number 52 of 100 with exactly six sections, prose in Purpose, Outcome and Next Steps, allowed Status values and only eligible paths in Files Modified.
+
+#### Next Steps:
+
+TinyGBC carries its own copy of `wii_pads.sv` and needs the same format-3 read and restart change in a cycle of its own before the receiver works there. Entry 51's checks that were not repeated remain open: the colour bars starting at column 0 and the desktop's left edge over a running game. DEV-020 needs its record written from entry 42's findings, or its index line removed. The older items stand: the SoC testbench repair of entry 47, the state's creation time waiting on TinyTang's RTC, now running on its desktop core, and a lost state send visible only on TinyTang's console.
+
+#### Files Modified:
+
+- README.md
+- fpga/ae350_soc/wii_pads.sv
+- tests/wii_pads_tb.sv
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

@@ -930,9 +930,16 @@ toward HDMI:       1 yellow SCL    7 green SDA
 toward USB-A:      6 red 3.3 V    12 3.3 V
 ```
 
-Each bus wakes a controller at I2C address `0x52` without encryption, reads
-its six-byte identity, then polls six data bytes from register `0x00`. A NACK
-or SCL held low for 1 ms marks it absent; it retries after 100 ms. The reset
+Each bus wakes a controller at I2C address `0x52` without encryption, selects
+data format 3 (`0x03` to `0xfe`), reads its six-byte identity, then polls
+eight data bytes from register `0x00` and packs them into format 1's six, so
+the registers below keep format 1's layout. Format 3 is what the NES and SNES
+Classic consoles use: a Classic Controller switches to it when told, and
+8BitDo's Retro Receiver for those consoles (a Wii Remote with a Classic
+Controller attached, or another Bluetooth pad, paired to it) sends nothing
+else. A NACK or SCL held low for 1 ms marks it absent; it retries after
+100 ms. A clock-divider write restarts the buses once any transfer in flight
+has finished, so no controller is left mid-byte. The reset
 clock is about 100 kHz on the 75 MHz bus. All registers are 32-bit accesses
 under the EXTS base `0xe8040000`:
 
@@ -946,8 +953,10 @@ under the EXTS base `0xe8040000`:
 | `0x018 + 0x10n` | read | Captured data bytes 4-5 in bits 15:0, identity bytes 4-5 in bits 31:16 |
 | `0x01c + 0x10n` | read | Identity bytes 0-3 |
 
-Pad n is numbered 0 to 3 in the register map. Classic Controller format 1
-has 15 active-low buttons in data bytes 4-5, two sticks and two triggers.
+Pad n is numbered 0 to 3 in the register map. The data registers hold
+Classic Controller format 1: 15 active-low buttons in data bytes 4-5, two
+sticks and two triggers, here packed from the format-3 report (the axes cut
+to format 1's 6 and 5 bits).
 `firmware/apps/pad_test/` prints decoded values whenever they change:
 
 ```sh
@@ -960,8 +969,10 @@ python3 tools/load_ae350.py build/firmware/apps/pad_test/pad_test.elf \
   --run-timeout 140 --expect 'TinyNES PAD OK'
 ```
 
-The testbench models two controllers and two empty sockets, checks identity,
-data bytes, clock stretching, unplug and retry, the writable clock divider,
+The testbench models two controllers and two empty sockets -- a Classic
+Controller that sends format 1 until told format 3, and the receiver, which
+sends only format 3 -- and checks identity, the packed data bytes of both,
+clock stretching, unplug and retry, the writable clock divider,
 and LINES reading 0 for a bus with no pull-ups and following it back up.
 `pad_test` prints LINES at the start and with each status line, which tells
 an open cable or an unpowered adapter (both lines 0 on USB-A) from a

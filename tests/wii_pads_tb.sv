@@ -3,8 +3,15 @@
 
 // A byte-level Wii extension on an open-drain bus. It checks the command
 // order and lets the test unplug and replug a controller during polling.
+// A Classic Controller sends data format 1 (6 bytes) until 0x03 is written to
+// 0xFE and format 3 (8 bytes) after, and reports the format in identity byte
+// 4; RECEIVER models 8BitDo's Retro Receiver, which sends format 3 whatever
+// 0xFE says and reports 01. Both send the bytes measured on the board. A
+// master that reads the wrong count fails the ACK/NACK check on the last
+// byte.
 module wii_classic_model #(
-    parameter integer INDEX = 0
+    parameter integer INDEX = 0,
+    parameter bit RECEIVER = 1'b0
 ) (
     input wire clk,
     input wire attached,
@@ -18,6 +25,9 @@ module wii_classic_model #(
 );
     reg woke_f0 = 1'b0, woke_fb = 1'b0;
     reg [7:0] pointer = 8'hff;
+    reg [7:0] format = 8'h01;      // 0xFE, back to 1 at power-up
+    wire fmt3 = RECEIVER || format == 8'h03;
+    integer nbytes;
     reg [7:0] byte_in;
     reg ack_in;
     integer i;
@@ -51,8 +61,23 @@ module wii_classic_model #(
                 1: read_byte = 8'h00;
                 2: read_byte = 8'ha4;
                 3: read_byte = 8'h20;
-                4: read_byte = 8'h01;
+                4: read_byte = RECEIVER ? 8'h01 : format;
                 default: read_byte = 8'h01;
+            endcase
+        else if (fmt3)
+            // LX RX LY RY LT RT, then the buttons with Up held: the
+            // receiver's and a Classic Controller's reports as read on the
+            // board, and the latter's format-1 report below packs to
+            // a0 1f 10 62.
+            case (index)
+                0: read_byte = RECEIVER ? 8'h84 : 8'h80;
+                1: read_byte = RECEIVER ? 8'h86 : 8'h83;
+                2: read_byte = RECEIVER ? 8'h86 : 8'h7f;
+                3: read_byte = RECEIVER ? 8'h86 : 8'h85;
+                4: read_byte = RECEIVER ? 8'h00 : 8'h1a;
+                5: read_byte = RECEIVER ? 8'h00 : 8'h11;
+                6: read_byte = 8'hff;
+                default: read_byte = 8'hfb;
             endcase
         else
             case (index)
@@ -89,9 +114,13 @@ module wii_classic_model #(
                 if (byte_in == 8'ha4) begin
                     receive_byte(byte_in, 1'b1);
                     pointer = byte_in;
-                    if (pointer == 8'hf0 || pointer == 8'hfb) begin
+                    if (pointer == 8'hf0 || pointer == 8'hfb || pointer == 8'hfe) begin
                         receive_byte(byte_in, 1'b1);
-                        if (pointer == 8'hf0) begin
+                        if (pointer == 8'hfe) begin
+                            if (!woke_fb)
+                                $fatal(1, "FE written before the wake");
+                            format = byte_in;
+                        end else if (pointer == 8'hf0) begin
                             if (byte_in != 8'h55)
                                 $fatal(1, "bad F0 wake value %02x", byte_in);
                             woke_f0 = 1'b1;
@@ -108,8 +137,9 @@ module wii_classic_model #(
                 end else if (byte_in == 8'ha5) begin
                     if (!woke_fb || (pointer != 8'hfa && pointer != 8'h00))
                         $fatal(1, "read before wake or pointer");
-                    for (i = 0; i < 6; i = i + 1)
-                        send_byte(read_byte(pointer, i), i == 5);
+                    nbytes = pointer == 8'h00 && fmt3 ? 8 : 6;
+                    for (i = 0; i < nbytes; i = i + 1)
+                        send_byte(read_byte(pointer, i), i == nbytes - 1);
                     if (pointer == 8'h00)
                         polls = polls + 1'b1;
                 end else begin
@@ -118,6 +148,7 @@ module wii_classic_model #(
             end else begin
                 woke_f0 = 1'b0;
                 woke_fb = 1'b0;
+                format = 8'h01;
             end
         end
     end
@@ -148,7 +179,7 @@ module wii_pads_tb;
     generate for (n = 0; n < 4; n = n + 1) begin : bus
         assign scl_in[n] = !(dead[n] || scl_low[n] || model_scl_low[n]);
         assign sda_in[n] = !(dead[n] || sda_low[n] || model_sda_low[n]);
-        wii_classic_model #(.INDEX(n)) controller (
+        wii_classic_model #(.INDEX(n), .RECEIVER(n == 1)) controller (
             .clk(clk), .attached(attached[n]),
             .scl(scl_in[n]), .sda(sda_in[n]),
             .scl_low(model_scl_low[n]), .sda_low(model_sda_low[n]),
@@ -227,8 +258,21 @@ module wii_pads_tb;
             $fatal(1, "pad 0 data not stored");
         read_reg(12'h014, value);
         read_reg(12'h018, data2);
-        if (value != 32'h23222120 || data2[15:0] != 16'hfbff || data2[31:16] != 16'h0101)
+        // Pad 0 is a Classic Controller put in format 3: its report packs to
+        // the format-1 bytes it sent before, and its identity says 03.
+        if (value != 32'h62101fa0 || data2[15:0] != 16'hfbff || data2[31:16] != 16'h0103)
             $fatal(1, "sample mismatch: DATA=%08x DATA2=%08x", value, data2);
+        // Pad 1 is the receiver: format 3 with identity byte 4 still 01.
+        timeout = 0;
+        status = 0;
+        while ((status & 32'h0000ff00) == 0 && timeout < 100000) begin
+            read_reg(12'h020, status);
+            timeout = timeout + 1;
+        end
+        read_reg(12'h024, value);
+        read_reg(12'h028, data2);
+        if (value != 32'h001021a1 || data2[15:0] != 16'hfbff || data2[31:16] != 16'h0101)
+            $fatal(1, "receiver mismatch: DATA=%08x DATA2=%08x", value, data2);
         read_reg(12'h01c, value);
         if (value != 32'h20a40000)
             $fatal(1, "identity mismatch: %08x", value);
@@ -267,7 +311,9 @@ module wii_pads_tb;
         read_reg(12'h004, value);
         if (value != 8)
             $fatal(1, "CTRL write failed: %08x", value);
-        repeat (70000) @(posedge clk);
+        // The restart waits 20 ms, then the wake takes 10 + 20 + 20 ms before
+        // the identity read (a microsecond is a clock here).
+        repeat (100000) @(posedge clk);
         read_reg(12'h010, status);
         if ((status & 3) != 3 || wakes[0] < 3)
             $fatal(1, "pad did not resume at new divider: %08x wakes=%0d", status, wakes[0]);

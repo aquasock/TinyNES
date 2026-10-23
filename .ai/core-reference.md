@@ -309,6 +309,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | How is a Wii Classic Controller initialized and read over I2C? | WII | WII-001 |
 | How is a controller wired to USB-A through Adafruit's adapter, and what voltage reaches the pin? | WII | WII-002, BRD-003 |
 | Which bit is which button in a Classic Controller's report? | WII | WII-003 |
+| Why is data format 3 read, and what does 8BitDo's Retro Receiver send? | WII | WII-004, WII-001 |
 | Which PMOD0 pins are used for four Wii extension buses? | PMOD | PMOD-007 |
 | Which PMOD1 pins carry the Pmod I2S2's DAC? | PMOD | PMOD-008 |
 | Which clocks and sample rates does the I2S2's CS4344 accept, and how does TinyNES clock it? | AUD | AUD-001 |
@@ -509,9 +510,10 @@ EMU-006: "FCEUI_Initialize clears FSettings, leaving the five APU channel volume
 EMU-007: "AccuracyCoin on FCEUmm ac0d00a under nes_bench: 84 of 146 with page 19 skipped, 83 with only its Misaligned OAM Behavior skipped, which hangs; TinyNES's seven patches and the Four Score turned off raise that to 90, the user saw 90 on the board, and the A25 benchmark slows from 10.93 to 11.08 ms a frame with identical checksums"
 EMU-008: "Zelda II's title screen polls $2002 about 1,900 times a frame and FCEUmm rebuilt a 256-entry palette table on each resulting partial-line render, so its intro took 17.45 ms a frame on the A25 (1,690 of 1,800 frames over 16.64 ms); patch 0008 rebuilds the table only when its 16 palette bytes change, giving 9.95 ms, and Castlevania's benchmark 9.03 ms, with identical checksums"
 EMU-009: "FCEUmm's state (FCEUSS_Save_Mem/Load_Mem) round-trips exactly once patch 0009 adds DMCDMABuf, sweepReload and the envelopes' reloaddec, without which Kirby's sound was wrong for up to 36 frames after a load; states are 14-22 KB, and on the A25 a save takes about 0.93-0.97 ms and a load 1.07-1.10 ms; one state per cartridge, HOME+L saves (and sends it to /root/states/nes/<cartridge>.state behind a 32-byte TNS1 header) and HOME+R loads, the card's state taken at launch without loading"
-WII-001: "Wii extensions use I2C address 0x52; write F0=55 then FB=00 to disable encryption, read six identity bytes at FA and six format-1 data bytes after setting pointer 00; NintendoExtensionCtrl waits 10 ms, 20 ms and 175 us at those steps and accepts Classic IDs 00/01 00 A4 20 00..03 01; buttons in bytes 4-5 are active low"
+WII-001: "Wii extensions use I2C address 0x52; write F0=55 then FB=00 to disable encryption, read six identity bytes at FA and six format-1 data bytes after setting pointer 00 (TinyNES now selects format 3 and reads eight, WII-004); NintendoExtensionCtrl waits 10 ms, 20 ms and 175 us at those steps and accepts Classic IDs 00/01 00 A4 20 00..03 01; buttons in bytes 4-5 are active low"
 WII-002: "Adafruit's Wii Nunchuck Breakout Adapter (4836) level-shifts SCL/SDA for 3-5 V with a 10K pull-up on each; fed from USB-A's 5 V VBUS its pull-ups divide against the dock's 15K pull-downs to about 3.0 V at the FPGA pin, which is how TinyNES's controller 1 is wired; the CYBERDECK HAT must not go on the 2x20 SDRAM headers"
 WII-003: "The Classic Controller's buttons are WiiBrew's layout, measured here: byte 4 bit 1 R, 2 Plus, 3 Home, 4 Minus, 5 L, 6 Down, 7 Right; byte 5 bit 0 Up, 1 Left, 2 ZR, 3 X, 4 A, 5 Y, 6 B, 7 ZL, active low; TinyGBC's record saying otherwise is mistaken"
+WII-004: "Data format 3 (FE=03) is LX RX LY RY LT RT a byte each, then the two button bytes in format 1's bit layout; a Classic Controller reads FE as 01, switches when 03 is written and reports it in identity byte 4; 8BitDo's Retro Receiver for the NES/SNES Classic identifies as 00 00 A4 20 01 01 and sends format 3 whatever FE says, so TinyNES selects format 3, reads eight bytes and packs them to format 1"
 AUD-001: "The CS4344 takes a 256x MCLK at 2 to 50 kHz (MCLK 0.512 to 50 MHz, 45 to 55 percent duty) in I2S, with MCLK, SCLK and LRCK synchronous but no phase set; TinyNES counts all three from the 75 MHz bus clock, MCLK 12.5 MHz, Fs 48,828.125 Hz, measured 48,827.968 Hz on the board"
 LORA-001: "The REYAX RYLR998 (UPC 612789267033) is a five-pin 3.3 V UART LoRa module, AT-command controlled, 820 to 960 MHz, -20 to +22 dBm out, -129 dBm sensitivity, 140 mA transmitting at +22 dBm; RYLR998_M4 has an I-PEX MHF4 connector instead of the built-in antenna; not fitted or tested here"
 ```
@@ -2905,12 +2907,12 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   status: VERIFIED
   verified_date: 2026-10-13
   statement: "Wii extension controllers use 7-bit I2C address 0x52. For unencrypted communication, write 0x55 to register 0xF0 and 0x00 to 0xFB; NintendoExtensionCtrl waits 10 ms after the first write and 20 ms after the second. Six bytes read after pointer 0xFA identify the controller: WiiBrew lists 00 00 A4 20 01 01 for Classic Controller and 01 00 A4 20 01 01 for Classic Controller Pro; NintendoExtensionCtrl also accepts identity byte 4 values 0x00 through 0x03 for a Classic. The default Classic data format is 0x01: six bytes read after setting pointer 0x00, with left-stick axes in 6 bits, right-stick axes and triggers in 5 bits and 15 active-low buttons in bytes 4 and 5. NintendoExtensionCtrl waits 175 microseconds after setting a read pointer before requesting data. Its example offers 400 kHz I2C as a fast mode, not a required rate."
-  consequence: "fpga/ae350_soc/wii_pads.sv uses the unencrypted wake-up, the library's Classic identity match and six-byte format, waits 200 microseconds after setting a pointer, and starts at about 100 kHz to tolerate the PMOD0 internal pull-ups. The 200-microsecond wait, 100-kHz default, 1-ms SCL timeout, polling interval and 100-ms retry are TinyNES implementation choices, not Wii protocol limits. One Classic Controller Pro was read successfully at the default rate; electrical rise time and other extension variants are not measured."
+  consequence: "fpga/ae350_soc/wii_pads.sv uses the unencrypted wake-up, the library's Classic identity match, waits 200 microseconds after setting a pointer, and starts at about 100 kHz to tolerate the PMOD0 internal pull-ups; since core-log entry 52 it also selects data format 3 and reads eight bytes, packing them into the six-byte format-1 layout its registers keep (WII-004). The 200-microsecond wait, 100-kHz default, 1-ms SCL timeout, polling interval and 100-ms retry are TinyNES implementation choices, not Wii protocol limits. One Classic Controller Pro was read successfully at the default rate; electrical rise time and other extension variants are not measured."
   sources:
     - "WiiBrew Wiimote/Extension Controllers, Registers / Initialization and Identification: https://www.wiibrew.org/wiki/Wiimote/Extension_Controllers"
     - "WiiBrew Wiimote/Extension Controllers/Classic Controller, Data Format 0x01: https://wiibrew.org/wiki/Wiimote/Extension_Controllers/Classic_Controller"
     - "dmadison/NintendoExtensionCtrl 2bec2355c85e5cae2d159182d1982e59de707ec0, src/internal/ExtensionController.cpp initialize and requestControlData, src/internal/NXC_Comms.h I2C_ConversionDelay, src/internal/ExtensionController.h I2C_Addr, src/internal/NXC_Identity.h decodeIdentity and examples/Any/SpeedTest/SpeedTest.ino"
-  verification: "The cited WiiBrew records and exact library commit were read on 2026-10-12. tests/wii_pads_tb.sv models the transactions and passed. Revised 2026-10-13 (core-log entry 16): on this board the unencrypted initialization returned Classic Controller Pro ID 01 00 A4 20 01 01 and PAD1 reported changing active-low buttons, both sticks and both triggers at the default 100-kHz setting, with zero PAD1 failures; the user confirmed the values matched the controller actions."
+  verification: "The cited WiiBrew records and exact library commit were read on 2026-10-12. tests/wii_pads_tb.sv models the transactions and passed. Revised 2026-10-13 (core-log entry 16): on this board the unencrypted initialization returned Classic Controller Pro ID 01 00 A4 20 01 01 and PAD1 reported changing active-low buttons, both sticks and both triggers at the default 100-kHz setting, with zero PAD1 failures; the user confirmed the values matched the controller actions. Revised 2026-10-23 (core-log entry 52): the master selects format 3 after the wake-up and reads eight bytes (WII-004)."
 
 - record_id: WII-002
   kind: EXTERNAL
@@ -2939,6 +2941,20 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "TinyGBC, .ai/core-reference.md record WII-003 at 9a5701f, from its core-log entry 13"
     - "This project's firmware/apps/pad_test/main.c and its board run in core-log entry 47"
   verification: "Measured on this board on 2026-10-22 (core-log entry 47): with pad_test running, the user pressed A, B, X, Y, L, R, ZL, ZR, Minus, Home, Plus, the D-pad and the left stick in order, and each press reported exactly the expected button alone; the stick reached LY 58 and 8 and LX 6 and 53 from a centre of 32 and 31. The WiiBrew table was read the same day and matches bit for bit."
+
+- record_id: WII-004
+  kind: EXTERNAL
+  topic_id: WII
+  title: "Data format 3, and 8BitDo's Retro Receiver for the NES/SNES Classic"
+  status: VERIFIED
+  verified_date: 2026-10-23
+  statement: "Register 0xFE selects a Wii extension's data format. Measured on this board through Adafruit's adapter, a Classic Controller (identity 00 00 A4 20 01 01) reads 0xFE as 01 and sends six format-1 bytes; after 0x03 is written there it reads 03, reports 03 in identity byte 4 (00 00 A4 20 03 01) and sends eight bytes: LX, RX, LY, RY, LT and RT a full byte each, then the two button bytes with format 1's bit layout (WII-003), so A held clears bit 4 of the last byte. At rest the same controller sent a0 1f 10 62 ff ff in format 1 and 80 83 7f 85 1a 11 ff ff in format 3, the same positions at higher resolution. 8BitDo's Retro Receiver for the NES/SNES Classic plugs into the Wii extension connector, draws its power there (its micro-USB is for its Windows mode), and pairs a Bluetooth controller to itself: by its manual 8BitDo pads, the Switch Pro Controller, DualSense, DualShock 4, DualShock 3 (first pairing through a PC), the Xbox One controller and Elite Series 2 (the Xbox Series X|S controller is not supported), a Wii Remote alone or with a Classic Controller attached, the Wii U Pro Controller and one Joy-Con. With a Wii Remote and Classic Controller paired to it, it identified as 00 00 A4 20 01 01, read 0xFE as 01 before and after 0x01 or 0x03 was written, and sent the eight-byte format-3 report regardless: 84 86 86 86 00 00 ff ff at rest, ff ef with A held and fb fe with Start and Up held."
+  consequence: "A master reading six bytes takes the receiver's triggers, 00 00, as its buttons, every one held. fpga/ae350_soc/wii_pads.sv therefore writes 0x03 to 0xFE after the wake-up and waits 20 ms, reads the identity, and polls eight bytes, packing each report into format 1's six: byte 0 RX[7:6] LX[7:2], byte 1 RX[5:4] LY[7:2], byte 2 RX[3] LT[7:6] RY[7:3], byte 3 LT[5:3] RT[7:3], bytes 4 and 5 the buttons; the Classic Controller's format-3 rest report packs to exactly the format-1 bytes it sent before 0xFE was written. DATA, DATA2, pad0_held and the AE350 software keep format 1's layout, and the identity check accepts both identities. The 20 ms after the format write is this project's choice. A clock-divider write now restarts the sequencer only and lets a transfer in flight finish, because a transfer cut short leaves the controller mid-byte holding SDA."
+  sources:
+    - "8BitDo, Retro Receiver for NES/SNES/SFC Classic instruction manual (NES_SNES_SFC_Classic_Receiver_Manual.pdf, read 2026-10-23)"
+    - "Reads through TinyTang's tangi2c on its desktop core (desktop ABI 1.5, TinyTang core-log entry 23), 2026-10-23"
+    - "This project's fpga/ae350_soc/wii_pads.sv and tests/wii_pads_tb.sv"
+  verification: "Measured on this board on 2026-10-23 with tangi2c, one press at a time on both setups (core-log entry 52). tests/wii_pads_tb.sv models a Classic Controller that sends format 1 until told format 3 and the receiver, checks both packed reports and identities, and failed on each of four planted faults: no 0xFE write, a six-byte data read, the buttons taken from the trigger bytes, and a restart that cuts a transfer short. On the board the user played Castlevania with each setup, the Classic Controller in the adapter and a Wii Remote with the Classic Controller through the receiver, and passed both."
 
 - record_id: AUD-001
   kind: EXTERNAL
@@ -3012,7 +3028,7 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - A `core-syntax.md` audit is required whenever this file changes, per `.ai/core.md`.
 
 ```yaml
-last_reviewed: 2026-10-14
+last_reviewed: 2026-10-23
 ```
 
 ---

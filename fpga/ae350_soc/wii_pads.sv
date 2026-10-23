@@ -6,9 +6,19 @@
 //
 //   wakes the controller unencrypted: writes 0x55 to register 0xF0, waits
 //   10 ms, writes 0x00 to 0xFB and waits 20 ms;
+//   selects data format 3 by writing 0x03 to 0xFE, and waits 20 ms;
 //   reads the 6-byte identity at 0xFA;
 //   then, about once a millisecond, sets the register pointer to 0x00, waits
-//   CONVERT_US and reads the 6 data bytes.
+//   CONVERT_US and reads the 8 data bytes.
+//
+// Format 3 is the one the NES and SNES Classic consoles select: LX, RX, LY,
+// RY, LT and RT a full byte each, then the two button bytes. A Classic
+// Controller switches to it when told; 8BitDo's Retro Receiver for the
+// NES/SNES Classic sends nothing else, whatever 0xFE says. So every controller
+// is put in format 3, and the master packs each report back into format 1's
+// six bytes (the axes cut to 6 and 5 bits in their format-1 places, the
+// buttons as they are), so everything that reads DATA, DATA2 or pad0_held
+// sees the layout it always has.
 //
 // The controller is at I2C address 0x52. A byte it does not acknowledge, or a
 // clock line held low for 1 ms, marks the controller absent; the master waits
@@ -198,7 +208,8 @@ module wii_pad_master #(
 
     // ---------------------------------------------------- transfer layer --
     // go starts one transfer: START, the address byte (read when rd), then
-    // len bytes written from wbytes or 6 bytes read into rbytes, then STOP.
+    // len bytes written from wbytes or rlen bytes read into rbytes (the last
+    // one in 63:56), then STOP.
     // done pulses at the end, with nack set if a byte was not acknowledged
     // or SCL stayed low for 1 ms.
     localparam [3:0] T_IDLE = 4'd0, T_START0 = 4'd1, T_START1 = 4'd2, T_START2 = 4'd3,
@@ -208,14 +219,15 @@ module wii_pad_master #(
     reg go = 1'b0, rd = 1'b0;
     reg [1:0] len = 2'd0;          // bytes written after the address
     reg [15:0] wbytes = 16'd0;     // first in 15:8
-    reg [47:0] rbytes = 48'd0;
+    reg [3:0] rlen = 4'd6;         // bytes read: 6 identity, 8 data
+    reg [63:0] rbytes = 64'd0;
     reg done = 1'b0, nack = 1'b0;
     reg [11:0] qcount = 12'd0;
     reg [9:0] stretch_us = 10'd0;
     reg [7:0] shift = 8'd0;
     reg [3:0] bitn = 4'd0;         // 8 = the acknowledge bit
-    reg [2:0] byten = 3'd0;        // 0 = address
-    wire last_byte = rd ? byten == 3'd6 : byten == {1'b0, len};
+    reg [3:0] byten = 4'd0;        // 0 = address
+    wire last_byte = rd ? byten == rlen : byten == {2'b0, len};
     wire q_end = qcount == quarter;
 
     always @(posedge clk or negedge resetn) begin
@@ -236,16 +248,15 @@ module wii_pad_master #(
             us_div <= us_tick ? 8'd0 : us_div + 1'b1;
             done <= 1'b0;
             qcount <= q_end ? 12'd0 : qcount + 1'b1;
-            if (restart) begin
-                t <= T_IDLE;
-                scl_low <= 1'b0;
-                sda_low <= 1'b0;
-            end else case (t)
+            // A restart is the sequencer's alone: a transfer in flight runs
+            // to its STOP, because one cut short leaves the controller
+            // mid-byte and holding SDA, out of step with the next START.
+            case (t)
                 T_IDLE: begin
                     qcount <= 12'd0;
                     if (go) begin
                         nack <= 1'b0;
-                        byten <= 3'd0;
+                        byten <= 4'd0;
                         bitn <= 4'd0;
                         shift <= rd ? ADDR_R : ADDR_W;
                         scl_low <= 1'b0;
@@ -281,8 +292,8 @@ module wii_pad_master #(
                     if (bitn == 4'd8)
                         // Acknowledge: we drive it after a read byte that is
                         // not the last; otherwise SDA is the controller's.
-                        sda_low <= rd && byten != 3'd0 && !last_byte;
-                    else if (rd && byten != 3'd0)
+                        sda_low <= rd && byten != 4'd0 && !last_byte;
+                    else if (rd && byten != 4'd0)
                         sda_low <= 1'b0;
                     else
                         sda_low <= !shift[7];
@@ -307,7 +318,7 @@ module wii_pad_master #(
                 T_BIT2:
                     if (q_end) begin
                         if (bitn == 4'd8) begin
-                            if (!(rd && byten != 3'd0) && sda)
+                            if (!(rd && byten != 4'd0) && sda)
                                 nack <= 1'b1;
                         end else begin
                             shift <= {shift[6:0], sda};
@@ -322,14 +333,14 @@ module wii_pad_master #(
                             t <= T_BIT0;
                         end else begin
                             bitn <= 4'd0;
-                            if (rd && byten != 3'd0)
-                                rbytes <= {shift, rbytes[47:8]};
+                            if (rd && byten != 4'd0)
+                                rbytes <= {shift, rbytes[63:8]};
                             if (nack || last_byte) begin
                                 sda_low <= 1'b1;
                                 t <= T_STOP0;
                             end else begin
                                 byten <= byten + 1'b1;
-                                shift <= rd ? 8'h00 : (byten == 3'd0 ? wbytes[15:8] : wbytes[7:0]);
+                                shift <= rd ? 8'h00 : (byten == 4'd0 ? wbytes[15:8] : wbytes[7:0]);
                                 t <= T_BIT0;
                             end
                         end
@@ -372,12 +383,27 @@ module wii_pad_master #(
 
     // --------------------------------------------------------- sequencer --
     localparam [3:0] Q_WAIT = 4'd0, Q_WAKE1 = 4'd1, Q_WAKE2 = 4'd2, Q_IDPTR = 4'd3,
-                     Q_IDREAD = 4'd4, Q_PTR = 4'd5, Q_READ = 4'd6, Q_BUSY = 4'd7;
+                     Q_IDREAD = 4'd4, Q_PTR = 4'd5, Q_READ = 4'd6, Q_BUSY = 4'd7,
+                     Q_FORMAT = 4'd8;
     reg [3:0] q = Q_WAIT, q_next = Q_WAKE1;
     reg [16:0] wait_us = 17'd20000;   // the first wake 20 ms after reset
     reg [16:0] after_us = 17'd0;      // the wait after the transfer in flight
     // The read in flight is the identity until the first data read.
     reg ident_pending = 1'b1;
+
+    // The identity is the 6 bytes a 6-byte read leaves at the top of rbytes.
+    wire [47:0] id_bytes = rbytes[63:16];
+    // A format-3 report, byte 0 in 7:0, packed into format 1's six bytes:
+    // byte 0 RX[4:3] LX[5:0], byte 1 RX[2:1] LY[5:0], byte 2 RX[0] LT[4:3]
+    // RY[4:0], byte 3 LT[2:0] RT[4:0], bytes 4 and 5 the buttons, each 6-bit
+    // axis the top of its byte and each 5-bit one likewise.
+    wire [7:0] lx = rbytes[7:0],   rx = rbytes[15:8],  ly = rbytes[23:16];
+    wire [7:0] ry = rbytes[31:24], lt = rbytes[39:32], rt = rbytes[47:40];
+    wire [47:0] format1 = {rbytes[63:56], rbytes[55:48],
+                           lt[5:3], rt[7:3],
+                           rx[3], lt[7:6], ry[7:3],
+                           rx[5:4], ly[7:2],
+                           rx[7:6], lx[7:2]};
 
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
@@ -413,6 +439,11 @@ module wii_pad_master #(
                 end
                 Q_WAKE2: begin
                     rd <= 1'b0; len <= 2'd2; wbytes <= 16'hFB00;
+                    after_us <= 17'd20000; q_next <= Q_FORMAT;
+                    go <= 1'b1; q <= Q_BUSY;
+                end
+                Q_FORMAT: begin
+                    rd <= 1'b0; len <= 2'd2; wbytes <= 16'hFE03;
                     after_us <= 17'd20000; q_next <= Q_IDPTR;
                     go <= 1'b1; q <= Q_BUSY;
                 end
@@ -422,7 +453,7 @@ module wii_pad_master #(
                     go <= 1'b1; q <= Q_BUSY;
                 end
                 Q_IDREAD: begin
-                    rd <= 1'b1;
+                    rd <= 1'b1; rlen <= 4'd6;
                     after_us <= 17'd1000; q_next <= Q_PTR;
                     go <= 1'b1; q <= Q_BUSY;
                 end
@@ -432,7 +463,7 @@ module wii_pad_master #(
                     go <= 1'b1; q <= Q_BUSY;
                 end
                 Q_READ: begin
-                    rd <= 1'b1;
+                    rd <= 1'b1; rlen <= 4'd8;
                     after_us <= 17'd1000; q_next <= Q_PTR;
                     go <= 1'b1; q <= Q_BUSY;
                 end
@@ -448,14 +479,14 @@ module wii_pad_master #(
                             wait_us <= after_us;
                             if (q_next == Q_PTR && rd) begin
                                 if (ident_pending) begin
-                                    ident <= rbytes;
+                                    ident <= id_bytes;
                                     // 0x0[01] 0x00 0xA4 0x20 0x0[0-3] 0x01
-                                    classic <= rbytes[7:1] == 7'd0 && rbytes[15:8] == 8'h00 &&
-                                               rbytes[23:16] == 8'hA4 && rbytes[31:24] == 8'h20 &&
-                                               rbytes[39:34] == 6'd0 && rbytes[47:40] == 8'h01;
+                                    classic <= id_bytes[7:1] == 7'd0 && id_bytes[15:8] == 8'h00 &&
+                                               id_bytes[23:16] == 8'hA4 && id_bytes[31:24] == 8'h20 &&
+                                               id_bytes[39:34] == 6'd0 && id_bytes[47:40] == 8'h01;
                                     present <= 1'b1;
                                 end else begin
-                                    data <= rbytes;
+                                    data <= format1;
                                     reads <= reads + 1'b1;
                                 end
                             end
