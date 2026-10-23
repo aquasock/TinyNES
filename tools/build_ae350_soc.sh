@@ -31,8 +31,14 @@ family=GW5AST-138C
 # pixel-clock holds while 8 of 16 were still clean; seed 11 is that sweep's
 # pick by the same rule -- 85.03 MHz on bus_clk and 85.24 on pix_clk against
 # 75 and 74.25, with the fewest pixel-clock pins off the global network (2)
-# and the shortest pixel-clock route (482 pips) of any seed.
-seed="${TINY_NES_SEED:-11}"
+# and the shortest pixel-clock route (482 pips) of any seed.  The HDMI
+# transmitter and its audio handoff moved it again: in the eight-seed sweep of
+# 2026-10-21 with pix_clk routed first, 7 of 8 were clean, and seed 8 -- 79.38
+# MHz on bus_clk and 92.15 on pix_clk, the pixel clock on SPINE16+SPINE25 --
+# is the image the board was tested on (core-log entry 42).  The default must
+# stay the seed that was tested, since tools/deploy_tinytang.sh takes this
+# build's image unless told otherwise.
+seed="${TINY_NES_SEED:-8}"
 
 [[ -f "$suite/environment" ]] || { echo "missing open toolchain: $suite" >&2; exit 2; }
 # shellcheck disable=SC1090

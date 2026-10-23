@@ -202,12 +202,14 @@ in two-wire mode:
 bash tools/build_ae350_soc.sh
 ```
 
-The SoC build uses nextpnr seed 11 by default: the pixel-aspect register and
-its column picker moved the placement, leaving seed 10 with four pixel-clock
-hold violations, and of the 8 clean seeds in a 16-seed sweep this one had the
-best margin on both clocks together, 85.03 MHz on the bus and 85.24 MHz on
-the pixel clock against 75 and 74.25, with the fewest pixel-clock pins off
-the global network. Set `TINY_NES_SEED=N` to evaluate another placement.
+The SoC build uses nextpnr seed 8 by default, the placement the board runs:
+with the HDMI transmitter and its audio handoff in, 7 of 8 seeds were clean in
+a sweep with the pixel clock routed first, and seed 8, at 79.38 MHz on the bus
+and 92.15 MHz on the pixel clock against 75 and 74.25, with the pixel clock on
+SPINE16+SPINE25, is the image that was tested on the board. The default has
+to stay the tested seed, because `tools/deploy_tinytang.sh` takes this build's
+image unless given another. Set `TINY_NES_SEED=N` to evaluate another
+placement.
 
 The build needs the forks of nextpnr and Apicula on their `epic/gw5ast138c`
 branches, which add a timing model for the AE350's AHB ports, measured from

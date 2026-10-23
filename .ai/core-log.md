@@ -1577,3 +1577,34 @@ The seed mismatch is a live hazard rather than a one-off: a plain `tools/deploy_
 - User Test: PASS
 
 ---
+
+## 46 COMMIT Unreleased 2026-10-22T17:51:09-07:00
+
+#### Coming From:
+
+Unreleased f059fd8
+
+#### Purpose:
+
+Make the SoC build's default seed the placement the board was tested on, so a plain `tools/deploy_tinytang.sh` can no longer put an untested image on the card, as entry 45 asked and the user approved as step 1 of the proposed plan.
+
+#### Outcome:
+
+`tools/build_ae350_soc.sh` now defaults `TINY_NES_SEED` to 8 instead of 11, and its comment and the README's build paragraph give the reason: seed 8 of entry 42's eight-seed sweep, 7 of 8 clean with the pixel clock routed first, at 79.38 MHz on `bus_clk` and 92.15 MHz on `pix_clk` with the pixel clock on SPINE16+SPINE25, is the image the board runs, and the default must stay the tested seed because the deploy takes this build's image unless given another. The seed-11 default had been chosen in entry 34, before the HDMI transmitter of entry 41 moved the placement, and the local `build/ae350_soc/ae350_soc.bin` it produced, SHA-256 `69195778a66d006eda79432051d0ef8d523c7985eeb4077b4a7c61105111e1f4`, was never on hardware. A plain `tools/build_ae350_soc.sh` at the new default passed every check and reproduced entry 42's sweep output byte for byte, `ae350_soc.bin` SHA-256 `188d6a961d75e47ccf537b731746d669c5a96e80f7d3857efd53bb7843475723` and `ae350_soc.fs` `24c8892497f8c5c28111cfc14c4c7a006db21397ea56ec3ca1ccca0acc700aa3`, with the AE350 dedicated clock hop present and 13 video block RAMs each on one clock. `tools/deploy_tinytang.sh`, run by the agent in two-wire mode with no argument, which before this cycle would have installed the seed-11 image, put that image on the card as `/root/cores/console138k/tinynes.bin` beside the unchanged stripped player `961d8ecfa5b348d1e08c585150e41e40d904d71529a315a82b9795ba6a963e00` at 868,224 bytes, and `tangload` loaded it without error, so the card's contents are what they were. The user started a game from the TinyNES window's Library tab and reported that it plays fine. The second half of entry 45's remedy, a deploy that refuses an image not on a list of board-tested digests, was proposed and not taken, by the user's choice of step 1 alone. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry as number 46 of 100 with exactly six sections and allowed Status values.
+
+#### Next Steps:
+
+Any future change to the SoC image must move the build's default seed to the newly tested placement in the same cycle, since the deploy has no guard of its own and trusts that default. The remaining open work is unchanged from entry 45: the Library launch task's stack margin, a `.zip` opened in Files still going to the Editor, the boot test of every cartridge that entry 37 holds, the AccuracyCoin work of entry 37, the authentic-NES list of entry 36, and TinyDesk's 47-byte name and 63-file folder limits.
+
+#### Files Modified:
+
+- README.md
+- tools/build_ae350_soc.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
