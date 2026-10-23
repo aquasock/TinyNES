@@ -39,9 +39,13 @@ family=GW5AST-138C
 # first bus to USB-A port 2 moved it once more: on 2026-10-22 all 8 seeds were
 # clean with the pixel clock on SPINE16+SPINE25, and seed 1 has the best
 # margin on both clocks together, 87.17 MHz on bus_clk and 85.46 on pix_clk
-# (core-log entry 47).  The default must stay the seed that was tested, since
-# tools/deploy_tinytang.sh takes this build's image unless told otherwise.
-seed="${TINY_NES_SEED:-1}"
+# (core-log entry 47).  The video unit's four-pixel look-ahead moved it again:
+# later on 2026-10-22 all 8 seeds were clean, and seed 6 has the best margin
+# on both clocks together, 91.06 MHz on each, the pixel clock on
+# SPINE16+SPINE25 (core-log entry 51).  The default must stay the seed that was
+# tested, since tools/deploy_tinytang.sh takes this build's image unless told
+# otherwise.
+seed="${TINY_NES_SEED:-6}"
 
 [[ -f "$suite/environment" ]] || { echo "missing open toolchain: $suite" >&2; exit 2; }
 # shellcheck disable=SC1090

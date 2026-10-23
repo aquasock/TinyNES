@@ -106,9 +106,9 @@ module video #(
 
     // The raster, from the HDMI transmitter that owns the timing.  Its frame
     // is 1650x750 with the same porches this unit used to count, so cx/cy are
-    // the hcnt/vcnt it generated for itself.  They are taken four clocks late,
-    // which is this unit's pipeline depth, so the colour it outputs lands in
-    // the cycle the transmitter is showing that pixel.
+    // the hcnt/vcnt it generated for itself.  They are taken four pixels ahead,
+    // this unit's pipeline depth, so the colour it outputs is the one the
+    // transmitter takes for the pixel it is showing.
     input  wire [10:0] cx,
     input  wire [9:0]  cy,
     output wire [23:0] rgb
@@ -393,21 +393,29 @@ module video #(
                        shown_aspect == 2'd2 ? PIC_4_3 : PIC_1_1;
     wire [10:0] x0 = (H_ACTIVE - pic_w) >> 1;
 
-    // Stage 0 addresses the raster four clocks behind the transmitter, so the
-    // colour that reaches it after the four stages below is the current pixel.
-    reg [10:0] cx1 = 11'd0, cx2 = 11'd0, cx3 = 11'd0, cx4 = 11'd0;
-    reg [9:0] cy1 = 10'd0, cy2 = 10'd0, cy3 = 10'd0, cy4 = 10'd0;
+    // Stage 0 is the raster position four pixels ahead of the transmitter's
+    // cx/cy, wrapping into the next line and the next frame as its counters
+    // do (PROT-009). hdl-util's transmitter takes the colour for cx one clock
+    // after it presents cx, and this register and the four stages below are
+    // five, so the position leads by four. Delaying cx instead, as this unit
+    // first did, put every pixel seven columns late and the last seven of
+    // each line on its left edge.
+    localparam integer LEAD = 4;
+    localparam [10:0] LEAD_WRAP = H_TOTAL - LEAD;
+    reg [10:0] hcnt = 11'd0;
+    reg [9:0] vcnt = 10'd0;
     always @(posedge pix_clk) begin
         if (pix_reset) begin
-            cx1 <= 11'd0; cx2 <= 11'd0; cx3 <= 11'd0; cx4 <= 11'd0;
-            cy1 <= 10'd0; cy2 <= 10'd0; cy3 <= 10'd0; cy4 <= 10'd0;
+            hcnt <= 11'd0;
+            vcnt <= 10'd0;
+        end else if (cx >= LEAD_WRAP) begin
+            hcnt <= cx - LEAD_WRAP;
+            vcnt <= cy == V_TOTAL - 1 ? 10'd0 : cy + 1'b1;
         end else begin
-            cx1 <= cx; cx2 <= cx1; cx3 <= cx2; cx4 <= cx3;
-            cy1 <= cy; cy2 <= cy1; cy3 <= cy2; cy4 <= cy3;
+            hcnt <= cx + LEAD;
+            vcnt <= cy;
         end
     end
-    wire [10:0] hcnt = cx4;
-    wire [9:0] vcnt = cy4;
     reg [11:0] cell_row = 12'd0;
     reg [7:0] nx = 8'd0, ny = 8'd0;   // the NES pixel at (hcnt, vcnt)
     reg [9:0] hacc = 10'd0;           // ...and how far into it the column is

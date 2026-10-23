@@ -202,12 +202,12 @@ in two-wire mode:
 bash tools/build_ae350_soc.sh
 ```
 
-The SoC build uses nextpnr seed 1 by default, the placement the board runs:
-with the pad's first bus on USB-A, all 8 seeds were clean in a sweep with the
-pixel clock routed first, and seed 1, at 87.17 MHz on the bus and 85.46 MHz
-on the pixel clock against 75 and 74.25, with the pixel clock on
-SPINE16+SPINE25, has the best margin on both clocks together and is the
-image that was tested on the board. The default has
+The SoC build uses nextpnr seed 6 by default, the placement deployed to the
+board: with the video unit's four-pixel look-ahead, all 8 seeds were clean in
+a sweep with the pixel clock routed first, and seed 6, at 91.06 MHz on both
+the bus and the pixel clock against 75 and 74.25, with the pixel clock on
+SPINE16+SPINE25, has the best margin on both clocks together (core-log entry
+51; its board test was still pending when that entry was written). The default has
 to stay the tested seed, because `tools/deploy_tinytang.sh` takes this build's
 image unless given another. Set `TINY_NES_SEED=N` to evaluate another
 placement.

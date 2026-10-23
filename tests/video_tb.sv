@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
 // The video unit on its own: registers and error responses over AHB, and
-// whole 1280x720 frames decoded from the TMDS words and compared, pixel by
-// pixel, with a model of the colour bars and of both frame buffers with
-// palette and emphasis. The frame buffers are a model of ahb_sdram's video
-// channel with a set latency. Also checks the sync timing, the buffer flip,
+// whole 1280x720 frames compared, pixel by pixel, with a model of the colour
+// bars and of both frame buffers with palette and emphasis. The raster is
+// driven as hdl-util's HDMI transmitter drives it, cx 0..1649 and cy 0..749
+// free-running, and the transmitter takes the colour for cx one clock after
+// it presents cx, so each RGB is checked against the pixel cx named a clock
+// earlier: a pipeline its look-ahead does not match puts every pixel in the
+// wrong column (PROT-009). The frame buffers are a model of ahb_sdram's video
+// channel with a set latency. Also checks the buffer flip,
 // the line fetch addresses and the LATE count when fetches are too slow,
 // and the desk layer: every cell of the 80x45 grid written through its
 // handshake and the whole frame compared with a model of the font, over the
@@ -27,7 +31,21 @@ module video_tb;
     reg [31:0] hwdata = 32'd0;
     wire [31:0] hrdata;
     wire hready, hresp;
-    wire [9:0] tmds_b, tmds_g, tmds_r;
+    // The raster, as the transmitter counts it, and the pixel the current
+    // RGB is for: cx and cy one clock ago.
+    reg [10:0] cx = 11'd0, px = 11'd0;
+    reg [9:0] cy = 10'd0, py = 10'd0;
+    wire [23:0] rgb;
+    always @(posedge pix_clk) begin
+        if (cx == 11'd1649) begin
+            cx <= 11'd0;
+            cy <= cy == 10'd749 ? 10'd0 : cy + 1'b1;
+        end else begin
+            cx <= cx + 1'b1;
+        end
+        px <= cx;
+        py <= cy;
+    end
     wire vstart;
     wire [24:8] vaddr;
     reg vvalid = 1'b0, vdone = 1'b0;
@@ -48,7 +66,7 @@ module video_tb;
         .layer_on(layer_on), .cell_valid(cell_valid), .cell_addr(cell_addr),
         .cell_data(cell_data), .cell_ready(cell_ready),
         .pix_clk(pix_clk), .pix_reset(pix_reset),
-        .tmds_blue(tmds_b), .tmds_green(tmds_g), .tmds_red(tmds_r)
+        .cx(cx), .cy(cy), .rgb(rgb)
     );
 
     integer errors = 0;
@@ -161,23 +179,15 @@ module video_tb;
     function [23:0] rgb15(input [14:0] c);
         rgb15 = {c[4:0], c[4:2], c[9:5], c[9:7], c[14:10], c[14:12]};
     endfunction
-    // Raster checks run from the first vertical sync (the encoders send zeros,
-    // which decode as data, in reset); picture checks while `checking`.
-    // These come before `expected` because that function reads them: a Verilog
-    // function may only see variables declared above it, and Icarus says so.
-    reg prev_de = 1'b0, prev_hs = 1'b0, prev_vs = 1'b0;
-    integer since_hs = -1, de_len = 0, lines = -1, de_lines = 0, vs_lines = 0;
-    integer bp_lines = 0, col = 0, row = 0;
-    reg seen_de_since_vs = 1'b0;
-    integer vs_edges = 0;
+    // Picture checks run while `checking`. These come before `expected`
+    // because that function reads them: a Verilog function may only see
+    // variables declared above it, and Icarus says so.
     reg checking = 1'b0, check_bars = 1'b0, check_buf = 1'b0, check_layer = 1'b0;
     integer mismatches = 0;
-    integer raster_errors = 0;
     // The aspect the picture check expects, as the unit's own register holds
     // it: 0 = 8:7, 1 = 1:1, 2 = 4:3.
     reg [1:0] check_aspect = 2'd1;
 
-    wire armed = vs_edges > 0;
     function [23:0] expected(input bars, input b, input [10:0] col, input [9:0] row);
         reg [7:0] nx, ny, p;
         reg [2:0] e, bar;
@@ -215,105 +225,23 @@ module video_tb;
         end
     endfunction
 
-    // ----------------------------------------------------- TMDS decoder --
-    function [10:0] tmds_decode(input [9:0] q); // {is_data, ctrl[1:0] or data}
-        reg [7:0] d, o;
-        integer k;
-        begin
-            case (q)
-                10'b1101010100: tmds_decode = {1'b0, 8'd0, 2'b00};
-                10'b0010101011: tmds_decode = {1'b0, 8'd0, 2'b01};
-                10'b0101010100: tmds_decode = {1'b0, 8'd0, 2'b10};
-                10'b1010101011: tmds_decode = {1'b0, 8'd0, 2'b11};
-                default: begin
-                    d = q[9] ? ~q[7:0] : q[7:0];
-                    o[0] = d[0];
-                    for (k = 1; k < 8; k = k + 1)
-                        o[k] = q[8] ? d[k] ^ d[k-1] : ~(d[k] ^ d[k-1]);
-                    tmds_decode = {1'b1, o, 2'b00};
-                end
-            endcase
-        end
-    endfunction
-
-    wire [10:0] db = tmds_decode(tmds_b), dg = tmds_decode(tmds_g), dr = tmds_decode(tmds_r);
-    wire de = db[10];
-    wire hs = !de && db[0];
-    wire vs = !de && db[1];
-    wire [23:0] rgb = {dr[9:2], dg[9:2], db[9:2]};
-
+    // Every visible pixel while checking, and the first line of vertical
+    // blank, which is where one frame ends and the next is chosen.
+    wire de = px < 11'd1280 && py < 10'd720;
+    wire frame_end = px == 11'd0 && py == 10'd720;
     always @(posedge pix_clk) if (!pix_reset) begin
-        if (since_hs >= 0)
-            since_hs <= since_hs + 1;
-        if (armed && de && (dr[10] !== 1'b1 || dg[10] !== 1'b1))
-            raster_errors <= raster_errors + 1;
-        if (hs && !prev_hs) begin
-            if (armed && since_hs != 1649) begin
-                if (raster_errors < 5) $display("hsync period %0d", since_hs + 1);
-                raster_errors <= raster_errors + 1;
-            end
-            since_hs <= 0;
-            lines <= lines + 1;
-            if (vs)
-                vs_lines <= vs_lines + 1;
-            if (!vs && !seen_de_since_vs && lines >= 0)
-                bp_lines <= bp_lines + 1;
-        end
-        if (armed && !hs && prev_hs && since_hs != 39) begin
-            if (raster_errors < 5) $display("hsync width %0d", since_hs + 1);
-            raster_errors <= raster_errors + 1;
-        end
-        if (de && !prev_de) begin
-            if (armed && since_hs != 259) begin
-                if (raster_errors < 5) $display("hsync to active %0d", since_hs + 1);
-                raster_errors <= raster_errors + 1;
-            end
-            de_len <= 1;
-            col <= 1;
-        end else if (de) begin
-            de_len <= de_len + 1;
-            col <= col + 1;
-        end
-        if (!de && prev_de) begin
-            if (armed && de_len != 1280) begin
-                if (raster_errors < 5) $display("active length %0d", de_len);
-                raster_errors <= raster_errors + 1;
-            end
-            de_lines <= de_lines + 1;
-            row <= row + 1;
-            seen_de_since_vs <= 1'b1;
-        end
-        if (de && checking && rgb !== expected(check_bars, check_buf, de && !prev_de ? 0 : col, row)) begin
+        if (de && checking && rgb !== expected(check_bars, check_buf, px, py)) begin
             if (mismatches < 5)
-                $display("pixel (%0d, %0d) %h, expected %h", de && !prev_de ? 0 : col, row, rgb,
-                         expected(check_bars, check_buf, de && !prev_de ? 0 : col, row));
+                $display("pixel (%0d, %0d) %h, expected %h", px, py, rgb,
+                         expected(check_bars, check_buf, px, py));
             mismatches <= mismatches + 1;
         end
-        if (vs && !prev_vs) begin
-            vs_edges <= vs_edges + 1;
-            if (lines >= 0 && vs_edges > 0) begin
-                if (lines != 750 || de_lines != 720 || vs_lines != 5 || bp_lines != 20) begin
-                    $display("frame: %0d lines, %0d active, %0d sync, %0d back porch",
-                             lines, de_lines, vs_lines, bp_lines);
-                    raster_errors <= raster_errors + 1;
-                end
-            end
-            lines <= 0;
-            de_lines <= 0;
-            vs_lines <= 0;
-            bp_lines <= 0;
-            row <= 0;
-            seen_de_since_vs <= 1'b0;
-        end
-        prev_de <= de;
-        prev_hs <= hs;
-        prev_vs <= vs;
     end
 
     task wait_vsync;
         begin
             @(posedge pix_clk);
-            while (!(vs && !prev_vs)) @(posedge pix_clk);
+            while (!frame_end) @(posedge pix_clk);
             @(posedge pix_clk);
         end
     endtask
@@ -519,7 +447,7 @@ module video_tb;
         wait_vsync;
         wait_vsync;
         @(posedge pix_clk);
-        while (!(de && !prev_de)) @(posedge pix_clk);
+        while (!(de && px == 11'd0)) @(posedge pix_clk);
         // The first line of cell 0 shows glyph 'A' row 0, 0x0c: columns 2
         // and 3 white, drawn at pixels 4 to 7.
         for (i = 0; i < 16; i = i + 1) begin
@@ -549,7 +477,6 @@ module video_tb;
         wr32(REGS + 32'h1c, 2'd1);
         check_aspect = 2'd1;
 
-        if (raster_errors != 0) fail("raster timing");
         if (errors == 0)
             $display("PASS video_tb");
         else

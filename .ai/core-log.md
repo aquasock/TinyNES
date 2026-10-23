@@ -1746,3 +1746,36 @@ The volume is taken when a game starts, so a change made over a running game wai
 - User Test: PASS
 
 ---
+
+## 51 COMMIT Unreleased 2026-10-22T22:39:29-07:00
+
+#### Coming From:
+
+Unreleased 0a1ba9e
+
+#### Purpose:
+
+Fix the wrap the user found at the left edge of the picture once a game core is loaded, about seven pixels of the line's far end shown at its start, seen on the colour bars and on the desktop drawn over a game, in TinyNES and TinyGBC alike.
+
+#### Outcome:
+
+The cause is the video unit's alignment with hdl-util's transmitter. `hdmi.sv` takes the colour for `cx` one clock after it presents `cx`, the contract PROT-009 records, and entry 41 instead had `video.sv` delay `cx`/`cy` by four clocks before its four-stage colour pipeline, so every pixel arrived seven clocks late: the user's colour-bar screenshot had the white bar starting at column 7 with the black bar's last seven columns at 0 to 6, and on the desktop the left strip matched window pixels about fifteen lines lower near column 370, which is what the layer's cell address gives for a raster position in horizontal blanking, wrapped past the row's eightieth cell. TinyTang's `desktop.bin` does not have it: its `textdisp_wide.sv` already addresses four pixels ahead (`LAT = 4`), the fix PROT-009 came from. `fpga/ae350_soc/video.sv` now replaces the delay line with one register holding (`cx`, `cy`) advanced by four, wrapping at 1650 into the next line and at 750 into the next frame, so the colour lands one clock after its `cx`; the game picture was also seven pixels right of centre and is now centred. `tests/video_tb.sv`, which still decoded the TMDS outputs the unit lost in entry 41 and no longer compiled, now drives a free-running 1650x750 raster as the transmitter does and checks every RGB against the pixel `cx` named one clock earlier; with the fix it passes every frame (bars, both buffers, palette and emphasis, the desk layer, the rewritten cell and the three aspects), and against the old unit it fails throughout, 40,320 mismatches on the bars alone, seven pixels at each of the eight bar edges on 720 lines. TinyGBC carries the same fix as its entry 21. An eight-seed sweep with the pixel clock routed first (`build/e51_lead`) was clean on all eight with no hold violation, `bus_clk` 78.05 to 91.06 MHz and `pix_clk` 81.58 to 91.69; seed 6, 91.06 MHz on both, is the new default in `tools/build_ae350_soc.sh`, and `TINY_NES_SEED=6` rebuilt it through every gate (the AE350 hop present, 13 video block RAMs each on one clock, the pixel clock on SPINE16+SPINE25) to `ae350_soc.fs` `fc087974e23ee70f55774f372ae2027ffa0f59b5f78844d0c4336aab4ecaa9c6`, the sweep's seed-6 image byte for byte, and `ae350_soc.bin` `d6bc2a6d359d30a4ba656690e79a123dc9e2742bb1cf2ffa6733e6611f8fa8ef`. `tools/deploy_tinytang.sh` put it at `/root/cores/console138k/tinynes.bin` with the unchanged player `0435d849` and loaded it; the desktop core was loaded again afterwards. The user looked at the colour bars and thought them right but deferred the test with a game to a later session, so this entry is a handoff with the board test not run. README's seed paragraph and PROT-009's verification were revised. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry as number 51 of 100 with exactly six sections, prose in Purpose, Outcome and Next Steps, allowed Status values and only eligible paths in Files Modified.
+
+#### Next Steps:
+
+The user test is outstanding, on both cores: the colour bars starting at column 0 with the black bar whole, the desktop over a running game with a clean left edge and no second cursor when the mouse is at the left, the game picture centred, and play, sound, volume and save states as before. If it passes, seed 6 stands as the tested default; if not, the sweep's other clean seeds are in `build/e51_lead`. The older items stand: the SoC testbench repair of entry 47, the state's creation time waiting on TinyTang's RTC, and a lost state send visible only on TinyTang's console.
+
+#### Files Modified:
+
+- README.md
+- fpga/ae350_soc/video.sv
+- tests/video_tb.sv
+- tools/build_ae350_soc.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: NOT RUN
+
+---
