@@ -1811,3 +1811,33 @@ TinyGBC carries its own copy of `wii_pads.sv` and needs the same format-3 read a
 - User Test: PASS
 
 ---
+
+## 53 COMMIT Unreleased 2026-10-27T23:40:06-07:00
+
+#### Coming From:
+
+Unreleased a684731
+
+#### Purpose:
+
+Record why the cartridge launches from the TinyNES and TinyGBC desktop windows returned to the desktop after the colour bars, and the supply the board now runs on.
+
+#### Outcome:
+
+The launches were supply brown-outs, not a firmware fault. The board was running from a bench supply at 4.2 V on the battery connector J5, and at that input the system rail sits about 3.9 V after the input Schottky and falls further across the harness, so the load of configuring a core or reading a cartridge, whose transient exceeds 0.5 A, takes the 3.3 V rail through its dropout and the session returns to the desktop; the same launches ran at 4.5 V, and every launch the agent ran from the shell in this session succeeded because the board was then on the PC's 5 V OTG supply. The colour bars were the freshly configured core's own picture, not a player failure. The agent also established that a window launch is not silent, which corrects the note in TinyMaps' handoff: `tdsh_bl616_output` falls back to the USB console when there is no shell session, so a host holding the port open with DTR asserted sees the whole sequence, `TinyNES WANT`, the zip's name and inflated size, the CORE line, the state and settings requests and `TinyNES LINK`, and one such capture also recorded 2,003 frames at 188.1 percent and `TinyNES EXIT 0` from a console run. Ruled out by test: the link rate, which answered at 2,000,000 baud on every check; the desk layer, because a console launch with `osd desk on` played and exited cleanly; and the cores, player, card and cartridges, all of which played from the shell. The user has set the configuration going forward: the board runs at 4.5 V on the battery connector unless noted, and the OTG port at 5 V is the other supply, with no cell fitted. README gained a Power section, and `.ai/core-reference.md` gained BRD-014 and revised BRD-005. No engineering file changed, so no build or deployment applied, and the user's own test at 4.5 V is the acceptance. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled entry was rewritten, and validated this entry's number, its six sections, its prose and its Status values.
+
+#### Next Steps:
+
+Repair or replace the failed part on the dedicated power input so the board has an in-spec 5 V supply; until then the 4.5 V bench arrangement stands, and any launch that returns to the desktop should be checked against the supply first, with a min-hold meter on `+BATT` at the board during the load. Whether a charged 1S cell can carry the heavy load was not tested. TinyGBC's and TinyTang's logs carry the same launch symptom and need the same correction, and TinyMaps' workaround of powering J5 at 4.2 V or below needs this caveat. The older items stand: the SoC testbench repair of entry 47, the state's creation time waiting on TinyTang's RTC, and a lost state send visible only on TinyTang's console.
+
+#### Files Modified:
+
+- README.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: PASS
+
+---

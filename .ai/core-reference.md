@@ -174,6 +174,7 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Which FPGA pins drive the HDMI port, and how is 720p clocked? | BRD | BRD-011 |
 | Why is the UART silent for every image after a failed load? | BRD | BRD-012 |
 | Does the board have a temperature sensor or fan control, and what can its ADC inputs read? | BRD | BRD-013, DEV-019 |
+| Which supply does this project run the board on, and where does the board brown out? | BRD | BRD-014, BRD-005 |
 | Where are the board's PMOD sockets, and how are their pins numbered? | PMOD | PMOD-001 |
 | How does the core learn what is seated in the PMOD sockets? | PMOD | PMOD-002 |
 | Which register selects a PMOD personality, and what are the values? | PMOD | PMOD-004 |
@@ -365,6 +366,7 @@ BRD-010: "J9 holds Sipeed's SDRAM module with two W9825G6KH-6, driven as one 32 
 BRD-011: "HDMI TMDS pins clk G15/G16, d0 J14/H14, d1 J15/H15, d2 K17/J17, LVCMOS33D; TinyNES makes 720p60 from PLL_R[1] 27 MHz, PLL_R[3] 371.25 MHz (beside the HDMI bank; at PLL_L[3] the picture failed warm) and a CLKDIV /5 that must sit at RIGHTSIDE[4], all four lanes through OSER10s"
 BRD-012: "After an AE350 image that does not boot, the debug bridge's UART passes no bytes from any image until a power cycle, while JTAG keeps working"
 BRD-013: "Sipeed lists no temperature sensor or thermistor on the Tang Console; it has a fan connector for a 5 V fan of at most 1 W with no speed control, and two differential ADC inputs, one measuring the battery voltage"
+BRD-014: "This project runs the board at 4.5 V on the battery connector J5 with no cell fitted, because 4.2 V browns it out during a core or cartridge load whose transient exceeds 0.5 A; the OTG port at 5 V is the other supply, and the dedicated power input is dead at about 0.9 ohm"
 PMOD-001: "Two PMOD sockets: PMOD1 beside HDMI on W19 W20 F19 F20 E22 D22 E21 D21 and PMOD0 on V18 V19 G21 G22 F18 E18 C22 B22, all LVCMOS33; Sipeed interleaves the rows, so IO0/2/4/6 are Digilent pins 1-4 and IO1/3/5/7 are pins 7-10, and flipping a module swaps pins 1-4 with 7-10"
 PMOD-002: "/tang.ini at the SD root is the socket contract (pmod0/pmod1 plus _flip, flat under [tang]); a missing file or absent entry releases the socket and unknown modules are refused; modules carry no ID pins, so presence can never be detected; this firmware parses it (tang_ini.c) and, by the user's choice, does not enforce flip safety"
 PMOD-004: "On the merged Phosphor core the socket control register is 0xc0: hold 0, PMOD0 personality 7:4, PMOD1 11:8, flips 12/13; personalities 0 none, 1 oledrgb, 2 vga J1, 3 vga J2, 4 rotary encoder; both sockets power up released, so a host must declare them; the bring-up core has the same layout at 0x10, which is not extended frame type 0x10"
@@ -826,12 +828,12 @@ Records are grouped in the order of the topic catalog, and numbered within each 
   topic_id: BRD
   title: "The board has two power inputs and runs on either"
   status: SOURCED
-  verified_date: 2026-10-03
+  verified_date: 2026-10-27
   statement: "The Tang Console has a dedicated USB power input in addition to the OTG connector, and the board runs from either supply. The user's power-cycle procedure is to unplug both and restore power first, then the OTG cable."
-  consequence: "Host mode on the OTG connector would not need to power the board, and the power cycle needed after a tangflash is a physical one rather than a reset. Playback of this fact should not be assumed beyond that."
+  consequence: "Host mode on the OTG connector would not need to power the board, and the power cycle needed after a tangflash is a physical one rather than a reset. Playback of this fact should not be assumed beyond that. The battery connector is the supply this project uses while the dedicated input is unrepaired (BRD-014)."
   sources:
     - "User report, 2026-10-03: 'my tang has both the power and otg USB cable plugged in. they both supply power and the tang can run on either'"
-  verification: "Not instrumented. Consistent with the board surviving removals and reinsertions of the OTG cable with the console session intact, but the power routing was not measured."
+  verification: "Not instrumented. Consistent with the board surviving removals and reinsertions of the OTG cable with the console session intact, but the power routing was not measured. Revised 2026-10-27 (core-log entry 53): the dedicated input measures about 0.9 ohm and supplies 1.4 V at 1.5 A, so it cannot power the board, and the battery connector is the input this project runs on."
 
 - record_id: BRD-006
   kind: BOARD
@@ -938,6 +940,20 @@ Records are grouped in the order of the topic catalog, and numbered within each 
     - "https://wiki.sipeed.com/hardware/en/tang/tang-console/mega-console.html: the dock's hardware parameter table (FAN CONN., ADC) and its schematic link"
     - "https://www.cnx-software.com/2025/05/27/sipeed-tang-console-a-gowin-gw5ast-gw5at-board-with-60k-or-138k-lut-for-fpga-development-and-retro-gaming/: the same peripheral list"
   verification: "Read online on 2026-10-13 (core-log entry 24) after this file had no answer; the schematic and the module's page were not checked, so a sensor on the module itself is not ruled out. Not exercised on hardware."
+
+- record_id: BRD-014
+  kind: BOARD
+  topic_id: BRD
+  title: "The supply this board runs on, and the load at which the battery input browns out"
+  status: VERIFIED
+  verified_date: 2026-10-27
+  statement: "On this board, powered from a bench supply on the battery connector J5, 4.2 V does not carry the load of configuring an FPGA core or loading a NES cartridge: the picture shows the new core's colour bars and the session returns to the desktop, while the same loads run at 4.5 V. The supply current during the load exceeds 0.5 A. J5's +BATT node is shared with the TP4057 single-cell charger and is marked 4.2 V maximum on the 32001C schematic (TinyTang BRD-010), so the working arrangement runs 0.3 V above that cell limit. The dedicated power input measures about 0.9 ohm across VBUS and ground and delivers 1.4 V at 1.5 A, so it cannot supply the board."
+  consequence: "This project runs the board at 4.5 V on the battery connector as its standing configuration, with no cell fitted, and uses the OTG port at 5 V as the other supply; a cartridge launch that returns to the desktop after the colour bars is a supply brown-out until a measurement says otherwise. The battery input is a charge and light-load path rather than a supply for FPGA loads: at 4.2 V the system rail sits about 3.9 V after the input Schottky before any IR drop, and the 3.3 V rail has roughly 0.3 V of dropout budget at the observed current. A bench supply on the node also makes the charger's behaviour undefined, since the TP4057 sees a voltage above its 4.2 V termination, so no cell may be fitted while the supply is connected. Repairing the dedicated input restores an in-spec 5 V supply and is the preferred fix."
+  sources:
+    - "User's bench tests on this board, 2026-10-27 (core-log entry 53): 4.2 V on J5 browned out during a cartridge load and 4.5 V ran the same game; the supply current exceeded 0.5 A during the load"
+    - "Tang Console 32001C schematic as recorded in TinyTang .ai/core-reference.md BRD-010: J5 pin 3 +BATT marked 4.2 V maximum, and the TP4057 charger fed from 5V_USB through separate Schottkys"
+    - "TinyMaps docs/HANDOFF.md, 2026-10-27: the dedicated power input measured about 0.9 ohm and 1.4 V at 1.5 A, and J5 was adopted as the workaround at 4.2 V or below"
+  verification: "Observed on this board on 2026-10-27 with a bench supply, replaying the same launch at both voltages (core-log entry 53). A charged 1S cell was not tested, so whether a cell can carry the load is open; 4.2 V is the schematic's cell maximum rather than a measured brown-out threshold, and the dip at the J5 contacts during a load has not been measured."
 
 - record_id: PMOD-001
   kind: BOARD
@@ -3028,7 +3044,7 @@ Records are grouped in the order of the topic catalog, and numbered within each 
 - A `core-syntax.md` audit is required whenever this file changes, per `.ai/core.md`.
 
 ```yaml
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-27
 ```
 
 ---

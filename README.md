@@ -8,6 +8,23 @@ pinned commit for a headless benchmark; its source is not part of this
 repository. libretro [Nestopia](https://github.com/libretro/nestopia) was
 measured the same way and dropped as the slower of the two on the A25.
 
+## Power
+
+Run the board from a bench supply at 4.5 V on the battery connector J5, or from
+5 V on the OTG port. The battery connector is a 1S cell node shared with the
+TP4057 charger, and its schematic marks `+BATT` at a 4.2 V maximum (Tang Console
+PCB 32001C; TinyTang's reference owns the socket face and the charger), but
+4.2 V does not carry this board's load. The input Schottky and the harness drop
+the rail to about 3.9 V before the regulators, and the more than 0.5 A
+transient of configuring a core or loading a cartridge takes the 3.3 V rail
+through its dropout: the picture shows the new core's colour bars and the
+session returns to the desktop. The same loads run at 4.5 V. That arrangement
+is this project's standing configuration, with no cell fitted, and it runs
+0.3 V above the schematic's cell maximum by the user's decision. The OTG port
+at 5 V is the other supply in use. The board's dedicated power input is dead --
+about 0.9 ohm across its VBUS and ground, measured 2026-10-26 -- so the battery
+connector is the only input with headroom until that part is replaced.
+
 ## First hardware gate: AE350 UART
 
 The first image proves only that an AE350 program starts and that every
